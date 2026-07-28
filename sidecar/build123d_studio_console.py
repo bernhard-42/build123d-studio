@@ -24,6 +24,7 @@ jupyter_console's classes.
 import asyncio
 import signal
 import sys
+import time
 
 from jupyter_client.utils import ensure_async
 from jupyter_console.app import JupyterConsoleApp, ZMQTerminalIPythonApp
@@ -46,6 +47,12 @@ CONTINUATION = "   ...: "
 # whole file is a normal action here, and echoing every line of a module would
 # bury the transcript.
 MAX_ECHO_LINES = 10
+
+# How often iopub is drained while the terminal is held for another client's
+# execution. handle_external_iopub's own half-second poll is fine for noticing
+# that something started; once it has, output should appear as it is produced
+# rather than in half-second batches.
+FOLLOW_POLL = 0.05
 
 
 class _CrlfWriter:
@@ -117,6 +124,19 @@ class Build123dStudioShell(ZMQTerminalInteractiveShell):
     # Set by print_remote_prompt, consumed by the very next write. See there.
     _expect_remote_code = False
 
+    # Set when another client's *code* has just been echoed, which is what tells
+    # _render_pending to hold the terminal until that execution finishes.
+    #
+    # Deliberately not driven by _execution_state alone. The sidecar issues
+    # silent execute_requests of its own - the build123d warm-up at startup, and
+    # a namespace inspection after every single idle - and those move the
+    # execution state to busy exactly like a user's cell does. Holding the
+    # terminal for them would take the prompt away for the two seconds of the
+    # warm-up and flicker it after every command. A silent request publishes no
+    # execute_input, so it never reaches print_remote_prompt, which makes "did we
+    # echo somebody's code" precisely the distinction that is wanted.
+    _saw_remote_input = False
+
     # --- prompts ---
     #
     # The base class draws prompts with print_formatted_text() against
@@ -143,6 +163,7 @@ class Build123dStudioShell(ZMQTerminalInteractiveShell):
         if ec is None:
             return
         sys.stdout.write(f"{GREEN}{self.other_output_prefix}In [{ec}]: {RESET}")
+        self._saw_remote_input = True
 
         # In the base class this call is immediately followed by
         # `sys.stdout.write(content['code'] + '\n')`, with nothing in between.
@@ -163,6 +184,9 @@ class Build123dStudioShell(ZMQTerminalInteractiveShell):
         self._expect_remote_code = False
         try:
             self.handle_iopub()
+            if self._saw_remote_input:
+                self._saw_remote_input = False
+                self._follow_remote_execution()
         except Exception as exc:  # noqa: BLE001 - one bad message must not stop the stream
             real_stderr.write(f"\r\n[build123d-studio] error rendering kernel output: {exc}\r\n")
         finally:
@@ -171,6 +195,46 @@ class Build123dStudioShell(ZMQTerminalInteractiveShell):
                 sys.stderr.flush()
             finally:
                 sys.stdout, sys.stderr = real_stdout, real_stderr
+
+    def _follow_remote_execution(self):
+        """Keep the terminal until the other client's execution finishes.
+
+        Called from inside run_in_terminal, so the prompt is already erased and
+        returning is what redraws it. Staying here is therefore the same thing
+        as not showing a prompt.
+
+        Without it the prompt came back the instant the code had been echoed.
+        Running
+
+            for i in range(10):
+                sleep(1)
+
+        from the editor printed "In [5]:" immediately and the session looked
+        finished for the ten seconds it was actually running - and with prints
+        in the loop the output arrived underneath a prompt that had been sitting
+        there the whole time. The console has no notion of "somebody else is
+        executing": only run_cell waits on _execution_state, and that runs for
+        the console's own input.
+
+        A wedged kernel leaves this waiting with no prompt. That is recoverable
+        - the toolbar's Interrupt ends the execution and the prompt returns -
+        and it is the honest display, since a prompt would not accept anything
+        either.
+        """
+        while (
+            self.keep_running
+            and self._execution_state == "busy"
+            and self.client.is_alive()
+        ):
+            try:
+                time.sleep(FOLLOW_POLL)
+                self.handle_iopub()
+            except KeyboardInterrupt:
+                # Ctrl-C cannot interrupt the kernel from here - this console
+                # attached with --existing and has no kernel manager, so
+                # handle_sigint raises rather than interrupting. Give the prompt
+                # back instead of looking stuck.
+                break
 
     async def handle_external_iopub(self, loop=None):
         """Poll iopub while sitting at the prompt, printing above it.
