@@ -129,7 +129,12 @@ function buildIcns(destination) {
   rmSync(iconset, { recursive: true, force: true });
   mkdirSync(iconset, { recursive: true });
 
-  const source = join(ROOT, "public", "icons", "appIcon.png");
+  // macOS expects the artwork inset on Apple's icon grid - an 824x824 body
+  // centred on a 1024x1024 canvas - otherwise the icon sits visibly larger than
+  // every neighbour in the Dock and Finder. appIconMac.png is that inset render
+  // of logo.svg; appIcon.png stays full-bleed, which is what the window icon and
+  // the Linux .desktop icon want. Both are regenerated from logo.svg together.
+  const source = join(ROOT, "public", "icons", "appIconMac.png");
   for (const size of [16, 32, 64, 128, 256, 512]) {
     run("sips", ["-z", String(size), String(size), source, "--out", join(iconset, `icon_${size}x${size}.png`)],
       { stdio: "ignore" });
