@@ -33,6 +33,10 @@ from jupyter_client.manager import KernelManager
 
 from channel import log
 
+# How long one receive may hold the shell lock. Short enough that a Run never
+# waits noticeably behind an in-flight inspection, long enough not to spin.
+SHELL_POLL = 0.25
+
 class Kernel:
     """Owns the kernel process and the sidecar's client to it."""
 
@@ -68,6 +72,32 @@ class Kernel:
         # pump (on idle) and the channel thread (on an explicit refresh). Two
         # readers would steal each other's replies.
         self._evaluate_lock = threading.Lock()
+
+        # Every touch of the shell socket - send or receive - goes through this.
+        #
+        # A zmq socket is not thread-safe, and four threads reach this class:
+        # the channel thread (Run, and an explicit variable refresh), the iopub
+        # pump (the refresh that follows every idle), the pty reader (warm_up,
+        # fired by the console's first byte) and the 5 s fallback Timer (warm_up
+        # again). Two of them sending at once interleaves the frames of two
+        # messages on the wire, and the kernel then reads one message's frames
+        # as another's: "Invalid Signature: b'<IDS|MSG>'" - it took the
+        # delimiter for the signature - followed by "DELIM not in msg_list" for
+        # the frames left over. Reproduced by firing executes while warm_up
+        # runs; three corrupt messages inside two kernel restarts.
+        #
+        # Held for one send, or for one short receive poll, never across a wait
+        # for a reply - see _evaluate.
+        self._shell_lock = threading.Lock()
+
+    def _send_execute(self, code, **kwargs):
+        """The only place an execute_request is put on the shell socket.
+
+        Every caller funnels through here so that no two threads can be inside
+        client.execute() at once. See _shell_lock.
+        """
+        with self._shell_lock:
+            return self.client.execute(code, **kwargs)
 
     def kernel_environment(self):
         """Environment for the kernel process.
@@ -161,7 +191,7 @@ class Kernel:
         modules land in sys.modules either way, which is what makes the user's
         own `from build123d import *` return instantly.
         """
-        msg_id = self.client.execute(
+        msg_id = self._send_execute(
             "\n".join(
                 [
                     '__import__("importlib").import_module("build123d")',
@@ -200,7 +230,7 @@ class Kernel:
 
     def execute(self, code, silent=False, store_history=True, user_expressions=None):
         """Run code in the kernel. Returns the request's msg_id."""
-        return self.client.execute(
+        return self._send_execute(
             code,
             silent=silent,
             store_history=store_history,
@@ -220,7 +250,7 @@ class Kernel:
             return self._evaluate(expression, timeout)
 
     def _evaluate(self, expression, timeout):
-        msg_id = self.client.execute(
+        msg_id = self._send_execute(
             "",
             silent=True,
             store_history=False,
@@ -230,11 +260,20 @@ class Kernel:
 
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
+            remaining = deadline - time.monotonic()
+            # Polled in slices rather than waiting for the whole timeout in one
+            # call, because the shell socket is shared: holding the lock for the
+            # full fifteen seconds would stall every Run behind an inspection
+            # the user never asked for. A slice bounds that to SHELL_POLL.
             try:
-                reply = self.client.get_shell_msg(timeout=deadline - time.monotonic())
+                with self._shell_lock:
+                    reply = self.client.get_shell_msg(timeout=min(SHELL_POLL, remaining))
             except queue.Empty:
-                break
+                continue
             if reply["parent_header"].get("msg_id") != msg_id:
+                # Replies to other requests now legitimately land here - a Run's
+                # execute_reply, for instance, which nobody awaits. Dropping
+                # them is correct; see the note on execute().
                 continue
 
             result = reply["content"].get("user_expressions", {}).get("value")
@@ -270,7 +309,7 @@ class Kernel:
         self.working_dir = path
         if self.client is None:
             return
-        msg_id = self.client.execute(
+        msg_id = self._send_execute(
             f"__import__('os').chdir({path!r})", silent=True, store_history=False
         )
         self._internal_requests.append(msg_id)
