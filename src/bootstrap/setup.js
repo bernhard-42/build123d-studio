@@ -211,11 +211,15 @@ export async function ensureEnvironment() {
 export async function upgradePackages(onLine) {
   const { path: envRoot } = await resolveEnvRoot();
 
-  // Refresh uv too. It embeds the list of available CPython builds, so an old
-  // uv silently caps how new an interpreter the environment can ever get -
-  // and "upgrade" is exactly when the user has asked for newer things.
-  // Downloads only when there is actually a newer release; see ensureUv.
-  await ensureUv(envRoot, { upgrade: true });
+  // uv is deliberately not refreshed here.
+  //
+  // It used to be, on the grounds that a stale uv caps how new an interpreter
+  // the environment can ever get. That reasoning went away when the interpreter
+  // itself was pinned: uv no longer chooses the Python version, this
+  // application does, and both move only when the application is rebuilt. So
+  // "Upgrade packages" upgrades packages - it does not quietly swap the tool
+  // that built the environment, which is the last thing a user chasing a
+  // package problem wants changing underneath them. See src/bootstrap/pins.json.
 
   // Named packages, never a blanket --upgrade.
   //

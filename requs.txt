@@ -1,3 +1,5 @@
+
+
 # build123d Studio - an IDE for build123d
 
 ## Phase 1
@@ -78,18 +80,33 @@ Variable explorer
 
 Python environment
     - Based on astral's uv, which the application downloads on first start and
-      keeps in the environment directory. Not bundled: uv embeds the manifest of
-      available CPython builds, so a shipped uv would cap the newest Python a
-      user could ever install, and it was 50 MB of every package. The download
-      is verified twice: against the .sha256 published with the release, and -
-      where an authenticated GitHub CLI is available - with
-      "gh attestation verify --repo astral-sh/uv". The checksum proves the
-      download is intact; the attestation proves the artifact was built by
-      astral-sh/uv's own release workflow, which is what would catch a tampered
-      release rather than a tampered download. gh is not required; a failed
-      attestation is fatal, an absent gh is not
-    - "Upgrade packages" refreshes uv too, since that is exactly when the user
-      has asked for newer things
+      keeps in the environment directory. Not bundled: it is 50 MB in every
+      package for a tool that has to be fetched on some platforms anyway
+    - One release of build123d Studio pins one uv and one exact CPython
+      (src/bootstrap/pins.json). A release is a support target: with uv floating
+      on "latest", two people running the same build123d Studio could have
+      different uv versions and different interpreters depending only on what
+      was current the day each of them first started it. Nobody reports 3.14.6
+      versus 3.14.7, and nobody mentions that their uv shipped that morning.
+      Both move when the application is rebuilt and retested, which is also when
+      a CPython patch - including a security one - reaches users. That cost is
+      accepted deliberately in exchange for a fixed, answerable configuration
+    - The SHA-256 of every uv artifact is committed to this repository and
+      checked after the download, on every install. It is not fetched: the
+      .sha256 files published beside the archives sit on the same release page
+      as the archives, so whoever could replace one could replace the other -
+      they prove a download is intact, not that it is the artifact this
+      application was built against
+    - Provenance is verified once, when the pin is recorded, by a maintainer
+      running "gh attestation verify --repo astral-sh/uv" - a real Sigstore
+      signature chain and transparency log, with a human reviewing the change.
+      Not at runtime: that meant an unauthenticated GitHub API call on the
+      first-start path which had to fail open when the API was unreachable or
+      rate-limited, so the strength of the check depended on the network
+    - "Upgrade packages" upgrades packages. It does not touch uv or the
+      interpreter: uv no longer chooses the Python version, so refreshing it
+      would only swap the tool that built the environment underneath a user who
+      is chasing a package problem
     - Fully self-contained: the interpreter, venv and cache are the
       application's own and never touch a system or user Python
     - They live in the per-user app-data directory (resolve_env_root):

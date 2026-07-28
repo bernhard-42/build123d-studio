@@ -1,5 +1,7 @@
 import { filesystem, os } from "@neutralinojs/lib";
 
+import pins from "./pins.json";
+
 // resolve_env_root() lives here, in the frontend, on purpose.
 //
 // The frontend is what bootstraps the environment and spawns both children, so
@@ -134,7 +136,13 @@ export function uvEnvironment(envRoot) {
     UV_PYTHON_INSTALL_DIR: `${envRoot}/interpreters`,
     UV_CACHE_DIR: `${envRoot}/cache`,
     UV_MANAGED_PYTHON: "1",
-    UV_PYTHON: "3.14",
+    // An exact interpreter, not a "3.14" that resolves to whatever patch
+    // release is current. Two people on the same build123d Studio then run the
+    // same Python, which is what makes a bug report answerable - and nobody
+    // reports 3.14.6 versus 3.14.7 anyway. The cost is deliberate: a CPython
+    // patch, including a security one, reaches users when this pin moves, which
+    // is a rebuild of the application. See src/bootstrap/pins.json.
+    UV_PYTHON: pins.python,
     UV_PYTHON_DOWNLOADS: "automatic",
     UV_NO_CONFIG: "1",
     UV_PROJECT: envRoot,

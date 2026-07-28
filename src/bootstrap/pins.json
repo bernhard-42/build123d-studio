@@ -1,0 +1,38 @@
+{
+  "_comment": [
+    "One build123d Studio release pins one uv and one CPython. Both move only when",
+    "the application is rebuilt and retested, so a given release is a fixed support",
+    "target rather than whatever happened to be current on the day a user first",
+    "started it.",
+    "",
+    "The uv checksums are the trust anchor for the download and are checked on every",
+    "install. They are recorded here rather than fetched, because the .sha256 files",
+    "published beside the archives sit on the same release page as the archives: they",
+    "prove a download is intact, not that it is the artifact we tested against.",
+    "",
+    "To move the pin, run scripts/pin-uv.mjs - it re-derives every checksum and",
+    "verifies provenance before rewriting this file. Do not edit the digests by hand.",
+    "",
+    "Provenance of the values below, verified 2026-07-28:",
+    "  gh attestation verify uv-aarch64-apple-darwin.tar.gz --repo astral-sh/uv",
+    "    -> exit 0, 1 attestation, full Sigstore chain and transparency log",
+    "    -> issuer   https://token.actions.githubusercontent.com",
+    "    -> workflow https://github.com/astral-sh/uv/.github/workflows/release.yml@refs/heads/main",
+    "  All five artifacts additionally carry a slsa.dev/provenance/v1 attestation",
+    "  naming astral-sh/uv's release.yml, checked through the attestation API."
+  ],
+
+  "python": "3.14.6",
+
+  "uv": {
+    "version": "0.11.33",
+    "recorded": "2026-07-28",
+    "artifacts": {
+      "aarch64-apple-darwin": "d75e3d2bfc203d17388edaabd3aa37958edbcbfc36219e3ee0d31bb080b4baa2",
+      "x86_64-apple-darwin": "f1b919f740bd6be1d014ff58c4271b0779a32198adfb19ad9c5d1c4d9b2b4301",
+      "aarch64-unknown-linux-gnu": "9ed88a9a42de3102f9704d021ab186fdf8a69a7ad9a1d3f3486ac6b1e55d6141",
+      "x86_64-unknown-linux-gnu": "aa9fca823c03289fb6e3460b3dc864f3ea895cafaf9b99247701a67b17d1b018",
+      "x86_64-pc-windows-msvc": "c253ce868ad48d29327b661452ce184c9e333e6d6f5bc8d6fcfbf4dd52b83442"
+    }
+  }
+}
