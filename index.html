@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>build123d Studio</title>
+    <!-- Injected by the Neutralino server; defines NL_PORT, NL_TOKEN, NL_PATH, ... -->
+    <script src="/__neutralino_globals.js"></script>
+  </head>
+  <body>
+    <div id="splash" class="splash">
+      <h1 class="splash-title">build123d Studio</h1>
+      <p class="splash-status" id="splash-status">Starting…</p>
+      <pre class="splash-log" id="splash-log"></pre>
+      <!-- Shown only once a long operation has finished, so its output can be
+           read before the splash goes away. -->
+      <button type="button" class="splash-ok confirm-button primary" id="splash-ok" hidden>
+        OK
+      </button>
+    </div>
+
+    <!-- Laid out from the start, covered by the splash overlay. Monaco and
+         xterm size themselves from their containers, so those containers must
+         have real dimensions before either is created. -->
+    <div id="shell" class="shell">
+      <!-- Two independent rows rather than one 2x2 grid: a grid shares its
+           columns down the whole table, so a single vertical splitter would
+           force the console/variables split to match the editor/viewer one.
+           Nesting a grid per row lets each have its own ratio. -->
+      <div id="app" class="app">
+        <div class="row" id="row-top">
+          <div class="pane pane-editor" id="pane-editor">
+            <!-- Icons are a Material Symbols subset bundled at build time by
+                 scripts/fetch-icons.mjs. Glyphs are referenced by codepoint from
+                 icons.css rather than by the usual ligature text, because subsetting
+                 to a handful of glyphs drops the ligature tables that make names work. -->
+            <div class="toolbar">
+              <button class="btn" id="btn-new" title="New File">
+                <span class="icon icon-new"></span>
+              </button>
+              <button class="btn" id="btn-open" title="Open File">
+                <span class="icon icon-open"></span>
+              </button>
+              <button class="btn" id="btn-save" title="Save File">
+                <span class="icon icon-save"></span>
+              </button>
+              <span class="toolbar-sep"></span>
+              <button class="btn" id="btn-run-file" title="Run File">
+                <span class="icon icon-run-file"></span>
+              </button>
+              <button class="btn" id="btn-run-cell" title="Run Cell">
+                <span class="icon icon-run-cell"></span>
+              </button>
+              <button class="btn" id="btn-run-sel" title="Run Selection">
+                <span class="icon icon-run-sel"></span>
+              </button>
+              <span class="toolbar-sep"></span>
+              <button class="btn" id="btn-interrupt" title="Interrupt">
+                <span class="icon icon-interrupt"></span>
+              </button>
+              <button class="btn" id="btn-restart" title="Restart kernel">
+                <span class="icon icon-restart"></span>
+              </button>
+              <span class="toolbar-spacer"></span>
+              <button class="btn" id="btn-settings" title="Packages">
+                <span class="icon icon-settings"></span>
+              </button>
+              <button class="btn" id="btn-info" title="About build123d Studio">
+                <span class="icon icon-info"></span>
+              </button>
+              <button class="btn" id="btn-theme" title="Theme">
+                <span class="icon" id="icon-theme"></span>
+              </button>
+              <span class="kernel-status" id="kernel-status" title="Kernel state">
+                <span class="dot" id="kernel-dot"></span><span id="kernel-label">starting</span>
+              </span>
+            </div>
+            <div class="editor-host" id="editor-host"></div>
+          </div>
+          <div class="splitter splitter-v" id="splitter-v-top"></div>
+          <div class="pane pane-viewer" id="pane-viewer"></div>
+        </div>
+
+        <div class="splitter splitter-h" id="splitter-h"></div>
+
+        <div class="row" id="row-bottom">
+          <div class="pane pane-console" id="pane-console"></div>
+          <div class="splitter splitter-v" id="splitter-v-bottom"></div>
+          <div class="pane pane-vars" id="pane-vars"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Shown while the kernel restarts. Modal on purpose: the kernel is gone
+         for those seconds, so Run, the console and the variable explorer would
+         all fail or queue silently if the user carried on. -->
+    <div id="busy" class="busy" hidden>
+      <div class="busy-box">
+        <p class="busy-message" id="busy-message"></p>
+        <div class="busy-bar"><div class="busy-bar-fill"></div></div>
+      </div>
+    </div>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

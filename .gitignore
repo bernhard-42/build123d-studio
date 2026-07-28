@@ -1,0 +1,23 @@
+node_modules/
+
+# Vite build output (Neutralino's documentRoot)
+resources/
+
+# Neutralino binaries and CLI state, fetched by `neu update`
+bin/
+.tmp/
+dist/
+neutralinojs.log
+
+# Packaged artifacts
+release/
+
+# Neutralino's per-app storage: window layout, theme, package sources
+.storage/
+
+# runtime/ ships only pyproject.toml and uv.lock; the environment itself is
+# created by uv in the per-user app-data directory, outside the repository.
+
+__pycache__/
+*.py[cod]
+.DS_Store

@@ -1,0 +1,29 @@
+{
+  "name": "build123d-studio",
+  "version": "0.1.0",
+  "description": "A standalone build123d IDE: Monaco, three-cad-viewer, Jupyter console and variable explorer",
+  "license": "Apache-2.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "fetch-icons": "node scripts/fetch-icons.mjs",
+    "postinstall": "neu update",
+    "dev": "vite build --watch",
+    "build": "vite build && node scripts/copy-client-lib.mjs",
+    "start": "yarn build && neu run",
+    "package": "node scripts/package.mjs",
+    "package:build": "vite build --mode production && node scripts/copy-client-lib.mjs && neu build --release",
+    "fetch-licenses": "node scripts/fetch-licenses.mjs"
+  },
+  "dependencies": {
+    "@neutralinojs/lib": "6.9.0",
+    "@xterm/addon-fit": "0.11.0",
+    "@xterm/xterm": "6.0.0",
+    "monaco-editor": "0.56.0",
+    "three-cad-viewer": "5.0.0"
+  },
+  "devDependencies": {
+    "@neutralinojs/neu": "11.7.2",
+    "vite": "8.1.5"
+  }
+}

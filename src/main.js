@@ -1,0 +1,202 @@
+import { app, events, init, window as neuWindow } from "@neutralinojs/lib";
+import "./styles.css";
+import "./icons.css";
+
+import { ensureEnvironment } from "./bootstrap/setup.js";
+import { appDir } from "./bootstrap/envroot.js";
+import { fail, hideSplash, setStatus, showSplash, splashVisible } from "./bootstrap/splash.js";
+import { initSplitters } from "./layout/splitter.js";
+import { initConsole } from "./console/terminal.js";
+import { focusAt, initEditor } from "./editor/monaco.js";
+import {
+  confirmDiscardChanges,
+  lastViewState,
+  rememberPosition,
+  restoreLastFile,
+  syncKernelDirectory,
+} from "./editor/files.js";
+import { initViewer, showLogo } from "./viewer/viewer.js";
+import { initVariables } from "./vars/explorer.js";
+import { initToolbar, updateTitle } from "./toolbar.js";
+import * as ipc from "./ipc.js";
+import { initTheme } from "./theme.js";
+import { initStore } from "./store.js";
+import { hideBusy, resetBusy, showBusy } from "./busy.js";
+import * as log from "./log.js";
+
+init();
+log.installGlobalHandlers();
+
+// Startup order matters: the Python environment has to exist before the sidecar
+// can be spawned, and on first run it does not. So the window comes up showing
+// the splash, setup runs, the sidecar starts, and only then is the app revealed.
+
+let shuttingDown = false;
+let asking = false;
+
+/**
+ * Offer to save before quitting. Returns false if the user cancelled.
+ *
+ * Cancelling genuinely aborts the quit, including from the window's close
+ * button: modes.window.exitProcessOnClose is false, so Neutralino leaves the
+ * window standing and reports windowClose as an event rather than acting on it.
+ * Verified rather than assumed - with the handler doing nothing, the window and
+ * the process both survive the click.
+ */
+async function shutdown() {
+  if (shuttingDown || asking) {
+    return;
+  }
+  asking = true;
+  try {
+    if (!(await confirmDiscardChanges())) {
+      log.info("Quit cancelled: unsaved changes");
+      return;
+    }
+  } catch (error) {
+    // Never trap the user in an app that will not close because the prompt
+    // itself failed.
+    log.error("Unsaved-changes prompt failed, quitting anyway:", error);
+  } finally {
+    asking = false;
+  }
+
+  shuttingDown = true;
+  try {
+    await rememberPosition();
+  } catch (error) {
+    log.warn("Could not remember the caret position:", error);
+  }
+  try {
+    await ipc.stopSidecar();
+  } catch (error) {
+    log.warn("Sidecar shutdown:", error);
+  } finally {
+    await app.exit();
+  }
+}
+
+events.on("windowClose", () => {
+  shutdown();
+});
+
+// Cmd-Q / Ctrl-Q.
+//
+// Neutralino creates no native menu bar, so macOS never wires the standard
+// Quit shortcut to anything and the app simply ignores it. Handling the key in
+// the webview is the only place it can be caught. Ctrl-Q is included for Linux
+// and Windows, where it is the common equivalent.
+window.addEventListener("keydown", (event) => {
+  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "q") {
+    event.preventDefault();
+    shutdown();
+  }
+});
+
+async function main() {
+  // Both write into the app-data directory rather than the application's own,
+  // so they only need os.getPath - no environment, nothing to bootstrap. Doing
+  // them first means the rest of startup is logged and can read settings.
+  await log.initLog();
+  await initStore();
+
+  log.info("Starting up", { NL_OS, NL_ARCH: typeof NL_ARCH === "string" ? NL_ARCH : "?" });
+  await neuWindow.setTitle("build123d Studio");
+  await neuWindow.show();
+
+  let environment;
+  try {
+    environment = await ensureEnvironment();
+    log.info("Environment ready", environment);
+  } catch (err) {
+    log.error("Environment bootstrap failed", err);
+    fail("Could not prepare the Python environment.", err?.message ?? err);
+    return;
+  }
+
+  // The layout has to exist before the terminal is created - xterm measures its
+  // container to work out rows and columns. The panes are laid out behind the
+  // splash, which is why the shell is only hidden, not absent.
+  // Before any pane is created: Monaco, xterm and the viewer all read the
+  // resolved theme when they are constructed.
+  await initTheme();
+  await initSplitters();
+
+  initEditor();
+  initViewer();
+  initVariables();
+  initToolbar();
+  const console_ = initConsole();
+
+  // Before the splash lifts, so the window is revealed already showing the file
+  // rather than the sample being replaced a moment later. A missing file falls
+  // back to the sample and is forgotten - see restoreLastFile.
+  const reopened = await restoreLastFile();
+  await updateTitle();
+
+  ipc.on("error", (frame) => log.error("sidecar error:", frame.context, frame.message));
+
+  // Restart feedback is wired here rather than in the toolbar, because the
+  // settings dialog restarts the kernel too - after changing a package source
+  // or upgrading - and both routes deserve the same modal.
+  ipc.on("kernel.restarting", () => {
+    if (!splashVisible()) {
+      showBusy("Restarting the kernel…");
+    }
+  });
+  ipc.on("kernel.restarted", () => hideBusy());
+  ipc.on("kernel.restart_failed", (frame) => {
+    resetBusy();
+    log.error("Kernel restart failed:", frame.message);
+    fail("The kernel could not be restarted.", frame.message);
+    showSplash();
+  });
+
+  // Exceptions raised by user code. The console prints its own traceback, so
+  // this is only worth logging - but it has to be consumed, or every error in
+  // a script produces an "unhandled sidecar frame" warning.
+  ipc.on("kernel.error", (frame) => log.info(`kernel: ${frame.ename}: ${frame.evalue}`));
+
+  // Reveal the app now, with the logo already in the viewer.
+  //
+  // Waiting for the sidecar here would hold the splash for several seconds:
+  // the sidecar spends ~2.2 s importing OCP for the measurement backend, and
+  // the kernel another ~2 s warming build123d. None of that is needed to look
+  // at, scroll or edit code, so it happens behind a populated window instead of
+  // a splash screen. The kernel indicator in the toolbar shows when the Run
+  // actions will actually do something.
+  showLogo();
+  hideSplash();
+  console_.syncSize();
+
+  // The editor takes focus, at line 1 - the app opens ready to write code.
+  //
+  // It used to be the console, only because the console was the last thing to
+  // finish starting and grabbed focus on the way past. That is startup order
+  // deciding the UI, not a decision: the sidecar becomes ready seconds after
+  // the window appears, so anything typed in between went to the editor and
+  // then the caret jumped away mid-sentence.
+  // Only restore a position when the file it described actually came back.
+  focusAt(reopened === null ? null : lastViewState());
+
+  try {
+    const ready = await ipc.startSidecar({
+      python: environment.python,
+      envRoot: environment.envRoot,
+      appDir: await appDir(),
+    });
+    log.info("Sidecar ready", ready);
+    // The file was restored before the sidecar existed, so tell it now where
+    // the kernel should run.
+    syncKernelDirectory();
+    console_.syncSize();
+  } catch (err) {
+    log.error("Sidecar failed to start", err);
+    // The window is already up, so report this in place rather than by
+    // resurrecting the splash over a working editor.
+    fail("Could not start the Python sidecar.", err?.message ?? err);
+    showSplash();
+  }
+}
+
+main();

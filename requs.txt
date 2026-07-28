@@ -1,0 +1,158 @@
+# build123d Studio - an IDE for build123d
+
+## Phase 1
+
+The name is deliberately not tied to a single library. "OCP" is the OpenCascade
+Python bindings today; should those be replaced (OCCT-Light, say), the initials
+can be read as "open-source CAD project" and the name still fits.
+
+Platforms
+    - Windows, Linux and MacOS
+    - Based on neutralinojs 6.9.0, frontend bundled with Vite
+
+Self-containment
+    - No fixed/well-known TCP ports anywhere: port collisions are the problem to
+      avoid, so random or OS-assigned ephemeral ports are acceptable, a hard
+      coded one (such as ocp_vscode's 3939) is not
+    - Webview <-> sidecar communicate over a WebSocket on a random loopback
+      port. The sidecar is spawned via spawnProcess, binds port 0, and announces
+      {"port", "token"} on stdout; the webview then connects. A listening socket
+      is reachable by any local process, unlike a pipe, so the connection is
+      authenticated with a random token
+    - Control messages are JSON text frames. Console keystrokes/output and the
+      tessellated model are binary frames, so the hot paths carry no base64
+    - Closing the sidecar's stdin remains the shutdown signal, because it cannot
+      be missed if the webview dies abruptly
+    - Kernel -> sidecar "show" payloads go over a loopback TCP connection on an
+      OS-assigned port, authenticated with a random token. Unix sockets would
+      avoid the port but do not exist on Windows, and one mechanism that works
+      on all three platforms beats two, one of which is missing
+    - Sidecar <-> kernel use the Jupyter ZMQ protocol over tcp on ephemeral
+      ports. ZeroMQ's ipc:// was tried and dropped: AF_UNIX paths are capped
+      near 104 bytes and jupyter_client derives them from the connection file,
+      so the transport silently depended on how long the install path was - ipc
+      in a development tree, tcp under "~/Library/Application Support". The
+      channels are HMAC-signed with the key in the 0600 connection file, so
+      loopback reachability is not authority
+    - ipykernel additionally opens one random loopback port for debugpy
+    - Nothing needs to reach the viewer from outside the application
+
+UI
+    - Four panes in two columns and two rows, boundaries draggable to resize:
+        - top left:     monaco editor
+        - top right:    three-cad-viewer
+        - bottom left:  jupyter console
+        - bottom right: variable explorer
+    - Pane sizes persist across restarts
+
+Editor
+    - Python with build123d
+    - Run whole file, run "# %%" cell at cursor, or run selection / current line
+    - Execution goes to the kernel over ZMQ, not typed into the console
+
+Viewer
+    - "show" reuses ocp_vscode's _convert() so ocp_tessellate tessellates the
+      build123d objects, but sends the result over the local socket instead of
+      ocp_vscode's websocket transport
+    - The model payload is written as a JSON header plus concatenated raw
+      buffers and fetched by the webview as one arrayBuffer, so the tessellated
+      arrays become zero-copy typed-array views - no base64, no JSON parsing of
+      numeric data. Only the "model ready" notification goes over stdio
+    - Exact measurement reuses ocp_vscode's ViewerBackend, subclassed to return
+      responses in-process rather than sending them
+
+Console
+    - Real "jupyter console --existing" in a PTY, displayed with xterm.js:
+      one transcript, inline In[n]: prompt, full IPython line editing and magics
+    - Shows output of every client, so editor runs appear inline as In[n]:
+      (include_other_output, with the remote prefix emptied)
+    - Ships a ZMQTerminalInteractiveShell subclass that wraps external iopub
+      printing in prompt_toolkit's patch_stdout, fixing the cr/nl staircase and
+      the intermittently missing prompt
+    - The kernel connection file is written to a discoverable path so an external
+      jupyter console can attach to the same namespace
+
+Variable explorer
+    - Inspects the kernel namespace via silent user_expressions, never echoing
+      into the console; refreshes when the kernel goes idle; expands on demand
+
+Python environment
+    - Based on astral's uv, which the application downloads on first start and
+      keeps in the environment directory. Not bundled: uv embeds the manifest of
+      available CPython builds, so a shipped uv would cap the newest Python a
+      user could ever install, and it was 50 MB of every package. The download
+      is verified twice: against the .sha256 published with the release, and -
+      where an authenticated GitHub CLI is available - with
+      "gh attestation verify --repo astral-sh/uv". The checksum proves the
+      download is intact; the attestation proves the artifact was built by
+      astral-sh/uv's own release workflow, which is what would catch a tampered
+      release rather than a tampered download. gh is not required; a failed
+      attestation is fatal, an absent gh is not
+    - "Upgrade packages" refreshes uv too, since that is exactly when the user
+      has asked for newer things
+    - Fully self-contained: the interpreter, venv and cache are the
+      application's own and never touch a system or user Python
+    - They live in the per-user app-data directory (resolve_env_root):
+      ~/Library/Application Support/build123d-studio on MacOS, %LOCALAPPDATA% on Windows,
+      ~/.local/share on Linux. Never in the application's own tree, even where
+      that is writable - preferring the app tree and falling back here meant
+      development exercised one branch and every packaged install the other,
+      so the configuration that ships was the one least tested
+    - uv.lock ships with the application and is staged into the environment on
+      every start, so "uv sync --frozen" reconciles an environment built by an
+      earlier version after an app update
+    - Uninstalling the application does not remove the environment; the path is
+      logged at startup
+    - Everything else the application writes goes to the same per-user directory,
+      beside the environment rather than inside it, so a clean rebuild of the
+      environment does not discard it: settings.json (theme, splitter positions,
+      package sources) and build123d-studio.log. Neither Neutralino's .storage
+      nor its neutralinojs.log is used, because both write into the
+      application's own directory
+
+Read-only installation
+    - The application writes nothing into its own directory, so it can be
+      installed read-only: a .app dragged to /Applications, an install under
+      Program Files, an AppImage's read-only mount
+    - One exception is not ours: Neutralino saves .tmp/window_state.config.json
+      beside its binary on every window close. The path is hardcoded,
+      modes.window.useSavedState governs only restoring, and the save is an
+      uncaught create_directories - so on a read-only directory the process
+      aborts instead of degrading, and closing the window crashes
+    - Packages therefore ship an empty .tmp directory, because create_directories
+      succeeds on a path that already exists. Everything else can be read-only
+    - That is not enough for an AppImage, where the whole mount is read-only, so
+      AppRun stages a directory of symlinks into the mount under
+      ~/.local/share and passes it as --path, which is what sets NL_PATH
+    - Installs the required packages via "uv sync" on first start, with progress
+      shown in a splash overlay
+    - Packages can be upgraded from the UI ("uv lock --upgrade" then "uv sync")
+    - Dependencies are pinned to exact versions
+
+
+## Phase 2:
+
+- Deep Architecture review
+- Deep Security review (including check for supply-chain-attacks)
+
+
+## Phase 3:
+
+- Create a log viewer (similar to config viewer) for the javascript app log, the backend log, and all other logs. 
+  E.g have select buttons which log to show. add a copy button
+- Open Folder should work as in VS Code with a left sidecar and with tabs for files. tab label is filename with full path on hover
+- Add an OS menu to get Cmd-C/Cmd-V/Cmd-X. Would also deliver Cmd-Q, ...
+- The variable explorer needs to get multilevel (a = dict(a=12, b="wert", c=[1,2,3,4,5,6], d=dict(x=dict(aa=1, bb="sdfg"), y=2))) for iterables
+- show_clear, show_object, push_object, show_objects, show_all need to work 
+  (Note in a separate project ocp_vscode needs to be resturctured to better work with jupyter-cadquery and build123d studio)
+- Debugging Python in Monaco should work 
+  - having the usual step buttons
+  - Using the varial explorere (if possible)
+  - Allows to hook into "breakpoint reached" or "Step finished" to including visual debugging, i.e.execute show_all(locals())
+- Config should get a field where users can add extra packages in pyproject.toml syntax. They will be added to pyproject.toml (a "custom" section: "# --- custom: own packages ---
+- Config should get a multiline field where I can add code that should be used during "New File"
+
+
+## Phase 4:
+
+- Write comprehensive tests
