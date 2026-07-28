@@ -596,7 +596,14 @@ body {
  * equally unavailable. Blocking input is the honest state, and it stops a
  * keystroke from being swallowed by a console that is about to be replaced.
  */
-.busy {
+/* Named -overlay rather than plain .busy, and it matters.
+   "busy" is also one of the kernel states the toolbar writes onto the status
+   chip (classList.add("busy") in setKernelState), so a bare .busy rule styled
+   that chip too: the moment the kernel went busy, the little indicator became a
+   fixed, full-screen, centred flex box showing its own label. Invisible on a
+   fast cell, a ten second overlay on `for i in range(10): sleep(1)`. State
+   classes and layout classes must not share a namespace. */
+.busy-overlay {
   position: fixed;
   inset: 0;
   z-index: 1200;
@@ -607,7 +614,7 @@ body {
   backdrop-filter: blur(2px);
 }
 
-.busy[hidden] {
+.busy-overlay[hidden] {
   display: none;
 }
 
