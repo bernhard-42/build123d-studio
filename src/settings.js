@@ -31,6 +31,30 @@ import * as log from "./log.js";
 // refuses what it cannot resolve, and ensureEnvironment falls back to PyPI
 // rather than leaving a broken environment behind.
 
+// A restart is a fresh kernel process: jupyter_client's own wait_for_ready is
+// 60 s, and the console is started after it. Only a backstop for a sidecar that
+// answers nothing at all - a sidecar that dies is reported immediately by the
+// death signals below.
+const RESTART_TIMEOUT = 120000;
+
+/**
+ * Restart the kernel and wait for the outcome.
+ *
+ * Shared by both flows here so neither can forget one of the ways this ends.
+ * Awaiting only kernel.restarted/kernel.restart_failed was not enough: if the
+ * sidecar process dies during the restart, or was already gone when the send
+ * happened to succeed, neither frame is ever sent and the splash stays up for
+ * ever with no OK button.
+ */
+async function awaitKernelRestart() {
+  ipc.send("kernel.restart");
+  await ipc.awaitOutcome(
+    "kernel.restarted",
+    ["kernel.restart_failed", "sidecar.exit", "sidecar.disconnected"],
+    { timeout: RESTART_TIMEOUT, what: "The kernel" },
+  );
+}
+
 function escapeHtml(text) {
   return String(text)
     .replaceAll("&", "&amp;")
@@ -94,13 +118,7 @@ async function upgradeAndResync() {
     await upgradePackages(appendLog);
     // The running kernel already imported the old modules.
     setStatus("Restarting the kernel…");
-    ipc.send("kernel.restart");
-    // Either outcome, not just the happy one - awaiting kernel.restarted alone
-    // left the splash up forever when the restart failed.
-    const outcome = await ipc.onceOf("kernel.restarted", "kernel.restart_failed");
-    if (outcome.type === "kernel.restart_failed") {
-      throw new Error(outcome.message);
-    }
+    await awaitKernelRestart();
     // Held open until acknowledged: what the upgrade actually did - which
     // packages moved and to which versions - is the point of running it, and
     // dismissing itself put that on screen only while it was still scrolling.
@@ -128,13 +146,7 @@ async function applyAndResync(selection) {
     await applyPackageSources(selection, appendLog);
 
     setStatus("Restarting the kernel…");
-    ipc.send("kernel.restart");
-    // Either outcome, not just the happy one - awaiting kernel.restarted alone
-    // left the splash up forever when the restart failed.
-    const outcome = await ipc.onceOf("kernel.restarted", "kernel.restart_failed");
-    if (outcome.type === "kernel.restart_failed") {
-      throw new Error(outcome.message);
-    }
+    await awaitKernelRestart();
     setStatus("Package sources applied.");
   } catch (error) {
     log.error("Could not apply the package sources:", error);

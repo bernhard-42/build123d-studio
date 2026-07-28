@@ -24,6 +24,13 @@ export const KIND_MODEL = 2;
 const FRAME_PREFIX = 8;
 const ALIGNMENT = 8;
 
+// Backstop for the sidecar's "ready", which it sends once the kernel answers.
+// The kernel's own wait_for_ready is 60 s, and the console starts after it, so
+// this has to be comfortably longer than both or a slow first start would be
+// reported as a failure. It exists for the case where nothing arrives at all -
+// a wedged sidecar that is still connected sends neither "error" nor an exit.
+const READY_TIMEOUT = 90000;
+
 function alignUp(length) {
   return length + ((-length % ALIGNMENT) + ALIGNMENT) % ALIGNMENT;
 }
@@ -106,26 +113,94 @@ export function once(type) {
   });
 }
 
+/** Turn a failure frame into a sentence worth putting on screen. */
+function describeFailure(what, type, frame) {
+  if (type === "error") {
+    const where = frame.context === undefined ? "" : ` while ${frame.context}`;
+    return `${what} reported an error${where}: ${frame.message ?? "no detail given"}`;
+  }
+  if (type === "sidecar.exit") {
+    return `${what} stopped unexpectedly (exit code ${frame.code})`;
+  }
+  if (type === "sidecar.disconnected") {
+    return `${what} closed its connection (code ${frame.code})`;
+  }
+  if (type === "kernel.restart_failed") {
+    return `The kernel could not be restarted: ${frame.message ?? "no detail given"}`;
+  }
+  return `${what}: ${type}`;
+}
+
 /**
- * Wait for whichever of these message types arrives first.
+ * Wait for one outcome, failing fast instead of hanging.
  *
- * For request/response pairs where the response can be either an outcome or a
- * failure: awaiting only the success message means a failure hangs the caller
- * for the rest of the session, with nothing on screen to say so.
+ * Every wait in this protocol needs a failure companion. Awaiting only the
+ * success frame is what left startup suspended for ever when the sidecar
+ * connected and then died before sending "ready", and what left the settings
+ * splash up with no way out when a restart never completed. The sidecar's death
+ * is already observable - `sidecar.exit` and `sidecar.disconnected` - it simply
+ * was not being raced against.
+ *
+ * The timeout is a backstop for the case no frame arrives at all: a wedged
+ * sidecar that is still connected emits nothing, and neither death signal
+ * fires.
+ *
+ * @returns {{promise: Promise<object>, cancel: () => void}} cancel unsubscribes
+ *   and clears the timer, for callers that abandon the wait on another path.
  */
-export function onceOf(...types) {
-  return new Promise((resolve) => {
-    const offs = [];
-    const settle = (frame) => {
+function expectOutcome(success, failures, { timeout = null, what = "The sidecar" } = {}) {
+  const offs = [];
+  let timer = null;
+
+  const promise = new Promise((resolve, reject) => {
+    const settle = (finish, value) => {
       for (const off of offs) {
         off();
       }
-      resolve(frame);
+      offs.length = 0;
+      if (timer !== null) {
+        clearTimeout(timer);
+        timer = null;
+      }
+      finish(value);
     };
-    for (const type of types) {
-      offs.push(on(type, settle));
+
+    offs.push(on(success, (frame) => settle(resolve, frame)));
+    for (const type of failures) {
+      offs.push(on(type, (frame) => settle(reject, new Error(describeFailure(what, type, frame)))));
+    }
+    if (timeout !== null) {
+      timer = setTimeout(
+        () => settle(reject, new Error(`${what} did not respond within ${Math.round(timeout / 1000)}s`)),
+        timeout,
+      );
     }
   });
+
+  return {
+    promise,
+    cancel: () => {
+      for (const off of offs) {
+        off();
+      }
+      offs.length = 0;
+      if (timer !== null) {
+        clearTimeout(timer);
+        timer = null;
+      }
+    },
+  };
+}
+
+/**
+ * Await a success frame, rejecting on any of the failure frames.
+ *
+ * @param {string} success frame type that resolves the wait
+ * @param {string[]} failures frame types that reject it
+ * @param {{timeout?: number, what?: string}} options
+ */
+export function awaitOutcome(success, failures, options = {}) {
+  return expectOutcome(success, failures, options).promise;
 }
 
 export function send(type, payload = {}) {
@@ -159,6 +234,18 @@ export function isConnected() {
   return socket !== null && socket.readyState === WebSocket.OPEN;
 }
 
+/**
+ * Strip the connection token out of a handshake line before it is logged.
+ *
+ * The near-miss case - a line that parses but is not what was expected - is
+ * exactly the one carrying {"port": N, "token": "..."}, and the log file is
+ * something users are invited to copy into bug reports. The token is only ever
+ * useful to a process already on this machine, but it has no business on disk.
+ */
+function redactToken(line) {
+  return line.replace(/("token"\s*:\s*")[^"]*(")/g, "$1<redacted>$2");
+}
+
 /** Read the sidecar's handshake line off stdout. */
 function onHandshakeChunk(chunk, resolve, reject) {
   handshakeBuffer += chunk;
@@ -171,12 +258,14 @@ function onHandshakeChunk(chunk, resolve, reject) {
   try {
     const announcement = JSON.parse(line);
     if (announcement.type !== "listening") {
-      reject(new Error(`Unexpected handshake: ${line.slice(0, 200)}`));
+      reject(new Error(`Unexpected handshake: ${redactToken(line).slice(0, 200)}`));
       return;
     }
     resolve(announcement);
   } catch (error) {
-    reject(new Error(`Malformed handshake: ${line.slice(0, 200)} (${error.message})`));
+    reject(
+      new Error(`Malformed handshake: ${redactToken(line).slice(0, 200)} (${error.message})`),
+    );
   }
 }
 
@@ -223,6 +312,10 @@ export async function startSidecar({ python, envRoot, appDir }) {
 
   log.info("Starting sidecar:", command);
 
+  // A previous attempt may have left a partial line behind; a stale prefix
+  // would corrupt the next handshake.
+  handshakeBuffer = "";
+
   const announcement = await new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error("Sidecar did not announce a port")), 30000);
 
@@ -259,8 +352,49 @@ export async function startSidecar({ python, envRoot, appDir }) {
       .catch(reject);
   });
 
-  await connect(announcement);
-  return once("ready");
+  // Subscribed before the socket is opened, not after.
+  //
+  // "ready" only arrives once the kernel is up, which takes seconds, so the gap
+  // between connect() resolving and a later subscription cannot lose it today.
+  // But nothing structural guarantees that - a warm restart is much quicker -
+  // and a lost "ready" would hang startup with only an "unhandled frame"
+  // warning to show for it.
+  //
+  // The failure signals are the sidecar's *death*, deliberately not its "error"
+  // frames. A fatal startup failure ends in the process exiting, so the exit is
+  // the reliable signal; an error frame is not, because the window between the
+  // socket opening and "ready" is exactly when the app is already on screen and
+  // the user can press Run. That reaches a sidecar whose kernel does not exist
+  // yet, raises in the handler, and produces an error frame from a startup that
+  // is otherwise perfectly healthy.
+  const ready = expectOutcome("ready", ["sidecar.exit", "sidecar.disconnected"], {
+    timeout: READY_TIMEOUT,
+    what: "The Python sidecar",
+  });
+
+  // Error frames still carry the *reason* a fatal start failed, which is what
+  // belongs on screen. Recorded rather than awaited, and attached to whatever
+  // the wait actually rejects with.
+  let reported = null;
+  const offError = on("error", (frame) => {
+    reported = frame;
+  });
+
+  try {
+    await connect(announcement);
+    return await ready.promise;
+  } catch (error) {
+    // Abandoning the wait would leave its subscriptions and timer alive, to
+    // reject into nothing 90 seconds later.
+    ready.cancel();
+    if (reported === null) {
+      throw error;
+    }
+    const where = reported.context === undefined ? "sidecar" : reported.context;
+    throw new Error(`${error.message} — ${where}: ${reported.message ?? "no detail given"}`);
+  } finally {
+    offError();
+  }
 }
 
 /** Ask the sidecar to shut down, then close its stdin as a fallback. */

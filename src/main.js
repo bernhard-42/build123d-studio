@@ -152,6 +152,14 @@ async function main() {
     showSplash();
   });
 
+  // A restart started from the toolbar has no caller awaiting its outcome, so
+  // if the sidecar dies while the modal is up nothing else would ever take it
+  // down - leaving a window that blocks its own keyboard input. The settings
+  // dialog's flows handle this themselves through awaitKernelRestart.
+  for (const type of ["sidecar.exit", "sidecar.disconnected"]) {
+    ipc.on(type, () => resetBusy());
+  }
+
   // Exceptions raised by user code. The console prints its own traceback, so
   // this is only worth logging - but it has to be consumed, or every error in
   // a script produces an "unhandled sidecar frame" warning.
