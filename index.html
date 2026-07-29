@@ -94,6 +94,16 @@
     <!-- Shown while the kernel restarts. Modal on purpose: the kernel is gone
          for those seconds, so Run, the console and the variable explorer would
          all fail or queue silently if the user carried on. -->
+    <!-- Shown when the Python backend dies mid-session. Deliberately not modal:
+         the editor buffer is untouched and still worth saving, so this informs
+         and offers a way back rather than blocking the window. -->
+    <div id="backend-banner" class="backend-banner" hidden>
+      <span class="backend-banner-text" id="backend-banner-text"></span>
+      <button type="button" class="backend-banner-action" id="backend-banner-restart">
+        Restart backend
+      </button>
+    </div>
+
     <div id="busy" class="busy-overlay" hidden>
       <div class="busy-box">
         <p class="busy-message" id="busy-message"></p>

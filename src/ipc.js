@@ -41,6 +41,11 @@ const binaryHandlers = new Map();
 let socket = null;
 let sidecar = null;
 let handshakeBuffer = "";
+// What startSidecar was called with, so the backend can be brought back without
+// the caller having to hold on to it. The environment is already resolved by
+// then, and re-resolving it would repeat the whole uv sync for a restart that
+// only needs a process.
+let launch = null;
 
 function dispatch(frame) {
   const listeners = handlers.get(frame.type);
@@ -272,16 +277,21 @@ function onHandshakeChunk(chunk, resolve, reject) {
 function connect({ port, token }) {
   return new Promise((resolve, reject) => {
     const url = `ws://127.0.0.1:${port}/?token=${encodeURIComponent(token)}`;
-    socket = new WebSocket(url);
+    // Held locally as well, so the handlers can tell whether they still belong
+    // to the current socket. A restart replaces it, and the old one's close
+    // event arrives afterwards - reporting that as a disconnection would raise
+    // the "backend stopped" banner over a backend that had just come back.
+    const ws = new WebSocket(url);
+    socket = ws;
     // Binary frames as ArrayBuffer, so views can be built over them directly.
-    socket.binaryType = "arraybuffer";
+    ws.binaryType = "arraybuffer";
 
-    socket.onopen = () => {
+    ws.onopen = () => {
       log.info("Connected to sidecar on port", port);
       resolve();
     };
-    socket.onerror = () => reject(new Error(`Could not connect to the sidecar on port ${port}`));
-    socket.onmessage = (event) => {
+    ws.onerror = () => reject(new Error(`Could not connect to the sidecar on port ${port}`));
+    ws.onmessage = (event) => {
       if (event.data instanceof ArrayBuffer) {
         dispatchBinary(event.data);
         return;
@@ -292,7 +302,11 @@ function connect({ port, token }) {
         log.error("Malformed frame from sidecar:", String(event.data).slice(0, 200), error);
       }
     };
-    socket.onclose = (event) => {
+    ws.onclose = (event) => {
+      if (socket !== ws) {
+        // Superseded by a restart; its replacement is already connected.
+        return;
+      }
       log.warn("Sidecar socket closed:", event.code, event.reason);
       socket = null;
       dispatch({ type: "sidecar.disconnected", code: event.code });
@@ -306,6 +320,7 @@ function connect({ port, token }) {
  * @param {{python: string, envRoot: string, appDir: string}} options
  */
 export async function startSidecar({ python, envRoot, appDir }) {
+  launch = { python, envRoot, appDir };
   const command =
     `${quote(python)} ${quote(`${appDir}/sidecar/main.py`)}` +
     ` --env-root ${quote(envRoot)} --app-dir ${quote(appDir)}`;
@@ -344,6 +359,10 @@ export async function startSidecar({ python, envRoot, appDir }) {
       .then((process) => {
         sidecar = process;
         process.exited.then((code) => {
+          if (sidecar !== process) {
+            // Stopped on purpose to make room for a replacement.
+            return;
+          }
           log.warn("Sidecar exited with code", code);
           sidecar = null;
           dispatch({ type: "sidecar.exit", code });
@@ -395,6 +414,54 @@ export async function startSidecar({ python, envRoot, appDir }) {
   } finally {
     offError();
   }
+}
+
+/**
+ * Start a replacement sidecar after the previous one died.
+ *
+ * A sidecar crash - running out of memory tessellating something large is the
+ * realistic one - used to cost the whole session: the kernel indicator went
+ * dead and every action afterwards either threw or was ignored, with a
+ * perfectly good editor buffer sitting there and no way back short of
+ * restarting the application.
+ *
+ * The environment does not need rebuilding, so this skips straight to spawning:
+ * ensureEnvironment has already run, and repeating it would mean a uv sync for
+ * a restart that only needs a process.
+ */
+export async function restartSidecar() {
+  if (launch === null) {
+    throw new Error("The Python backend has not been started yet");
+  }
+
+  // A process that exited is already gone, but a socket that dropped does not
+  // imply a dead process - and one left running would hold a kernel, a console
+  // and a model socket that nothing can reach any more.
+  if (sidecar !== null) {
+    const previous = sidecar;
+    sidecar = null; // before killing, so its exit is not reported as a failure
+    try {
+      await previous.kill();
+    } catch (error) {
+      log.warn("Could not stop the previous sidecar:", error);
+    }
+  }
+  if (socket !== null) {
+    const previous = socket;
+    socket = null;
+    try {
+      previous.close();
+    } catch {
+      // Already gone.
+    }
+  }
+
+  // Only "restarting" is announced. The panes need it to clear state that
+  // belonged to the dead kernel; the *outcome* is what this function returns,
+  // so a matching "restarted" frame would have no consumer and would earn an
+  // "unhandled frame" warning on every recovery.
+  dispatch({ type: "sidecar.restarting" });
+  return startSidecar(launch);
 }
 
 /** Ask the sidecar to shut down, then close its stdin as a fallback. */

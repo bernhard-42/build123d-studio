@@ -82,6 +82,9 @@ export function initToolbar() {
   ipc.on("sidecar.exit", () => setKernelState("dead"));
   ipc.on("kernel.restarting", () => setKernelState("busy"));
   ipc.on("kernel.restarted", () => setKernelState("idle"));
+  // The replacement reports its own state once its kernel is up; until then
+  // this is neither dead nor idle.
+  ipc.on("sidecar.restarting", () => setKernelState("busy"));
   ipc.on("kernel.restart_failed", () => setKernelState("dead"));
 
   // Ctrl/Cmd+N, +O and +S have to work from anywhere, not only when Monaco

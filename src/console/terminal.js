@@ -93,6 +93,16 @@ export function initConsole() {
     terminal.reset();
   });
 
+  // A replacement backend brings a new console with its own In[n] counting from
+  // one. Keeping the old transcript above it would read as one session; and
+  // firstOutput has long since been consumed, so without this the new banner
+  // would simply be appended to a dead conversation.
+  ipc.on("sidecar.restarting", () => {
+    terminal.reset();
+    terminal.write("\x1b[2mRestarting the Python backend…\x1b[0m\r\n");
+    firstOutput = true;
+  });
+
   ipc.on("kernel.restarted", () => {
     // Same two steps as startup: the pty has to know the pane's size before the
     // new banner is drawn, or the first prompt wraps at the wrong column.

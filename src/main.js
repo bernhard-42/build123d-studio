@@ -93,6 +93,60 @@ window.addEventListener("keydown", (event) => {
   }
 });
 
+/**
+ * Offer a way back when the Python backend dies during a session.
+ *
+ * Wired only after the first successful start, so a failure during startup
+ * keeps reporting itself on the splash - which is the right place for it,
+ * because there is no working app behind it to go back to.
+ *
+ * Manual, with no automatic retry. Whatever killed the sidecar will very likely
+ * kill its replacement, and a self-restarting backend would turn one crash into
+ * a loop of them with the log filling up behind it.
+ */
+function installBackendRecovery(console_) {
+  const banner = document.getElementById("backend-banner");
+  const text = document.getElementById("backend-banner-text");
+  const button = document.getElementById("backend-banner-restart");
+  let restarting = false;
+
+  const show = (message) => {
+    text.textContent = message;
+    button.disabled = false;
+    banner.hidden = false;
+  };
+
+  ipc.on("sidecar.exit", (frame) =>
+    show(`The Python backend stopped (exit code ${frame.code}).`),
+  );
+  ipc.on("sidecar.disconnected", () => show("The Python backend disconnected."));
+
+  button.addEventListener("click", async () => {
+    if (restarting) {
+      return;
+    }
+    restarting = true;
+    button.disabled = true;
+    showBusy("Restarting the Python backend…");
+    try {
+      await ipc.restartSidecar();
+      // The replacement knows nothing about this session: where the open file
+      // lives, or how big the console pane is. Both are sent at startup and
+      // have to be sent again.
+      syncKernelDirectory();
+      console_.syncSize();
+      banner.hidden = true;
+      log.info("Python backend restarted");
+    } catch (error) {
+      log.error("Could not restart the Python backend:", error);
+      show(`Could not restart the backend: ${error?.message ?? error}`);
+    } finally {
+      restarting = false;
+      hideBusy();
+    }
+  });
+}
+
 async function main() {
   // Both write into the app-data directory rather than the application's own,
   // so they only need os.getPath - no environment, nothing to bootstrap. Doing
@@ -198,6 +252,7 @@ async function main() {
     // the kernel should run.
     syncKernelDirectory();
     console_.syncSize();
+    installBackendRecovery(console_);
   } catch (err) {
     log.error("Sidecar failed to start", err);
     // The window is already up, so report this in place rather than by

@@ -136,5 +136,15 @@ export function initVariables() {
     render();
   });
 
+  // The namespace these rows describe died with the backend. Showing them until
+  // the replacement's first idle would be showing variables that no longer
+  // exist, in a pane whose whole job is to say what does.
+  ipc.on("sidecar.restarting", () => {
+    rows = [];
+    details.clear();
+    expanded.clear();
+    render();
+  });
+
   render();
 }

@@ -596,6 +596,44 @@ body {
  * equally unavailable. Blocking input is the honest state, and it stops a
  * keystroke from being swallowed by a console that is about to be replaced.
  */
+/* The backend-died banner. Below the busy overlay and the confirmation dialog,
+   because a restart in progress and a quit prompt both matter more than a
+   notice about something that has already happened. */
+.backend-banner {
+  position: fixed;
+  top: 0;
+  right: 0;
+  left: 0;
+  z-index: 1100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--error-bg, color-mix(in srgb, var(--error-fg) 18%, var(--bg)));
+  color: var(--fg);
+  font-size: 12px;
+}
+
+.backend-banner[hidden] {
+  display: none;
+}
+
+.backend-banner-action {
+  padding: 3px 12px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+  cursor: pointer;
+}
+
+.backend-banner-action:hover {
+  border-color: var(--fg-dim);
+}
+
 /* Named -overlay rather than plain .busy, and it matters.
    "busy" is also one of the kernel states the toolbar writes onto the status
    chip (classList.add("busy") in setKernelState), so a bare .busy rule styled
