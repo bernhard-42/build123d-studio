@@ -18,7 +18,27 @@ from ocp_vscode.comms import set_port
 # Import _convert by name rather than reaching for it through the module:
 # ocp_vscode/__init__.py exports a show() *function*, which shadows the
 # ocp_vscode.show submodule, so `ocp_vscode.show._convert` fails.
-from ocp_vscode.show import _convert, reset_show, show_clear  # noqa: F401 - re-exported
+#
+# Guarded, because _convert is private and is the one function this whole
+# package rests on. ocp_vscode is pinned for exactly that reason, but the config
+# dialog exists to unpin *neighbouring* packages and a pin does move eventually;
+# when it does, this should say so rather than surface as an ImportError from a
+# module nobody expects to be importing ocp_vscode internals. The failure is
+# deliberately deferred to the first show(): the sidecar imports this package
+# during warm-up, and refusing there would take out a session that can still
+# edit, run code and use the console perfectly well.
+try:
+    from ocp_vscode.show import _convert, reset_show, show_clear  # noqa: F401 - re-exported
+
+    _INCOMPATIBLE = None
+    for _name in ("_convert", "reset_show", "show_clear"):
+        if not callable(locals()[_name]):
+            _INCOMPATIBLE = f"ocp_vscode.show.{_name} is not callable"
+            break
+except ImportError as _exc:  # pragma: no cover - depends on the installed ocp_vscode
+    _convert = reset_show = show_clear = None
+    _INCOMPATIBLE = str(_exc)
+
 from ocp_vscode.utils import CommsWarning
 
 # Settle the port up front.
@@ -51,6 +71,18 @@ from .transport import NotConnected, send_model
 __all__ = ["show", "show_object", "reset_show", "show_clear", "NotConnected"]
 
 
+def _require_ocp_vscode():
+    """Fail with an explanation rather than an AttributeError on None."""
+    if _INCOMPATIBLE is not None:
+        raise RuntimeError(
+            "This ocp_vscode is not compatible with build123d Studio: "
+            f"{_INCOMPATIBLE}. show() tessellates through ocp_vscode.show._convert(), "
+            "a private function, which is why ocp_vscode is pinned in the "
+            "application's runtime. Reinstall the environment, or report this "
+            "against the build123d Studio release you are running."
+        )
+
+
 def _deliver(converted, mapping):
     """Split the buffers out of a converted model and send it."""
     # _convert returns ({"data", "type", "config", "count"}, mapping) with the
@@ -68,12 +100,14 @@ def _deliver(converted, mapping):
 
 def show(*cad_objs, **kwargs):
     """Tessellate objects and display them in the build123d-studio viewer pane."""
+    _require_ocp_vscode()
     converted, mapping = _convert(*cad_objs, **kwargs)
     _deliver(converted, mapping)
 
 
 def show_object(obj, name=None, options=None, parent=None, clear=False, **kwargs):
     """CQ-editor compatible entry point, as ocp_vscode provides."""
+    _require_ocp_vscode()
     names = None if name is None else [name]
     if options is not None:
         kwargs = {**options, **kwargs}

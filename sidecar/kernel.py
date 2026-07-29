@@ -229,7 +229,14 @@ class Kernel:
                 log(f"iopub handler failed: {exc}")
 
     def execute(self, code, silent=False, store_history=True, user_expressions=None):
-        """Run code in the kernel. Returns the request's msg_id."""
+        """Run code in the kernel. Returns the request's msg_id.
+
+        The reply is not awaited, and nothing here reads the shell channel:
+        _evaluate is its only consumer, and it drops replies that are not its
+        own. Anything that ever needs *its* execute_reply has to take that up
+        with _evaluate first, or the two will steal from each other depending on
+        timing - see the discard count logged there.
+        """
         return self._send_execute(
             code,
             silent=silent,
@@ -259,6 +266,7 @@ class Kernel:
         self._internal_requests.append(msg_id)
 
         deadline = time.monotonic() + timeout
+        discarded = 0
         while time.monotonic() < deadline:
             remaining = deadline - time.monotonic()
             # Polled in slices rather than waiting for the whole timeout in one
@@ -271,9 +279,12 @@ class Kernel:
             except queue.Empty:
                 continue
             if reply["parent_header"].get("msg_id") != msg_id:
-                # Replies to other requests now legitimately land here - a Run's
-                # execute_reply, for instance, which nobody awaits. Dropping
-                # them is correct; see the note on execute().
+                # Replies to other requests legitimately land here - a Run's
+                # execute_reply, which nobody awaits - so dropping them is
+                # correct and far too common to log one by one. Counted instead,
+                # and reported only if this call then fails to find its own
+                # reply, which is the case where "who ate it?" is the question.
+                discarded += 1
                 continue
 
             result = reply["content"].get("user_expressions", {}).get("value")
@@ -288,6 +299,11 @@ class Kernel:
             # user_expressions return a repr, so a JSON string arrives quoted
             # and escaped exactly as Python would print it.
             return ast.literal_eval(text)
+
+        log(
+            f"Inspection timed out after {timeout}s"
+            + (f", having discarded {discarded} unrelated shell replies" if discarded else "")
+        )
         return None
 
     def set_working_dir(self, path):

@@ -14,6 +14,7 @@ import os
 import signal
 import sys
 import threading
+import time
 
 from channel import log
 
@@ -96,8 +97,10 @@ class PtyConsole:
             # Child: replace ourselves with the console. Any failure here has to
             # exit hard - returning would fork the sidecar's own logic.
             try:
-                os.environ.update(self._environment(columns, rows))
-                os.execv(self.python, self._command())
+                # execve with the environment passed explicitly, rather than
+                # mutating os.environ and calling execv. Same result, but it
+                # says where the child's environment comes from.
+                os.execve(self.python, self._command(), self._environment(columns, rows))
             except Exception as exc:  # noqa: BLE001
                 sys.stderr.write(f"Failed to start console: {exc}\r\n")
             finally:
@@ -141,10 +144,45 @@ class PtyConsole:
                 log(f"Console output handler failed: {exc}")
 
         self._stopped.set()
+        self._reap()
         try:
             self.on_exit()
         except Exception as exc:  # noqa: BLE001
             log(f"Console exit handler failed: {exc}")
+
+    def _reap(self, timeout=2.0):
+        """Collect the console process, so it does not linger as a zombie.
+
+        Nothing used to wait on it: stop() sent SIGTERM and closed the fd, the
+        pump broke on EIO, and the child stayed defunct until the sidecar itself
+        exited. Every kernel restart replaces the console, so a long session
+        accumulated one per restart - untidy, and enough to confuse anything
+        counting processes by name, which is how the install script decides
+        whether the app is running.
+
+        Safe to call twice: the pump thread reaps when the console ends on its
+        own, stop() reaps after killing it, and whichever loses gets
+        ChildProcessError.
+        """
+        if IS_WINDOWS or self.pid is None:
+            return
+
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            try:
+                reaped, _ = os.waitpid(self.pid, os.WNOHANG)
+            except (ChildProcessError, OSError):
+                return
+            if reaped != 0:
+                return
+            time.sleep(0.02)
+
+        # SIGTERM was ignored, or the process is wedged somewhere uninterruptible.
+        try:
+            os.kill(self.pid, signal.SIGKILL)
+            os.waitpid(self.pid, 0)
+        except (ChildProcessError, OSError):
+            pass
 
     def write(self, data: bytes):
         """Send keystrokes from xterm.js to the console."""
@@ -175,6 +213,8 @@ class PtyConsole:
         self._stopped.set()
         try:
             if IS_WINDOWS:
+                # pywinpty holds the process handle and terminates it outright,
+                # so there is nothing to reap on this side.
                 if self._winpty is not None:
                     self._winpty.terminate(force=True)
             else:
@@ -184,3 +224,4 @@ class PtyConsole:
                     os.close(self._fd)
         except (OSError, ProcessLookupError):
             pass
+        self._reap()

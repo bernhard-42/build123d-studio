@@ -40,9 +40,13 @@ class Sidecar:
         self.channel = Channel()
         self.kernel = None
         self.console = None
-        # Set while a restart is in flight, so the console's own exit - which a
-        # restart causes deliberately - is not reported to the UI as a failure.
-        self._restarting = threading.Event()
+        # A _restarting Event used to live here, described as what stopped a
+        # deliberate console exit being reported as a failure. It was set and
+        # cleared and never read: the identity checks in console_start - "is
+        # this callback still the current console?" - are what actually do that,
+        # and they do it for the pty's output as well as its exit. A dead
+        # synchronisation primitive in threaded code is worse than none, because
+        # the next person reads the comment and believes it.
         # Last size the pane reported. Remembered so a console started later -
         # after a restart - opens at the size the pane actually is, instead of
         # the 120x30 default that would make its first prompt wrap wrongly.
@@ -60,6 +64,9 @@ class Sidecar:
         # The kernel warm-up is held back until the console is up; see
         # warm_kernel.
         self._warmed = threading.Event()
+        # The fallback timer that warms the kernel if the console never speaks.
+        # Held so it can be cancelled: see console_start.
+        self._warm_timer = None
 
         # Where the kernel-side build123d-studio package delivers tessellated models.
         # The port is OS-assigned, so nothing can collide.
@@ -158,7 +165,19 @@ class Sidecar:
 
         # If the console never starts, the warm-up must still happen; otherwise
         # the first Run pays the two seconds we were trying to hide.
-        threading.Timer(5.0, self.warm_kernel).start()
+        #
+        # Cancelled and replaced rather than simply scheduled again. A restart
+        # calls this method a second time, and the previous console's timer was
+        # still pending: it fired five seconds later, found _warmed cleared by
+        # the restart, and sent an execute_request into a client whose channels
+        # were at that moment being torn down and rebuilt - "assert self.socket
+        # is not None" inside jupyter_client, surfacing as "Kernel warm-up
+        # failed" with an empty message. Nothing broke, but the warm-up did not
+        # happen, so the first Run after that restart paid the full import.
+        if self._warm_timer is not None:
+            self._warm_timer.cancel()
+        self._warm_timer = threading.Timer(5.0, self.warm_kernel)
+        self._warm_timer.start()
 
     def warm_kernel(self):
         """Import build123d in the kernel, once, and not before now.
@@ -302,7 +321,6 @@ class Sidecar:
         The UI is told before and after, because the gap is seconds long and
         nothing else about it is visible.
         """
-        self._restarting.set()
         self.channel.send("kernel.restarting")
         try:
             if self.console is not None:
@@ -320,8 +338,6 @@ class Sidecar:
             self.channel.error("Restarting the kernel", exc)
             self.channel.send("kernel.restart_failed", message=str(exc))
             return
-        finally:
-            self._restarting.clear()
         self.channel.send("kernel.restarted")
 
     def on_app_info(self, _message):
@@ -338,6 +354,8 @@ class Sidecar:
         os._exit(0)
 
     def stop(self):
+        if self._warm_timer is not None:
+            self._warm_timer.cancel()
         if self.console is not None:
             self.console.stop()
         if self.kernel is not None:

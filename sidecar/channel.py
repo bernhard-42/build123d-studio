@@ -197,13 +197,29 @@ class Channel:
         return connection.respond(403, "unauthorised\n")
 
     def _handle_connection(self, connection):
+        # One webview, by design. Accepting a second would replace the live
+        # connection and then have the *first* one's cleanup null the second's
+        # reference on its way out, leaving a connected client nothing could be
+        # sent to. Refusing says so instead of failing quietly later.
+        if self._connection is not None:
+            log("Refused a second webview connection; one is already live")
+            connection.close(1013, "already connected")
+            return
+
         log("Webview connected")
         self._connection = connection
         self._connected.set()
 
         try:
             for message in connection:
-                self._dispatch(message)
+                # Inside the loop, not around it. A handler that raises is a bug
+                # in one frame; the enclosing except is how the connection
+                # itself ends, and conflating the two dropped the socket - and
+                # with it the session - over a single malformed frame.
+                try:
+                    self._dispatch(message)
+                except Exception as exc:  # noqa: BLE001
+                    self.error("Dispatching a frame", exc)
         except Exception as exc:  # noqa: BLE001
             log(f"Connection closed: {exc}")
         finally:
@@ -234,8 +250,20 @@ class Channel:
             self.error(f"Handling {message_type!r}", exc)
 
     def _dispatch_binary(self, message):
+        # Text frames have always been hardened; these were not, and unpacking a
+        # short frame raised straight out through the receive loop.
+        if len(message) < HEADER_SIZE:
+            log(f"Ignoring a {len(message)}-byte binary frame: shorter than the header")
+            return
+
         kind, header_length = struct.unpack_from(HEADER_FORMAT, message)
         payload_offset = HEADER_SIZE + header_length + pad_to_alignment(header_length)
+        if payload_offset > len(message):
+            log(
+                f"Ignoring a binary frame claiming a {header_length}-byte header "
+                f"in {len(message)} bytes"
+            )
+            return
         payload = message[payload_offset:]
 
         handler = self._binary_handlers.get(kind)
