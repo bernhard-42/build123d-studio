@@ -30,6 +30,17 @@ from pty_console import PtyConsole
 # namespace - the variable explorer would otherwise list its own helper.
 INSPECTOR = '__import__("build123d_studio.inspector", fromlist=["inspector"])'
 
+# Serial lanes for handlers too slow to run on the receive thread. Two, not one,
+# so a restart cannot queue behind an inspection - see the registrations below.
+INSPECT = "inspect"
+CONTROL = "control"
+
+# The refresh that follows an idle is answered by a kernel that has just gone
+# idle, so its reply is immediate or it is not coming. Fifteen seconds is right
+# for a refresh the user asked for and far too long for one nobody did: it would
+# hold the inspect lane, and the explorer's answer would be stale by then anyway.
+IDLE_REFRESH_TIMEOUT = 5
+
 
 class Sidecar:
     def __init__(self, env_root, app_dir):
@@ -64,6 +75,9 @@ class Sidecar:
         # The kernel warm-up is held back until the console is up; see
         # warm_kernel.
         self._warmed = threading.Event()
+        # Set while an idle-triggered refresh is queued or running, so repeats
+        # collapse into one. See request_refresh.
+        self._refresh_queued = threading.Event()
         # The fallback timer that warms the kernel if the console never speaks.
         # Held so it can be cancelled: see console_start.
         self._warm_timer = None
@@ -72,16 +86,27 @@ class Sidecar:
         # The port is OS-assigned, so nothing can collide.
         self.models = ModelSocket(on_model=self.on_model)
 
+        # Inline: these only forward. Running them on the receive thread is what
+        # keeps a keystroke ahead of everything else.
         self.channel.on("console.resize", self.on_console_resize)
-        self.channel.on("viewer.changes", self.on_viewer_changes)
-        self.channel.on("vars.refresh", self.on_vars_refresh)
-        self.channel.on("vars.detail", self.on_vars_detail)
         self.channel.on("kernel.execute", self.on_execute)
         self.channel.on("kernel.interrupt", self.on_interrupt)
-        self.channel.on("kernel.restart", self.on_restart)
         self.channel.on("kernel.cwd", self.on_cwd)
-        self.channel.on("app.info", self.on_app_info)
         self.channel.on("shutdown", self.on_shutdown)
+
+        # Slow, and none of it is worth a dropped keystroke: an inspection waits
+        # on the kernel for up to fifteen seconds, activating a measure tool
+        # deserialises a BRep per face, edge and vertex of the model, and the
+        # About dialog walks the installed distributions.
+        self.channel.on("viewer.changes", self.on_viewer_changes, lane=INSPECT)
+        self.channel.on("vars.refresh", self.on_vars_refresh, lane=INSPECT)
+        self.channel.on("vars.detail", self.on_vars_detail, lane=INSPECT)
+        self.channel.on("app.info", self.on_app_info, lane=INSPECT)
+
+        # Its own lane deliberately. Restart is what a user reaches for when
+        # something is already stuck, so it must not queue behind the very
+        # inspection that is stuck.
+        self.channel.on("kernel.restart", self.on_restart, lane=CONTROL)
 
         # Keystrokes arrive as raw bytes - no base64, no JSON escaping, on what
         # is the hottest path in the UI.
@@ -223,7 +248,13 @@ class Sidecar:
                 # Namespace may have changed - whoever executed it, editor or
                 # console. Pushed rather than polled, so an idle session costs
                 # nothing.
-                self.refresh_variables()
+                #
+                # Queued rather than run here. This is the iopub pump, and it is
+                # the only thing forwarding execution state to the toolbar; an
+                # inspection that blocked it for fifteen seconds took the busy
+                # indicator with it, and further iopub traffic queued behind
+                # that.
+                self.request_refresh()
 
         elif msg_type == "error":
             self.channel.send(
@@ -263,10 +294,31 @@ class Sidecar:
     # execute_request carrying a user_expression: the answer comes back on the
     # shell channel, so the console never sees it and In[n] does not advance.
 
-    def refresh_variables(self):
-        rows = self.kernel.evaluate(f"{INSPECTOR}.variables()")
+    def refresh_variables(self, timeout=None):
+        rows = self.kernel.evaluate(f"{INSPECTOR}.variables()", timeout=timeout)
         if rows is not None:
             self.channel.send("vars.data", variables=rows)
+
+    def request_refresh(self):
+        """Queue an idle-triggered refresh, coalescing repeats.
+
+        Every idle asks for one, and a session that runs cells in quick
+        succession produces them faster than the kernel answers. They would pile
+        up on the lane, each one describing a namespace that the next has
+        already superseded. One pending refresh is enough, because it reads the
+        namespace as it is when it finally runs.
+        """
+        if self._refresh_queued.is_set():
+            return
+        self._refresh_queued.set()
+        self.channel.submit(INSPECT, self._run_queued_refresh)
+
+    def _run_queued_refresh(self):
+        # Cleared first: an execution that finishes while this one is talking to
+        # the kernel has genuinely changed the namespace again and deserves its
+        # own refresh.
+        self._refresh_queued.clear()
+        self.refresh_variables(timeout=IDLE_REFRESH_TIMEOUT)
 
     def on_vars_refresh(self, _message):
         self.refresh_variables()

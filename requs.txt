@@ -157,6 +157,18 @@ Read-only installation
 
 - Add all log paths to the info box
 - Add an OS menu to get Cmd-C/Cmd-V/Cmd-X. Would also deliver Cmd-Q, ...
+- Three distinct run shortcuts, currently two:
+    - run block and move the cursor on
+    - run block and leave the cursor where it is
+    - run line or selection
+  Most of this exists already: runCell and runSelectionOrLine both take an
+  "advance" flag, but nothing ever passes false, so "run and keep the cursor" is
+  implemented and unreachable. What is missing is the keymap and the bindings.
+  Note that "run line" is inherently one physical line, so sending a block
+  header alone - "for i in range(5):" - is incomplete input and the kernel says
+  so; that is the shortcut behaving as named, and the reason the third one has
+  to be clearly distinguished from the first two. Worth deciding whether run
+  line should instead extend to the whole statement under the cursor
 - Add Python code completion
     - There is none today, and there never was: monaco-editor ships language
       services for TypeScript, JSON, CSS and HTML only, and the editor

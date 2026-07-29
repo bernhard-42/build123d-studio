@@ -37,6 +37,11 @@ from channel import log
 # waits noticeably behind an in-flight inspection, long enough not to spin.
 SHELL_POLL = 0.25
 
+# Default for an inspection the user asked for, where waiting is better than
+# answering "unknown". Callers that inspect on the application's own initiative
+# pass something shorter - see IDLE_REFRESH_TIMEOUT.
+EVALUATE_TIMEOUT = 15
+
 class Kernel:
     """Owns the kernel process and the sidecar's client to it."""
 
@@ -244,7 +249,7 @@ class Kernel:
             user_expressions=user_expressions or {},
         )
 
-    def evaluate(self, expression, timeout=15):
+    def evaluate(self, expression, timeout=None):
         """Evaluate one expression without disturbing the session.
 
         Uses an empty, silent execute_request carrying a user_expression. The
@@ -254,7 +259,7 @@ class Kernel:
         variable explorer refresh after every execution without being visible.
         """
         with self._evaluate_lock:
-            return self._evaluate(expression, timeout)
+            return self._evaluate(expression, EVALUATE_TIMEOUT if timeout is None else timeout)
 
     def _evaluate(self, expression, timeout):
         msg_id = self._send_execute(
@@ -355,8 +360,20 @@ class Kernel:
         # startup, so anything start() sets up - the inspector binding the
         # variable explorer needs, among others - is set up again rather than
         # being quietly absent afterwards.
-        self.shutdown(now=True)
-        self.start()
+        # Held across the swap, and this is new with the lanes. Restart used to
+        # run on the receive thread, which is also where an execute came from,
+        # so the two could not overlap. It runs on its own lane now, so without
+        # this it could be tearing down and rebuilding self.client at the exact
+        # moment a Run or an inspection was using it - which is the same class
+        # of fault as two threads sharing the socket, one level up.
+        #
+        # Everywhere else the lock is held for a single send or one short
+        # receive poll, so this waits at most SHELL_POLL to take it, and holds
+        # it for the restart. Anything wanting the shell in the meantime waits,
+        # which is correct: for those seconds there is no kernel to talk to.
+        with self._shell_lock:
+            self.shutdown(now=True)
+            self.start()
         log("Kernel restarted")
 
     def shutdown(self, now=False):

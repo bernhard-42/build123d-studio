@@ -27,6 +27,7 @@ build typed-array views straight over the received ArrayBuffer, with no copy.
 """
 
 import json
+import queue
 import secrets
 import struct
 import sys
@@ -89,6 +90,10 @@ class Channel:
     def __init__(self):
         self._handlers = {}
         self._binary_handlers = {}
+        # Named serial lanes for handlers that are too slow to run on the
+        # receive thread. See on() and _lane.
+        self._lanes = {}
+        self._lanes_lock = threading.Lock()
         self._connection = None
         self._send_lock = threading.Lock()
         self._connected = threading.Event()
@@ -99,9 +104,54 @@ class Channel:
 
     # --- registration ---
 
-    def on(self, message_type, handler):
-        """Register the handler for one text message type."""
-        self._handlers[message_type] = handler
+    def on(self, message_type, handler, lane=None):
+        """Register the handler for one text message type.
+
+        ``lane`` is how a handler declares that it is slow. Everything used to
+        run inline on the single receive thread, so a handler that took seconds
+        held up every frame behind it - including console keystrokes, which are
+        the hottest thing in the application and only need an os.write to a pty.
+        Typing went dead while a measurement indexed a model or the variable
+        explorer inspected a name, and it read as the console freezing.
+
+        ``None`` means inline, and is right for anything that only forwards.
+        A named lane is a serial worker thread: order within a lane is
+        preserved, and separate lanes exist so that a slow inspection cannot
+        delay a restart - which is what a user reaches for precisely when
+        something is already stuck.
+        """
+        self._handlers[message_type] = (handler, lane)
+
+    def submit(self, lane, work):
+        """Run a callable on a lane, for work that no frame arrived for.
+
+        The variable refresh that follows every idle comes from the iopub pump
+        rather than from the webview, and it must not run there: blocking that
+        thread stops kernel status reaching the toolbar.
+        """
+        self._lane(lane).put(("(internal)", work, None))
+
+    def _lane(self, name):
+        with self._lanes_lock:
+            lane = self._lanes.get(name)
+            if lane is None:
+                lane = queue.Queue()
+                self._lanes[name] = lane
+                threading.Thread(
+                    target=self._run_lane, args=(lane,), name=f"lane-{name}", daemon=True
+                ).start()
+            return lane
+
+    def _run_lane(self, lane):
+        while True:
+            what, handler, frame = lane.get()
+            self._invoke(what, handler, frame)
+
+    def _invoke(self, what, handler, frame):
+        try:
+            handler() if frame is None else handler(frame)
+        except Exception as exc:  # noqa: BLE001 - one bad frame must not kill a lane
+            self.error(f"Handling {what!r}", exc)
 
     def on_binary(self, kind, handler):
         """Register the handler for one binary frame kind."""
@@ -240,14 +290,16 @@ class Channel:
             return
 
         message_type = frame.get("type")
-        handler = self._handlers.get(message_type)
-        if handler is None:
+        registration = self._handlers.get(message_type)
+        if registration is None:
             log(f"No handler for message type {message_type!r}")
             return
-        try:
-            handler(frame)
-        except Exception as exc:  # noqa: BLE001 - a bad frame must not kill the sidecar
-            self.error(f"Handling {message_type!r}", exc)
+
+        handler, lane = registration
+        if lane is None:
+            self._invoke(message_type, handler, frame)
+        else:
+            self._lane(lane).put((message_type, handler, frame))
 
     def _dispatch_binary(self, message):
         # Text frames have always been hardened; these were not, and unpacking a
