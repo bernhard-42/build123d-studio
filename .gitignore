@@ -3,7 +3,13 @@ node_modules/
 # Vite build output (Neutralino's documentRoot)
 resources/
 
-# Neutralino binaries and CLI state, fetched by `neu update`
+# The Neutralino binaries. Not committed - they would be 14 MB now and another
+# 14 MB on every version bump, in history for ever - but not fetched blindly
+# either: scripts/ensure-neutralino.mjs checks each one against the digests in
+# scripts/neutralino-pin.json before any build, and downloads the pinned release
+# when they are missing or wrong. These binaries become the application
+# executable in every package, and they used to arrive through a postinstall
+# hook with no verification at all.
 bin/
 .tmp/
 dist/

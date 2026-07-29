@@ -19,6 +19,7 @@
 //   node scripts/package.mjs --target linux-x64
 
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync, chmodSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -33,6 +34,16 @@ const neutralino = JSON.parse(readFileSync(join(ROOT, "neutralino.config.json"),
 const APP_NAME = "build123d Studio";
 const APP_SLUG = "build123d-studio";
 const VERSION = manifest.version;
+
+// The AppImage build tool, pinned. See packageLinux for why, and for where
+// these digests came from.
+const APPIMAGETOOL = {
+  version: "1.9.1",
+  digests: {
+    x86_64: "ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0",
+    aarch64: "f0837e7448a0c1e4e650a93bb3e85802546e60654ef287576f46c71c126a9158",
+  },
+};
 
 // target -> the binary neu build emits. uv is not shipped: the application
 // downloads the current release on first start, which keeps packages small and
@@ -252,13 +263,34 @@ Terminal=false
 `);
   cpSync(join(ROOT, "public", "icons", "appIcon.png"), join(appdir, `${APP_SLUG}.png`));
 
-  const tool = join(OUT, "appimagetool");
+  // Pinned and verified before it is ever executed.
+  //
+  // This used to fetch the "continuous" release, which upstream repoints at
+  // every commit, and run it unchecked on the machine that had just built the
+  // artifact users download - so whoever controlled that tag controlled the
+  // contents of the AppImage. A tagged release plus a committed digest makes it
+  // an input we decide on rather than one we accept.
+  //
+  // The digests come from the GitHub releases API, which serves them from a
+  // different origin than the asset itself, and were cross-checked against the
+  // downloaded bytes on 2026-07-29. Attestation is not an option here:
+  // AppImage/appimagetool publishes none, exactly as Neutralino does not.
+  const arch = targetName === "linux-arm64" ? "aarch64" : "x86_64";
+  const tool = join(OUT, `appimagetool-${APPIMAGETOOL.version}-${arch}.AppImage`);
   if (!existsSync(tool)) {
-    const arch = targetName === "linux-arm64" ? "aarch64" : "x86_64";
     run("curl", ["-sSfL", "-o", tool,
-      `https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-${arch}.AppImage`]);
-    chmodSync(tool, 0o755);
+      `https://github.com/AppImage/appimagetool/releases/download/${APPIMAGETOOL.version}` +
+      `/appimagetool-${arch}.AppImage`]);
   }
+  const digest = createHash("sha256").update(readFileSync(tool)).digest("hex");
+  if (digest !== APPIMAGETOOL.digests[arch]) {
+    rmSync(tool, { force: true });
+    throw new Error(
+      `appimagetool ${arch} does not match the pinned digest:\n` +
+      `  expected ${APPIMAGETOOL.digests[arch]}\n  got      ${digest}`,
+    );
+  }
+  chmodSync(tool, 0o755);
 
   const output = join(OUT, `${APP_SLUG}-${VERSION}-${targetName}.AppImage`);
   rmSync(output, { force: true });

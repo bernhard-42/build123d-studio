@@ -1,0 +1,42 @@
+{
+  "_comment": [
+    "The Neutralino release this build123d Studio is built against, and the",
+    "SHA-256 of every binary taken from it. scripts/ensure-neutralino.mjs checks",
+    "bin/ against these before any build and fetches the release when something",
+    "is missing or does not match; nothing is ever executed unverified.",
+    "",
+    "These binaries become the application executable in every package. They used",
+    "to be downloaded by a `postinstall: neu update` hook on every yarn install,",
+    "with no checksum and no signature - the least verified input to the shipped",
+    "product, while the uv binary beside it was checked against a committed",
+    "digest.",
+    "",
+    "What this proves and what it does not: the digests were taken from the",
+    "official release zip, whose own SHA-256 matched the digest published by the",
+    "GitHub releases API - a different origin from the asset bytes, so a tampered",
+    "or intercepted download is caught. It cannot prove the release itself is",
+    "honest. Neutralino publishes no build provenance: its attestations API",
+    "returns 404 and its release workflow has no attest-build-provenance step",
+    "(checked 2026-07-28). uv can be verified with `gh attestation verify`; this",
+    "cannot.",
+    "",
+    "To move the pin: node scripts/ensure-neutralino.mjs --update <version>",
+    "Do not edit the digests by hand.",
+    "",
+    "Only the binaries the packaging targets use are listed. The release also",
+    "ships mac_universal and linux_armhf; nothing builds for them. This list and",
+    "TARGETS in scripts/package.mjs have to agree."
+  ],
+
+  "version": "6.9.0",
+  "recorded": "2026-07-29",
+  "archiveSha256": "ff33dd68979cffc36e4e7e73d1bab4cbcdf2c036aad72ca32876fde51a32df14",
+
+  "binaries": {
+    "neutralino-mac_arm64": "ef5e8cfd96df35d811d47a127f5be54db50114f1f6b5c075218ca78a07e7a66f",
+    "neutralino-mac_x64": "02616220c49f0e7063145d1d606a27f12d2b7951e23efdd077e5300947481099",
+    "neutralino-linux_x64": "47cb0b6e60706f6dff83ed98e198c753580f21f210e3dd87e00719701247fc9d",
+    "neutralino-linux_arm64": "e5dfc6a2b2eeb1e7011e3bb987a1e85d5331ec87eadc04d57beb5b02dcc92b67",
+    "neutralino-win_x64.exe": "0eecd0c7f6c955b441e586def6e89c27c295f144d6d9061dd358c3f3907ff3b3"
+  }
+}

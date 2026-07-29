@@ -68,8 +68,14 @@ jobs:
           node-version: "22"
           cache: yarn
 
-      # postinstall runs `neu update`, which downloads the Neutralino binaries
-      # and the client library - neither is committed.
+      # No postinstall hook fetches anything any more. The Neutralino binaries
+      # that become the application executable are downloaded by package:build's
+      # first step and checked against the digests in
+      # scripts/neutralino-pin.json before they are used; the client library
+      # comes from the @neutralinojs/lib npm package, under yarn.lock's
+      # integrity hash. Previously `postinstall: neu update` fetched the
+      # binaries with no verification at all, here as well as on developer
+      # machines.
       - name: Install dependencies
         run: yarn install --frozen-lockfile
 
