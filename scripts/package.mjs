@@ -211,6 +211,11 @@ function packageWindows() {
   const zip = join(OUT, `${APP_SLUG}-${VERSION}-${targetName}.zip`);
   rmSync(zip, { force: true });
   if (process.platform === "win32") {
+    // The one command string in the project outside the quote() invariant that
+    // src/proc.js states. It is safe for a different reason rather than by that
+    // rule: both values are derived from constants in this file, and
+    // execFileSync passes argv directly with no shell in between. Keep them
+    // constant - anything user-derived here needs real quoting first.
     run("powershell", ["-NoProfile", "-Command",
       `Compress-Archive -Path '${stage}' -DestinationPath '${zip}'`]);
   } else {

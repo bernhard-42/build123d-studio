@@ -49,9 +49,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-14
+          # Labels checked against actions/runner-images before the first tag,
+          # because one that no longer resolves means the job never starts and
+          # the release job fails with it - on a workflow that had never run.
+          # macos-13 has been retired outright and macos-14 is deprecated; the
+          # current pair is macos-15 for arm64 and macos-15-intel for x64.
+          - os: macos-15
             target: darwin-arm64
-          - os: macos-13
+          - os: macos-15-intel
             target: darwin-x64
           - os: ubuntu-latest
             target: linux-x64

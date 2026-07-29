@@ -96,15 +96,33 @@ async function fetchRelease(work) {
   const archive = `neutralinojs-v${version}.zip`;
   const zip = join(work, archive);
 
-  // On an update there is no recorded digest yet, so the API is the only
-  // second source; on a normal run the committed one is authoritative and the
-  // API is a cross-check that costs one request.
-  const published = await assetDigest(`v${version}`, archive);
-  const expected = updating ? published : pin.archiveSha256;
-  if (!updating && published !== expected) {
-    throw new Error(
-      `The release asset no longer matches the pin:\n  pinned ${expected}\n  API    ${published}`,
-    );
+  // On an update there is no recorded digest yet, so the API is the only second
+  // source and a failure to reach it is fatal.
+  //
+  // On a normal run the committed digest is authoritative and the downloaded
+  // bytes are checked against it below, so the API call is a cross-check rather
+  // than the check. It must not be able to fail the build: bin/ is gitignored,
+  // so every CI job re-fetches, unauthenticated api.github.com is 60 requests
+  // an hour per source IP, and Actions egress addresses are shared - one 403
+  // would take out all four packaging jobs for a reason that has nothing to do
+  // with the artifact. A disagreement is still worth saying out loud.
+  let expected = pin.archiveSha256;
+  if (updating) {
+    expected = await assetDigest(`v${version}`, archive);
+  } else {
+    try {
+      const published = await assetDigest(`v${version}`, archive);
+      if (published !== expected) {
+        throw new Error(
+          `The release asset no longer matches the pin:\n  pinned ${expected}\n  API    ${published}`,
+        );
+      }
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith("The release asset")) {
+        throw error;
+      }
+      console.log(`  (could not cross-check against the releases API: ${error.message})`);
+    }
   }
 
   console.log(`  downloading ${archive}`);
