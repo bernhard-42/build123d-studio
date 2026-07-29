@@ -1,6 +1,6 @@
 {
   "name": "build123d-studio",
-  "version": "0.1.0",
+  "version": "0.1.3",
   "description": "A standalone build123d IDE: Monaco, three-cad-viewer, Jupyter console and variable explorer",
   "license": "Apache-2.0",
   "type": "module",
