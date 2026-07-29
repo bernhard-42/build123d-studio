@@ -103,14 +103,53 @@ jobs:
     runs-on: ubuntu-latest
     # The only job that can write, and it builds nothing: it downloads the
     # artifacts the packaging jobs produced and attaches them.
+    #
+    # id-token and attestations are what attest-build-provenance needs to mint a
+    # signing certificate and record the attestation. They are granted here and
+    # nowhere else, for the same reason contents: write is - this job runs no
+    # build code, so nothing from a compromised dependency can reach them.
     permissions:
       contents: write
+      id-token: write
+      attestations: write
 
     steps:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           path: artifacts
           merge-multiple: true
+
+      # This project checks what it consumes - uv is verified against a
+      # committed digest and its provenance against astral-sh/uv's own release
+      # workflow - and until now published nothing anyone could check in return.
+      # A user downloading a .dmg had no way to tell it apart from one somebody
+      # else uploaded.
+      #
+      # SHA256SUMS.txt is the low-tech half: it detects corruption and lets one
+      # download be compared against another. It proves nothing about origin on
+      # its own, since whoever could replace the artifacts could replace the
+      # sums file beside them.
+      # Named by extension rather than "*", which would race with its own
+      # redirect over whether the sums file lists itself, and would fail loudly
+      # if a platform's artifact were ever missing rather than quietly
+      # publishing sums for whatever did arrive.
+      - name: Generate SHA256SUMS.txt
+        working-directory: artifacts
+        run: |
+          sha256sum -- *.dmg *.zip *.AppImage > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      # The half that proves origin. Attestation is minted by GitHub against
+      # this workflow's identity and cannot be forged for a file this workflow
+      # never produced, so `gh attestation verify <file> --repo <this repo>`
+      # answers "did build123d Studio's release workflow build this?" - the same
+      # question this project asks of uv before installing it.
+      - uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        with:
+          subject-path: |
+            artifacts/*.dmg
+            artifacts/*.zip
+            artifacts/*.AppImage
 
       - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
@@ -124,6 +163,25 @@ jobs:
             `xattr -dr com.apple.quarantine "/Applications/build123d Studio.app"`.
 
             **Windows** — SmartScreen warns on first run: *More info* → *Run anyway*.
+
+            ### Verifying what you downloaded
+
+            These builds are unsigned, but they are attested. Both checks are
+            worth more than the warnings above are worth worrying about.
+
+            ```
+            # Did this repository's release workflow build it?
+            gh attestation verify build123d-studio-*.dmg --repo ${{ github.repository }}
+
+            # Is the download intact?
+            shasum -a 256 -c SHA256SUMS.txt --ignore-missing
+            ```
+
+            The attestation is the meaningful one: it is minted by GitHub
+            against the workflow that produced the file and cannot be forged for
+            an artifact that workflow never built. The checksums only detect a
+            damaged or truncated download - anyone able to replace the files
+            could replace SHA256SUMS.txt with them.
 
             On first start the application downloads its own Python environment
             (about 500 MB) into your user data directory. On macOS it then loads

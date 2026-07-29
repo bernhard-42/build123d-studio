@@ -275,8 +275,17 @@ Terminal=false
   // different origin than the asset itself, and were cross-checked against the
   // downloaded bytes on 2026-07-29. Attestation is not an option here:
   // AppImage/appimagetool publishes none, exactly as Neutralino does not.
+  //
+  // Cached in a subdirectory, not in release/ itself, and that is not
+  // cosmetic: CI uploads release/*.AppImage as the build artifacts, so a tool
+  // sitting there under that name would be published as though this project
+  // had built it - listed in SHA256SUMS.txt, attached to the release, and
+  // *attested*, which would be a false provenance claim about somebody else's
+  // binary. The glob does not descend into directories.
   const arch = targetName === "linux-arm64" ? "aarch64" : "x86_64";
-  const tool = join(OUT, `appimagetool-${APPIMAGETOOL.version}-${arch}.AppImage`);
+  const toolCache = join(OUT, ".tools");
+  mkdirSync(toolCache, { recursive: true });
+  const tool = join(toolCache, `appimagetool-${APPIMAGETOOL.version}-${arch}.AppImage`);
   if (!existsSync(tool)) {
     run("curl", ["-sSfL", "-o", tool,
       `https://github.com/AppImage/appimagetool/releases/download/${APPIMAGETOOL.version}` +
