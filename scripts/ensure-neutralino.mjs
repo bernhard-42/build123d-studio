@@ -135,7 +135,16 @@ async function fetchRelease(work) {
   }
   console.log(`  archive verified: ${actual}`);
 
-  execFileSync("tar", ["-xf", zip, "-C", work]);
+  // The release is a .zip on every platform, and only some tars can read one.
+  // macOS and Windows ship bsdtar, which handles zip; Linux ships GNU tar,
+  // which does not - it reports "This does not look like a tar archive" and
+  // exits non-zero, which is exactly how the first CI run failed. unzip is
+  // present on the Linux runners and on any normal distribution.
+  if (process.platform === "linux") {
+    execFileSync("unzip", ["-oq", zip, "-d", work]);
+  } else {
+    execFileSync("tar", ["-xf", zip, "-C", work]);
+  }
   return work;
 }
 

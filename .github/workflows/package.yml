@@ -60,6 +60,13 @@ jobs:
             target: darwin-x64
           - os: ubuntu-latest
             target: linux-x64
+          # linux-arm64 was supported everywhere except here: scripts/package.mjs
+          # has the target, the Neutralino pin carries the binary, appimagetool's
+          # aarch64 digest is committed and uv has the triple pinned - but no job
+          # ever built it, so the one platform nobody could test was also the one
+          # nobody would notice breaking.
+          - os: ubuntu-24.04-arm
+            target: linux-arm64
           - os: windows-latest
             target: win32-x64
 
@@ -87,7 +94,13 @@ jobs:
       - name: Build the frontend and Neutralino binaries
         run: yarn package:build
 
+      # shell: bash on every platform, because "$TARGET" is bash syntax and the
+      # Windows runners default to PowerShell, where the variable is $env:TARGET
+      # - so it expanded to nothing and the packager was asked for target "".
+      # Naming the shell keeps the env-var habit above working everywhere
+      # rather than interpolating ${{ }} into a command line.
       - name: Assemble the package
+        shell: bash
         env:
           TARGET: ${{ matrix.target }}
         run: node scripts/package.mjs --target "$TARGET"
