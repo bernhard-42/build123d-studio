@@ -3,6 +3,45 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!--
+      The webview reaches os.* and filesystem.* through Neutralino, so a
+      successful HTML or script injection here is arbitrary command execution,
+      not a defaced pane. The escaping is careful and the variable explorer
+      builds nodes rather than markup, but this is the layer that holds when one
+      of those is got wrong.
+
+      Every value below was established from the build rather than assumed:
+
+        script-src / worker-src blob: - Vite emits Monaco's worker as a real
+          file (editor.worker-*.js via new URL(..., import.meta.url)), but the
+          bundle also carries Monaco's blob-worker fallback. Which one runs
+          depends on the runtime, and WebKit has historically folded worker-src
+          into script-src, so both name blob:.
+        connect-src 127.0.0.1 - the Neutralino client connects to
+          ws://127.0.0.1:NL_PORT whenever its globals are injected, which is
+          always in a packaged app; the sidecar's own socket is another port on
+          the same host, and a different port is a different origin.
+        style-src 'unsafe-inline' - three-cad-viewer and xterm style elements as
+          they build them. Inline style is not the injection route that matters
+          here, and a missing rule breaks layout silently.
+
+      Violations are logged - see installGlobalHandlers - so a policy that is
+      too tight shows up as a line in the log rather than as a pane that
+      quietly does not work.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self';
+               script-src 'self' blob:;
+               worker-src 'self' blob:;
+               style-src 'self' 'unsafe-inline';
+               img-src 'self' data: blob:;
+               font-src 'self';
+               connect-src 'self' ws://127.0.0.1:* http://127.0.0.1:*;
+               object-src 'none';
+               base-uri 'self';
+               form-action 'none'"
+    />
     <title>build123d Studio</title>
     <!-- Injected by the Neutralino server; defines NL_PORT, NL_TOKEN, NL_PATH, ... -->
     <script src="/__neutralino_globals.js"></script>

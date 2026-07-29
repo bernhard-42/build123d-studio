@@ -2,6 +2,7 @@ import { clipboard } from "@neutralinojs/lib";
 import { version as threeCadViewerVersion } from "three-cad-viewer";
 
 import { appVersion, monacoVersion, xtermVersion } from "./versions.js";
+import { escapeHtml } from "./escape.js";
 import { resolveEnvRoot } from "./bootstrap/envroot.js";
 import { ensureUv } from "./bootstrap/uv.js";
 import { run, quote } from "./proc.js";
@@ -136,14 +137,6 @@ function asPlainText(sections) {
       return `${section.title}\n${rows}`;
     })
     .join("\n\n");
-}
-
-function escapeHtml(text) {
-  return String(text)
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;");
 }
 
 function render(sections) {

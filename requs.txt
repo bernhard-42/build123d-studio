@@ -155,20 +155,36 @@ Read-only installation
 
 ## Phase 3:
 
-- Create a log viewer (similar to config viewer) for the javascript app log, the backend log, and all other logs. 
-  E.g have select buttons which log to show. add a copy button
-- Open Folder should work as in VS Code with a left sidecar and with tabs for files. tab label is filename with full path on hover
+- Add all log paths to the info box
 - Add an OS menu to get Cmd-C/Cmd-V/Cmd-X. Would also deliver Cmd-Q, ...
-- The variable explorer needs to get multilevel (a = dict(a=12, b="wert", c=[1,2,3,4,5,6], d=dict(x=dict(aa=1, bb="sdfg"), y=2))) for iterables
+- Add Python code completion
+    - There is none today, and there never was: monaco-editor ships language
+      services for TypeScript, JSON, CSS and HTML only, and the editor
+      deliberately registers just the Python grammar - tokenisation and
+      colouring - to avoid pulling in some nine megabytes of services it cannot
+      use. What is left is Monaco's word-based suggestion, which offers words
+      already present in the buffer, so "time.sl" was never going to complete
+    - The kernel is the better source than a language server. It already speaks
+      Jupyter's complete_request, which is what gives IPython its Tab
+      completion, and it completes against the live namespace: it knows
+      time.sleep, and it also knows the methods of the "part" the user built two
+      cells ago, which no static analysis of the file can. A Monaco
+      registerCompletionItemProvider routed through the sidecar to
+      complete_request reuses transport that already exists
+    - Note the missing OS menu above is related: without it macOS never binds
+      the standard shortcuts, so Ctrl-Space for "trigger suggest" is also
+      swallowed by the system's input-source shortcut
+- Open Folder should work as in VS Code with a left sidecar and with tabs for files. tab label is filename with full path on hover
 - show_clear, show_object, push_object, show_objects, show_all need to work 
   (Note in a separate project ocp_vscode needs to be resturctured to better work with jupyter-cadquery and build123d studio)
 - Debugging Python in Monaco should work 
   - having the usual step buttons
   - Using the varial explorere (if possible)
   - Allows to hook into "breakpoint reached" or "Step finished" to including visual debugging, i.e.execute show_all(locals())
+- The variable explorer needs to get multilevel (a = dict(a=12, b="wert", c=[1,2,3,4,5,6], d=dict(x=dict(aa=1, bb="sdfg"), y=2))) for iterables
 - Config should get a field where users can add extra packages in pyproject.toml syntax. They will be added to pyproject.toml (a "custom" section: "# --- custom: own packages ---
 - Config should get a multiline field where I can add code that should be used during "New File"
-
+- Fix the Application icon on MacOS
 
 ## Phase 4:
 

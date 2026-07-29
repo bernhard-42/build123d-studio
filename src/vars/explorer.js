@@ -24,13 +24,40 @@ function formatSize(size) {
   return String(size);
 }
 
-function detailRows(name) {
+// This pane is built from nodes rather than from an HTML string, and that is
+// deliberate. Everything in it - names, types, and above all repr() output -
+// comes from objects in the user's kernel, so it is the least controlled text
+// in the application; and the webview can reach os.* and filesystem.* through
+// Neutralino, which makes one missed interpolation arbitrary command execution
+// rather than a broken table. textContent cannot be got wrong the way an
+// escaping helper can be forgotten.
+
+function cell(className, text, { colSpan } = {}) {
+  const td = document.createElement("td");
+  td.className = className;
+  td.textContent = text;
+  if (colSpan !== undefined) {
+    td.colSpan = colSpan;
+  }
+  return td;
+}
+
+function detailRowsFor(name) {
   const detail = details.get(name);
+  const row = (...cells) => {
+    const tr = document.createElement("tr");
+    tr.className = "var-detail";
+    for (const c of cells) {
+      tr.append(c);
+    }
+    return tr;
+  };
+
   if (detail === undefined) {
-    return `<tr class="var-detail"><td colspan="3" class="var-loading">loading…</td></tr>`;
+    return [row(cell("var-loading", "loading…", { colSpan: 3 }))];
   }
   if (detail.error) {
-    return `<tr class="var-detail"><td colspan="3" class="var-error">${escapeHtml(detail.error)}</td></tr>`;
+    return [row(cell("var-error", detail.error, { colSpan: 3 }))];
   }
 
   const entries = [];
@@ -44,50 +71,53 @@ function detailRows(name) {
     entries.push(["", "no further detail"]);
   }
 
-  return entries
-    .map(
-      ([key, value]) =>
-        `<tr class="var-detail"><td class="var-detail-key">${escapeHtml(key)}</td>` +
-        `<td colspan="2" class="var-detail-value">${escapeHtml(value)}</td></tr>`,
-    )
-    .join("");
-}
-
-function escapeHtml(text) {
-  return String(text)
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;");
+  return entries.map(([key, value]) =>
+    row(cell("var-detail-key", key), cell("var-detail-value", value, { colSpan: 2 })),
+  );
 }
 
 function render() {
   const pane = paneElement();
+  pane.replaceChildren();
 
   if (rows.length === 0) {
-    pane.innerHTML = `<div class="var-empty">No variables yet. Run some code.</div>`;
+    const empty = document.createElement("div");
+    empty.className = "var-empty";
+    empty.textContent = "No variables yet. Run some code.";
+    pane.append(empty);
     return;
   }
 
-  const body = rows
-    .map((row) => {
-      const isOpen = expanded.has(row.name);
-      const marker = isOpen ? "▾" : "▸";
-      const head =
-        `<tr class="var-row" data-name="${escapeHtml(row.name)}">` +
-        `<td class="var-name">${marker} ${escapeHtml(row.name)}</td>` +
-        `<td class="var-type">${escapeHtml(row.type)}` +
-        `${row.size ? ` <span class="var-size">[${escapeHtml(formatSize(row.size))}]</span>` : ""}</td>` +
-        `<td class="var-repr">${escapeHtml(row.repr)}</td></tr>`;
-      return isOpen ? head + detailRows(row.name) : head;
-    })
-    .join("");
+  const table = document.createElement("table");
+  table.className = "var-table";
+  const tbody = document.createElement("tbody");
 
-  pane.innerHTML = `<table class="var-table"><tbody>${body}</tbody></table>`;
+  for (const row of rows) {
+    const isOpen = expanded.has(row.name);
 
-  for (const element of pane.querySelectorAll(".var-row")) {
-    element.addEventListener("click", () => toggle(element.dataset.name));
+    const head = document.createElement("tr");
+    head.className = "var-row";
+    head.dataset.name = row.name;
+    head.append(cell("var-name", `${isOpen ? "▾" : "▸"} ${row.name}`));
+
+    const type = cell("var-type", row.type);
+    if (row.size !== null && row.size !== undefined && row.size !== "") {
+      const size = document.createElement("span");
+      size.className = "var-size";
+      size.textContent = `[${formatSize(row.size)}]`;
+      type.append(" ", size);
+    }
+    head.append(type, cell("var-repr", row.repr));
+    head.addEventListener("click", () => toggle(row.name));
+    tbody.append(head);
+
+    if (isOpen) {
+      tbody.append(...detailRowsFor(row.name));
+    }
   }
+
+  table.append(tbody);
+  pane.append(table);
 }
 
 function toggle(name) {

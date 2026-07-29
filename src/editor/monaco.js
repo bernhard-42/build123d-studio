@@ -19,7 +19,16 @@ import { onThemeChange, resolvedTheme } from "../theme.js";
 // worker is the only one required - which is also why the bundle stays small.
 self.MonacoEnvironment = {
   getWorker() {
-    return new EditorWorker();
+    // The worker is what computes word-based suggestions, so when it fails to
+    // start the editor loses completion and says nothing about why. Monaco
+    // reports that on the console, which this application does not have. Both
+    // ends are logged: that one was asked for, and that it failed if it did.
+    const worker = new EditorWorker();
+    worker.addEventListener("error", (event) => {
+      log.error("Monaco editor worker failed:", event.message ?? String(event));
+    });
+    log.info("Monaco editor worker started");
+    return worker;
   },
 };
 

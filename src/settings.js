@@ -17,6 +17,7 @@ import {
 } from "./bootstrap/splash.js";
 import * as ipc from "./ipc.js";
 import * as log from "./log.js";
+import { escapeHtml } from "./escape.js";
 
 // Package sources.
 //
@@ -53,14 +54,6 @@ async function awaitKernelRestart() {
     ["kernel.restart_failed", "sidecar.exit", "sidecar.disconnected"],
     { timeout: RESTART_TIMEOUT, what: "The kernel" },
   );
-}
-
-function escapeHtml(text) {
-  return String(text)
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;");
 }
 
 function close() {

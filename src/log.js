@@ -107,4 +107,19 @@ export function installGlobalHandlers() {
   window.addEventListener("unhandledrejection", (event) => {
     error("Unhandled rejection:", event.reason);
   });
+
+  // A Content-Security-Policy that is too tight does not announce itself: the
+  // blocked worker, stylesheet or connection simply never happens, and the pane
+  // that needed it looks broken for no stated reason. Logging violations turns
+  // that into a line naming the directive and the URL that tripped it - the
+  // difference between "the viewer is blank" and "worker-src blocked
+  // blob:...". Worth keeping after the policy settles, because the next
+  // dependency upgrade can introduce one.
+  window.addEventListener("securitypolicyviolation", (event) => {
+    error(
+      "CSP violation:",
+      `${event.violatedDirective} blocked ${event.blockedURI || "(inline)"}`,
+      `in ${event.sourceFile ?? "?"}:${event.lineNumber ?? "?"}`,
+    );
+  });
 }
