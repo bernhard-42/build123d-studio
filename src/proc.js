@@ -1,5 +1,7 @@
 import { events, os } from "@neutralinojs/lib";
 
+import { quoteFor } from "./quoting.js";
+
 // Thin wrappers over Neutralino's spawnProcess.
 //
 // Everything the app runs - uv, the sidecar - goes through here. Neutralino
@@ -35,12 +37,18 @@ function ensureListener() {
   });
 }
 
-/** Shell-quote a path so it survives spaces in the command string. */
+/**
+ * Shell-quote a value for the command string.
+ *
+ * EVERY value interpolated into a command goes through this - not only the ones
+ * that might contain a space. spawnProcess hands the string to a shell, so an
+ * unquoted value is a command injection rather than a formatting bug.
+ *
+ * The rules live in quoting.js, apart from Neutralino, so they can be tested:
+ * the Windows half is the half that matters and this is not a Windows machine.
+ */
 export function quote(value) {
-  if (NL_OS === "Windows") {
-    return `"${value}"`;
-  }
-  return `'${value.replaceAll("'", `'\\''`)}'`;
+  return quoteFor(NL_OS, value);
 }
 
 /**

@@ -67,7 +67,12 @@ async function stageProjectFiles(envRoot, selection) {
 }
 
 async function runUv(args, envRoot, { onLine }) {
-  const command = `${quote(await ensureUv(envRoot))} ${args.join(" ")}`;
+  // Every argument quoted, not just the binary. They are all constants today -
+  // "sync", "--frozen", a package name from PACKAGES - so nothing here is
+  // currently at risk. Phase 3 adds a config field where users type extra
+  // packages in pyproject.toml syntax, and those end up as arguments; a habit
+  // that only quotes what looks dangerous is the one that misses that.
+  const command = `${quote(await ensureUv(envRoot))} ${args.map(quote).join(" ")}`;
   log.info("Running uv:", command, "in", envRoot);
   const code = await run(command, {
     cwd: envRoot,
