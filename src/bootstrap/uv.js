@@ -1,4 +1,4 @@
-import { filesystem } from "@neutralinojs/lib";
+import { filesystem, os } from "@neutralinojs/lib";
 
 import pins from "./pins.json";
 import { run, quote } from "../proc.js";
@@ -93,9 +93,58 @@ async function sha256(path) {
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
+// Resolved once per session.
+let tools = null;
+
+/**
+ * Absolute paths for curl and tar, rather than whatever PATH offers.
+ *
+ * This is a GUI process: its PATH comes from the desktop session, which on a
+ * developer's machine routinely includes directories the user can write to. A
+ * curl planted in one of those would run inside the application - and it is the
+ * program that fetches the binary that then installs everything else, so it is
+ * the last place to accept whatever happens to be first on PATH.
+ *
+ * macOS and Windows both ship these at a known location. Linux distributions
+ * vary enough that a bare name is the honest fallback there; it is still an
+ * improvement, because the absolute path wins when it exists.
+ */
+async function systemTools() {
+  if (tools !== null) {
+    return tools;
+  }
+
+  if (NL_OS === "Windows") {
+    // Both have shipped in System32 since Windows 10 1803.
+    let root = "C:\\Windows";
+    try {
+      const value = await os.getEnv("SystemRoot");
+      if (typeof value === "string" && value !== "") {
+        root = value;
+      }
+    } catch {
+      // Not readable; the default is right on any normal installation.
+    }
+    tools = { curl: `${root}\\System32\\curl.exe`, tar: `${root}\\System32\\tar.exe` };
+    return tools;
+  }
+
+  const resolved = {};
+  for (const name of ["curl", "tar"]) {
+    const absolute = `/usr/bin/${name}`;
+    resolved[name] = (await exists(absolute)) ? absolute : name;
+    if (resolved[name] === name) {
+      log.warn(`${absolute} is missing; falling back to ${name} from PATH`);
+    }
+  }
+  tools = resolved;
+  return tools;
+}
+
 async function download(url, destination) {
+  const { curl } = await systemTools();
   const code = await run(
-    `curl -fsSL --retry 3 -o ${quote(destination)} ${quote(url)}`,
+    `${quote(curl)} -fsSL --retry 3 -o ${quote(destination)} ${quote(url)}`,
     { onLine: (line) => log.info("curl:", line) },
   );
   if (code !== 0) {
@@ -186,9 +235,10 @@ export async function ensureUv(envRoot) {
 
   // bsdtar handles both .tar.gz and .zip, and ships with Windows 10 and later.
   // The unix archives nest everything under uv-<triple>/; the zip does not.
+  const { tar } = await systemTools();
   const extract = isWindows
-    ? `tar -xf ${quote(archivePath)} -C ${quote(work)}`
-    : `tar -xzf ${quote(archivePath)} -C ${quote(work)} --strip-components=1`;
+    ? `${quote(tar)} -xf ${quote(archivePath)} -C ${quote(work)}`
+    : `${quote(tar)} -xzf ${quote(archivePath)} -C ${quote(work)} --strip-components=1`;
   const code = await run(extract, { onLine: appendLog });
   if (code !== 0) {
     throw new Error(`Could not extract ${archive} (tar exit ${code})`);
