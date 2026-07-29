@@ -162,7 +162,17 @@ jobs:
       # never produced, so `gh attestation verify <file> --repo <this repo>`
       # answers "did build123d Studio's release workflow build this?" - the same
       # question this project asks of uv before installing it.
-      - uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+      #
+      # Skipped while the repository is private, because GitHub refuses to
+      # persist attestations for user-owned private repositories: "Feature not
+      # available… please make this repository public". Without this condition
+      # that refusal fails the job and no release is published at all, which
+      # trades the whole release for the half of the verification that cannot
+      # work yet. It starts working by itself the day the repository goes
+      # public - and the release notes below say which of the two checks a given
+      # release actually carries, rather than promising both.
+      - if: ${{ !github.event.repository.private }}
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
         with:
           subject-path: |
             artifacts/*.dmg
@@ -184,22 +194,24 @@ jobs:
 
             ### Verifying what you downloaded
 
-            These builds are unsigned, but they are attested. Both checks are
-            worth more than the warnings above are worth worrying about.
-
             ```
-            # Did this repository's release workflow build it?
-            gh attestation verify build123d-studio-*.dmg --repo ${{ github.repository }}
-
             # Is the download intact?
             shasum -a 256 -c SHA256SUMS.txt --ignore-missing
             ```
+            ${{ github.event.repository.private && '
+            This release carries checksums only. They detect a damaged or
+            truncated download; they prove nothing about origin, because anyone
+            able to replace the files could replace SHA256SUMS.txt with them.
+            Build provenance is not attached: GitHub does not issue attestations
+            for private repositories.' || '
+            This release is also attested. That is the meaningful check - it is
+            minted by GitHub against the workflow that produced the file and
+            cannot be forged for an artifact that workflow never built, whereas
+            the checksums only detect a damaged download:
 
-            The attestation is the meaningful one: it is minted by GitHub
-            against the workflow that produced the file and cannot be forged for
-            an artifact that workflow never built. The checksums only detect a
-            damaged or truncated download - anyone able to replace the files
-            could replace SHA256SUMS.txt with them.
+            ```
+            gh attestation verify build123d-studio-*.dmg --repo ${{ github.repository }}
+            ```' }}
 
             On first start the application downloads its own Python environment
             (about 500 MB) into your user data directory. On macOS it then loads
