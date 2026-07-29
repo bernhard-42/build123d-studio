@@ -157,6 +157,38 @@ Read-only installation
 
 - Add all log paths to the info box
 - Add an OS menu to get Cmd-C/Cmd-V/Cmd-X. Would also deliver Cmd-Q, ...
+- Decide the instance model, and make it true either way
+    - Today a second instance starts happily and quietly corrupts what the first
+      one owns. Nothing about that is fundamental: every port is already
+      OS-assigned, so the sidecar socket, the model socket and the kernel's ZMQ
+      ports never contend. What collides is four places that were written
+      assuming there would only ever be one:
+        - envRoot/kernel.json is a single hardcoded name, so the second kernel
+          overwrites the first and either restart rewrites it under the other
+        - settings.json is rewritten whole from an in-memory copy, so layout,
+          theme and package sources are last-writer-wins
+        - the log is read and rewritten at startup, so two instances truncate
+          each other
+        - both run stage-files then uv lock then uv sync against one virtual
+          environment; uv locks the sync itself, but not that whole sequence
+    - Multi-instance is the expected behaviour for an editor - browsers and
+      VS Code both do it - and each of the four has an ordinary fix: a
+      per-instance connection file, read-merge-write settings under a lock,
+      an append-only or per-instance log, and one lock around the environment
+      bootstrap
+    - One genuine product question rather than a mechanical one: Phase 1 promises
+      the connection file lives at a discoverable path so an external
+      "jupyter console --existing" can attach to the same namespace. With
+      several instances "the same namespace" is not well defined, so decide -
+      most recently focused wins, the user picks from a list, or the path is
+      per-instance and the About dialog names it
+    - If the answer turns out to be "one instance only" instead, the guard is
+      written and was reverted rather than deleted: a lock file recording
+      Neutralino's own NL_PORT, with liveness decided by whether that port still
+      serves this application. Port rather than pid because NL_PID is not
+      exposed to the webview, matching a process list by name is too loose, and
+      the operating system frees a port on a crash - which is exactly when a pid
+      file goes stale and locks the user out
 - Three distinct run shortcuts, currently two:
     - run block and move the cursor on
     - run block and leave the cursor where it is
