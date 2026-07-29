@@ -23,7 +23,13 @@ self.MonacoEnvironment = {
   },
 };
 
-const DEFAULT_SOURCE = `# %%
+/**
+ * The jump start, shown once: on the very first run and never again.
+ *
+ * Exported because whether it belongs in the buffer is a startup decision, not
+ * an editor one - see restoreLastFile. The editor itself opens empty.
+ */
+export const SAMPLE_SOURCE = `# %%
 from build123d import *
 from build123d_studio import show
 
@@ -205,7 +211,9 @@ export function focusAt(state = null) {
 
 export function initEditor() {
   editor = monaco.editor.create(document.getElementById("editor-host"), {
-    value: DEFAULT_SOURCE,
+    // Empty: restoreLastFile decides what belongs here - the reopened file, the
+    // sample on a first run, or nothing.
+    value: "",
     language: "python",
     theme: resolvedTheme() === "light" ? "vs" : "vs-dark",
     automaticLayout: true,

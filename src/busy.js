@@ -15,6 +15,13 @@ let message = null;
 let depth = 0;
 
 function swallowKeys(event) {
+  // Quit is let through. This modal is up precisely when something is taking
+  // too long or has gone wrong, which is when someone is most likely to want
+  // out - and swallowing the one key that gets them there turned a slow
+  // restart into a window that could not be closed.
+  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "q") {
+    return;
+  }
   // Capture phase, before Monaco or xterm see it.
   event.preventDefault();
   event.stopPropagation();

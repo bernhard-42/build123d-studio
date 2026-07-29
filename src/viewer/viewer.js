@@ -302,7 +302,10 @@ export function showLogo() {
   try {
     const { data, config } = logo();
     const started = performance.now();
-    showModel(data, config ?? {});
+    // Recorded like any other model's, so a pane resize before the first real
+    // show() re-fits against what is actually on screen rather than against {}.
+    lastConfig = config ?? {};
+    showModel(data, lastConfig);
     log.info(`Logo rendered in ${(performance.now() - started).toFixed(0)} ms`);
   } catch (error) {
     log.warn("Could not render the startup logo:", error);

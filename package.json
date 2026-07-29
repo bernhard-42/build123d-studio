@@ -10,7 +10,7 @@
     "postinstall": "neu update",
     "dev": "vite build --watch",
     "build": "vite build && node scripts/copy-client-lib.mjs",
-    "start": "yarn build && neu run",
+    "start": "yarn build && neu run -- --window-enable-inspector=true",
     "package": "node scripts/package.mjs",
     "package:build": "vite build --mode production && node scripts/copy-client-lib.mjs && neu build --release",
     "fetch-licenses": "node scripts/fetch-licenses.mjs"

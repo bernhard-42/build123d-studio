@@ -1,6 +1,7 @@
 import { filesystem, os } from "@neutralinojs/lib";
 
 import {
+  SAMPLE_SOURCE,
   getCurrentFile,
   getValue,
   getViewState,
@@ -58,6 +59,46 @@ export function syncKernelDirectory() {
 const LAST_FILE_KEY = "lastFile";
 const LAST_POSITION_KEY = "lastPosition";
 const LAST_SCROLL_KEY = "lastScrollTop";
+const LAST_FOLDER_KEY = "lastFolder";
+const SAMPLE_SHOWN_KEY = "sampleShown";
+
+/**
+ * Where Open and Save should start.
+ *
+ * The directory of the open file first, then the last one a file was opened
+ * from or saved to, and only then Documents. Falling back to Documents every
+ * time meant navigating back to the same project folder on every Open, which
+ * is not where anyone keeps their CAD scripts after the first day.
+ *
+ * The remembered folder is checked before it is offered: it can have been
+ * deleted, renamed, or be on a volume that is no longer mounted, and handing a
+ * dialog a path that is not there is how it ends up somewhere arbitrary.
+ */
+async function startingFolder() {
+  const candidates = [directoryOf(getCurrentFile()), getSetting(LAST_FOLDER_KEY)];
+  for (const candidate of candidates) {
+    if (typeof candidate !== "string" || candidate === "") {
+      continue;
+    }
+    try {
+      const stats = await filesystem.getStats(candidate);
+      if (stats.isDirectory) {
+        return candidate;
+      }
+    } catch {
+      // Gone, or not reachable. Try the next one.
+    }
+  }
+  return os.getPath("documents");
+}
+
+/** Remember the folder a file was just opened from or saved to. */
+async function rememberFolder(path) {
+  const folder = directoryOf(path);
+  if (folder !== null) {
+    await setSetting(LAST_FOLDER_KEY, folder);
+  }
+}
 
 /**
  * Remember where the caret and viewport are, for the next start.
@@ -148,6 +189,31 @@ export async function newFile() {
 }
 
 /**
+ * What to show when there is no file to reopen.
+ *
+ * The sample is a jump start for someone who has never seen the application, so
+ * it appears once and then never again. It used to appear whenever the last
+ * file could not be reopened - rename the folder it lived in, and the next
+ * start replaced your work with example code, which reads as the application
+ * having lost the file and invented something. An empty buffer says the same
+ * thing without pretending.
+ *
+ * An installation that predates this flag sees the sample one last time, the
+ * first time a start finds nothing to reopen, and never again. Deriving the
+ * flag from other evidence of a previous session would be more machinery than
+ * a one-off is worth.
+ */
+async function startWithSampleOrEmpty() {
+  if (getSetting(SAMPLE_SHOWN_KEY) === true) {
+    setValue("", null);
+    return;
+  }
+  setValue(SAMPLE_SOURCE, null);
+  await setSetting(SAMPLE_SHOWN_KEY, true);
+  log.info("First start: showing the sample");
+}
+
+/**
  * Reopen whatever was last open, if it is still there.
  *
  * Only a path is remembered, never the buffer's contents: reopening the file
@@ -156,23 +222,23 @@ export async function newFile() {
  */
 export async function restoreLastFile() {
   const path = getSetting(LAST_FILE_KEY);
-  if (typeof path !== "string" || path === "") {
-    return null;
+  if (typeof path === "string" && path !== "") {
+    try {
+      const content = await filesystem.readFile(path);
+      setValue(content, path);
+      log.info("Reopened", path);
+      return path;
+    } catch {
+      // Renamed, deleted, or on a volume that is not mounted. Forgetting it
+      // means one quiet fallback rather than the same failure every start.
+      log.info(`Last file is no longer readable, starting fresh: ${path}`);
+      await setSetting(LAST_FILE_KEY, null);
+      await setSetting(LAST_POSITION_KEY, null);
+      await setSetting(LAST_SCROLL_KEY, null);
+    }
   }
-  try {
-    const content = await filesystem.readFile(path);
-    setValue(content, path);
-    log.info("Reopened", path);
-    return path;
-  } catch (error) {
-    // Renamed, deleted, or on a volume that is not mounted. Forgetting it means
-    // one quiet fallback to the sample rather than the same failure every start.
-    log.info(`Last file is no longer readable, starting fresh: ${path}`);
-    await setSetting(LAST_FILE_KEY, null);
-    await setSetting(LAST_POSITION_KEY, null);
-    await setSetting(LAST_SCROLL_KEY, null);
-    return null;
-  }
+  await startWithSampleOrEmpty();
+  return null;
 }
 
 export async function openFile() {
@@ -183,7 +249,7 @@ export async function openFile() {
     return null;
   }
   const entries = await os.showOpenDialog("Open a Python file", {
-    defaultPath: await os.getPath("documents"),
+    defaultPath: await startingFolder(),
     filters: FILTERS,
     multiSelections: false,
   });
@@ -194,6 +260,7 @@ export async function openFile() {
   const content = await filesystem.readFile(path);
   setValue(content, path);
   await setSetting(LAST_FILE_KEY, path);
+  await rememberFolder(path);
   // The remembered position belonged to the file being replaced. Quitting
   // normally would overwrite it anyway, but not if the app dies first - and
   // reopening a new file at the old one's line 380 is a puzzle, not a feature.
@@ -224,12 +291,52 @@ function withPythonExtension(path) {
   return `${path}.py`;
 }
 
+/**
+ * Write a file without ever truncating the existing one.
+ *
+ * writeFile opens the target and truncates it before the new contents are
+ * there, so a crash, a full disk or the process being killed mid-write leaves a
+ * half-written .py - the one file this application must never damage. Writing
+ * beside it and moving into place means the target is either the old file or
+ * the new one.
+ *
+ * The temporary lives in the same directory deliberately: a move within one
+ * filesystem is a rename, while /tmp would be a copy across devices and no
+ * better than writing directly.
+ *
+ * The fallback is not decoration. std::filesystem::rename onto an existing file
+ * is well defined on POSIX and not on Windows, and there is no Windows machine
+ * here to find that out on. If the move fails the content is already safely on
+ * disk, so the direct write is at worst what this code did before - and if that
+ * fails too, the temporary is left alone and named in the error, because at
+ * that point it is the only copy of the user's work.
+ */
+async function writeFileSafely(path, content) {
+  const temporary = `${path}.b123d-tmp`;
+  await filesystem.writeFile(temporary, content);
+
+  try {
+    await filesystem.move(temporary, path);
+    return;
+  } catch (error) {
+    log.warn("Could not move the temporary file into place, writing directly:", error);
+  }
+
+  try {
+    await filesystem.writeFile(path, content);
+  } catch (error) {
+    log.error(`Save failed. Your content is in ${temporary}`);
+    throw error;
+  }
+  await filesystem.remove(temporary).catch(() => {});
+}
+
 export async function saveFile({ saveAs = false } = {}) {
   let path = getCurrentFile();
 
   if (saveAs || path === null) {
     path = await os.showSaveDialog("Save", {
-      defaultPath: path ?? (await os.getPath("documents")),
+      defaultPath: path ?? (await startingFolder()),
       filters: FILTERS,
     });
     if (path === "" || path === undefined) {
@@ -238,10 +345,11 @@ export async function saveFile({ saveAs = false } = {}) {
     path = withPythonExtension(path);
   }
 
-  await filesystem.writeFile(path, getValue());
+  await writeFileSafely(path, getValue());
   setCurrentFile(path);
   markSaved();
   await setSetting(LAST_FILE_KEY, path);
+  await rememberFolder(path);
   syncKernelDirectory();
   log.info("Saved", path);
   return path;

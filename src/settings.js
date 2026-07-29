@@ -76,8 +76,12 @@ function onKeyDown(event) {
 
 function packageRow(pkg, selection, gitPresent) {
   const disabled = gitPresent ? "" : "disabled";
+  // Said plainly: this option installs and runs whatever is on that branch at
+  // the moment it is fetched. That is the point of the feature, and it is
+  // opt-in, but it should not be discovered afterwards.
   const gitNote = gitPresent
-    ? `Latest from the <code>${escapeHtml(pkg.branch)}</code> branch.`
+    ? `Builds and runs the <code>${escapeHtml(pkg.branch)}</code> branch as fetched, ` +
+      "which is unreleased code from the internet."
     : "Requires git, which was not found on this computer.";
 
   return `

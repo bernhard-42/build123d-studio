@@ -56,8 +56,11 @@ export function initToolbar() {
     "btn-run-file": runFile,
     "btn-run-cell": () => runCell(),
     "btn-run-sel": () => runSelectionOrLine(),
-    "btn-interrupt": () => ipc.send("kernel.interrupt"),
-    "btn-restart": () => ipc.send("kernel.restart"),
+    // Wrapped like the rest: with the sidecar gone these throw out of a click
+    // handler, where only the global rejection logger would ever see it.
+    "btn-interrupt": () =>
+      withErrorReporting("Interrupt", async () => ipc.send("kernel.interrupt")),
+    "btn-restart": () => withErrorReporting("Restart", async () => ipc.send("kernel.restart")),
     "btn-theme": () => setThemePreference(nextPreference()),
     "btn-info": showInfo,
     "btn-settings": showSettings,
@@ -91,6 +94,13 @@ export function initToolbar() {
   // has focus - the console pane takes most of the typing in practice.
   window.addEventListener("keydown", (event) => {
     if (!event.ctrlKey && !event.metaKey) {
+      return;
+    }
+    // Exactly Cmd/Ctrl, nothing else held. Testing event.key alone meant
+    // Cmd+Shift+N and Cmd+Alt+S triggered New and Save - shortcuts the user
+    // was reaching for in another application, or on the way to something else
+    // entirely.
+    if (event.shiftKey || event.altKey) {
       return;
     }
     if (event.key === "n") {
