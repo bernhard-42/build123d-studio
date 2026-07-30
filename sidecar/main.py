@@ -136,19 +136,26 @@ class Sidecar:
     # --- lifecycle ---
 
     def start(self):
+        # Deliberately first, and deliberately on this thread.
+        #
+        # It used to be last, and on a background thread, to keep OCP's native
+        # libraries off the startup path. On Windows that deadlocked against
+        # every other thread the process starts - including the websockets
+        # accept loop's, which stopped the sidecar accepting connections at all
+        # and made show() cost seventy seconds. See measure_service.py.
+        #
+        # Here, the channel is bound and the webview is connected, but the
+        # kernel, the console and the model socket have not started yet, so
+        # nothing else is creating a thread while this runs. The reason it was
+        # moved off the startup path in the first place no longer applies: the
+        # socket is bound and the handshake sent from main() long before this.
+        self.measurements.load_backend()
+
         self.models.start()
 
         info = self.kernel_start()
         self.console_start()
 
-        # Deliberately last. CPython takes a per-module lock during import, so
-        # two threads importing overlapping graphs can deadlock - and they do:
-        # the measurement backend's chain reaches IPython and traitlets, which
-        # jupyter_client's provisioner machinery also touches while a kernel is
-        # starting. Everything the main thread imports is resolved by this
-        # point, so the background import runs unopposed. It still finishes
-        # long before a measurement is possible, which needs a shown model.
-        self.measurements.start()
         self.channel.send(
             "ready",
             connection_file=info["connection_file"],

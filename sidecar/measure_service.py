@@ -1,20 +1,37 @@
-"""Keeps the measurement backend's import off the startup path.
+"""Loads the measurement backend, on the main thread, before any other starts.
 
 `measure` imports ocp_vscode.backend, which drags in build123d and OCP - about
-2.5 seconds of native library loading. With that at the top of main.py the
-sidecar could not bind its socket until it finished, so the app's Run actions
-stayed dead for the first few seconds after launch.
+2.5 seconds of native library loading on macOS, and rather more on Windows.
 
-This is *not* a lazy import in the sense the project rule forbids. The module is
-loaded unconditionally, at startup, from one documented place; it simply happens
-on a background thread instead of on the one that answers the webview. A broken
-dependency still surfaces at launch, in the log, rather than on first use. The
-alternative - importing on first measurement - would move the whole 2.5 seconds
-onto the user's first click, which is exactly what we are avoiding.
+This used to run on a background thread, to keep those seconds off the startup
+path. On Windows that deadlocks, permanently, and it took the application's
+whole viewer with it.
 
-`importlib.import_module` rather than an import statement because the point is
-*where the work happens*, and an import statement here would run on the main
-thread at module load, which is the thing being avoided.
+Loading a .pyd is LoadLibrary, and LoadLibrary holds the OS loader lock while
+CPython holds the GIL across the call. Starting a thread runs DLL_THREAD_ATTACH
+in every loaded DLL, which wants that same loader lock. OCP is a very large
+native stack - the two collided reliably. Observed on Windows: this import
+entered importlib's create_module and never came out; stack dumps ninety
+seconds apart were identical, and the sidecar never logged either outcome
+below. Two things died with it. The measurement backend never became available,
+so a measure click would have joined a thread that never finished. Worse, the
+websockets server's accept loop starts a thread per incoming connection, so it
+blocked in Thread.start() and stopped accepting anything at all - and
+ocp_vscode's viewer discovery, which _convert() performs six times per show()
+against the port we deliberately point at ourselves, then waited its full
+ten-second connect timeout on every one. show(Box(1,1,1)) cost seventy seconds
+of doing nothing.
+
+So it happens here, synchronously, called first from Sidecar.start(): the
+channel is already bound and the webview already connected, so nothing else in
+the process is creating a thread while it runs. What it delays is the "ready"
+frame, not the handshake - the frontend's 30 s handshake deadline is long past
+by this point, and its wait for "ready" has a 90 s backstop.
+
+`importlib.import_module` rather than an import statement because the module is
+optional in the sense that the sidecar must survive its absence, not because
+the timing is clever: a broken dependency is reported here and the rest of the
+application still runs.
 """
 
 import importlib
@@ -25,26 +42,21 @@ from channel import log
 
 
 class MeasurementService:
-    """The Measurements instance, plus the deferred import behind it."""
+    """The Measurements instance, and the import behind it."""
 
     def __init__(self):
         self._module = None
         self._error = None
         self._instance = None
 
-        # A model may be shown before the import lands; hold its mapping until
-        # there is something to give it to.
+        # A model may be shown before the backend is asked for anything; hold
+        # its mapping until there is something to give it to.
         self._pending_mapping = None
 
         self._lock = threading.Lock()
-        self._thread = threading.Thread(
-            target=self._load, name="measure-import", daemon=True
-        )
 
-    def start(self):
-        self._thread.start()
-
-    def _load(self):
+    def load_backend(self):
+        """Import the measurement backend. Main thread, before other threads."""
         started = time.perf_counter()
         try:
             self._module = importlib.import_module("measure")
@@ -54,17 +66,9 @@ class MeasurementService:
             log(f"Measurement backend failed to load: {exc}")
 
     def _resolve(self):
-        """The Measurements instance, waiting for the import if it is still running.
-
-        Normally a no-op: the import finishes during startup, and a measurement
-        needs a model, which needs a kernel run first. The join only matters if
-        something measures unusually early, and then it waits for the remainder
-        rather than starting the import from scratch.
-        """
-        self._thread.join()
-
+        """The Measurements instance, or None if the backend did not load."""
         with self._lock:
-            if self._error is not None:
+            if self._error is not None or self._module is None:
                 return None
             if self._instance is None:
                 self._instance = self._module.Measurements()
@@ -74,7 +78,7 @@ class MeasurementService:
             return self._instance
 
     def load(self, mapping_bytes):
-        """Take a freshly shown model's mapping. Never waits for the import."""
+        """Take a freshly shown model's mapping."""
         with self._lock:
             if self._instance is not None:
                 self._instance.load(mapping_bytes)
