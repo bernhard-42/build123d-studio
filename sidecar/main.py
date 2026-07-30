@@ -136,25 +136,33 @@ class Sidecar:
     # --- lifecycle ---
 
     def start(self):
-        # Deliberately first, and deliberately on this thread.
-        #
-        # It used to be last, and on a background thread, to keep OCP's native
-        # libraries off the startup path. On Windows that deadlocked against
-        # every other thread the process starts - including the websockets
-        # accept loop's, which stopped the sidecar accepting connections at all
-        # and made show() cost seventy seconds. See measure_service.py.
-        #
-        # Here, the channel is bound and the webview is connected, but the
-        # kernel, the console and the model socket have not started yet, so
-        # nothing else is creating a thread while this runs. The reason it was
-        # moved off the startup path in the first place no longer applies: the
-        # socket is bound and the handshake sent from main() long before this.
-        self.measurements.load_backend()
-
         self.models.start()
 
         info = self.kernel_start()
         self.console_start()
+
+        # Deliberately here: last of the startup work, and on this thread.
+        #
+        # On a background thread it deadlocked. Loading OCP's native extensions
+        # is LoadLibrary, which holds the Windows loader lock, and every thread
+        # the process starts needs that lock to run DLL_THREAD_ATTACH - so this
+        # import and the websockets accept loop's per-connection thread waited
+        # on each other for good, and show() cost seventy seconds. See
+        # measure_service.py for the full account.
+        #
+        # What that costs is startup, so the position matters as much as the
+        # thread. Everything above has already started its threads - the model
+        # socket, the iopub pump, the pty reader and the warm-up timer - and
+        # "ready" below is what lets the user run anything, so no show() can
+        # arrive to make the accept loop start one. That leaves nothing in this
+        # process creating a thread while this runs, which is the whole
+        # requirement, and it lets the console's own startup and handshake
+        # overlap the import instead of queueing behind it.
+        #
+        # Measured on Windows: with this first in start(), the console pane
+        # filled 3.3 s later than it needed to, and the import was 59% of the
+        # time between spawning the sidecar and a usable prompt.
+        self.measurements.load_backend()
 
         self.channel.send(
             "ready",
