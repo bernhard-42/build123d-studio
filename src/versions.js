@@ -4,8 +4,25 @@
 // drift from what is actually bundled. The dependencies are exact pins, so
 // these are exact versions rather than ranges.
 
-import manifest from "../package.json";
+// Named imports rather than the whole manifest: a default import pulls the
+// entire package.json into the bundle, and it was shipping "scripts" and
+// "devDependencies" - the build commands and the toolchain - to every user, for
+// the sake of three strings.
+import { version, dependencies } from "../package.json";
 
-export const appVersion = manifest.version;
-export const monacoVersion = manifest.dependencies["monaco-editor"];
-export const xtermVersion = manifest.dependencies["@xterm/xterm"];
+/**
+ * The version, with a development build number when there is one.
+ *
+ * Every locally packaged build increments it, so an installed application can
+ * be named exactly - "0.1.3.dev17 is the one" - instead of two builds of 0.1.3
+ * being indistinguishable once they are in /Applications. A release has no
+ * counter file to read, so it is plain 0.1.3; see scripts/dev-build.mjs.
+ *
+ * `.devN` rather than `+N` or `-devN` deliberately: it is what a Python
+ * developer reads without being told, and this application's users are Python
+ * developers.
+ */
+export const devBuild = __DEV_BUILD__;
+export const appVersion = devBuild === 0 ? version : `${version}.dev${devBuild}`;
+export const monacoVersion = dependencies["monaco-editor"];
+export const xtermVersion = dependencies["@xterm/xterm"];

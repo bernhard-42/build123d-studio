@@ -18,6 +18,11 @@ neutralinojs.log
 # Packaged artifacts
 release/
 
+# The local development build counter. Deliberately not committed: its absence
+# is what makes a CI build plain 0.1.3 rather than 0.1.3.devN, and it would
+# otherwise conflict on every branch. See scripts/dev-build.mjs.
+.dev-build
+
 # Neutralino's per-app storage: window layout, theme, package sources
 .storage/
 

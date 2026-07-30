@@ -28,6 +28,9 @@ const browser = {
   NL_VERSION: "readonly",
   NL_CVERSION: "readonly",
 
+  // Injected by vite at build time; see vite.config.js.
+  __DEV_BUILD__: "readonly",
+
   window: "readonly",
   // Monaco's worker entry point is configured through it, which is the only
   // place this appears.
