@@ -38,6 +38,28 @@ const BIN = join(ROOT, "bin");
 const PIN_PATH = join(ROOT, "scripts", "neutralino-pin.json");
 const REPOSITORY = "neutralinojs/neutralinojs";
 
+/**
+ * Absolute path of a system tool on Windows, the bare name elsewhere.
+ *
+ * The same reasoning as systemTools() in src/bootstrap/uv.js, and for a second
+ * reason here. Windows has shipped curl and bsdtar in System32 since 10 1803,
+ * and bsdtar is what makes `tar -xf` read the .zip below - but a bare `tar` is
+ * resolved through PATH, and any machine with Git for Windows installed has
+ * GNU tar ahead of it. GNU tar reads `C:\...` as a remote host:path and fails
+ * with "Cannot connect to C: resolve failed", so the build died on a developer
+ * machine while being correct about the platform shipping the right tool.
+ *
+ * Linux keeps the bare name: distributions vary too much for an absolute path
+ * to be an improvement, and that branch uses unzip in any case.
+ */
+function systemTool(name) {
+  if (process.platform !== "win32") {
+    return name;
+  }
+  const root = process.env.SystemRoot ?? "C:\\Windows";
+  return join(root, "System32", `${name}.exe`);
+}
+
 const pin = JSON.parse(readFileSync(PIN_PATH, "utf8"));
 const updateIndex = process.argv.indexOf("--update");
 const updating = updateIndex !== -1;
@@ -126,7 +148,7 @@ async function fetchRelease(work) {
   }
 
   console.log(`  downloading ${archive}`);
-  execFileSync("curl", ["-fsSL", "--retry", "3", "-o", zip,
+  execFileSync(systemTool("curl"), ["-fsSL", "--retry", "3", "-o", zip,
     `https://github.com/${REPOSITORY}/releases/download/v${version}/${archive}`]);
 
   const actual = sha256(zip);
@@ -143,7 +165,7 @@ async function fetchRelease(work) {
   if (process.platform === "linux") {
     execFileSync("unzip", ["-oq", zip, "-d", work]);
   } else {
-    execFileSync("tar", ["-xf", zip, "-C", work]);
+    execFileSync(systemTool("tar"), ["-xf", zip, "-C", work]);
   }
   return work;
 }
