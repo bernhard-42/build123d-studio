@@ -152,6 +152,31 @@ export function setValue(text, fileName = null) {
 /** Record the buffer as matching disk - after a load or a successful save. */
 export function markSaved() {
   savedVersionId = editor.getModel().getAlternativeVersionId();
+  notifyDirtyChanged();
+}
+
+// Whether the buffer matches disk is the one piece of editor state the rest of
+// the application has to react to rather than poll, because the window title
+// carries it. Kept as a transition rather than an event per keystroke: setting
+// the title is a round trip to the native side, and a user typing a paragraph
+// would otherwise make several hundred of them to say the same thing.
+const dirtyListeners = new Set();
+let lastNotifiedDirty = false;
+
+function notifyDirtyChanged() {
+  const dirty = isDirty();
+  if (dirty === lastNotifiedDirty) {
+    return;
+  }
+  lastNotifiedDirty = dirty;
+  for (const listener of dirtyListeners) {
+    listener(dirty);
+  }
+}
+
+/** Be told when the buffer starts or stops differing from disk. */
+export function onDirtyChange(listener) {
+  dirtyListeners.add(listener);
 }
 
 /** True when the buffer has edits that are not on disk. */
@@ -245,6 +270,7 @@ export function initEditor() {
   editor.onDidChangeModelContent(() => {
     decorations.clear();
     decorations = decorateCells();
+    notifyDirtyChanged();
   });
 
   // Keybindings mirror the ones in vscode-jupyter-console, so the muscle

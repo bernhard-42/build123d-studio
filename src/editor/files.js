@@ -10,7 +10,8 @@ import {
   setCurrentFile,
   setValue,
 } from "./monaco.js";
-import { askThreeWay } from "../confirm.js";
+import { askThreeWay, notifyFailure } from "../confirm.js";
+import { writeFileSafely } from "./safewrite.js";
 import { getSetting, setSetting } from "../store.js";
 import * as ipc from "../ipc.js";
 import * as log from "../log.js";
@@ -163,7 +164,20 @@ export async function confirmDiscardChanges() {
   // Saving an unnamed buffer opens the save dialog, which the user can also
   // dismiss - and dismissing it is not consent to lose the work, so that
   // cancels the whole operation too.
-  return (await saveFile()) !== null;
+  try {
+    return (await saveFile()) !== null;
+  } catch {
+    // saveFile has already said so on screen; what is decided here is what
+    // happens next, and the answer is nothing.
+    //
+    // This used to throw out of here into shutdown()'s catch, which is written
+    // for a failed *prompt* and reads any throw as permission to quit. So the
+    // one case where the user had explicitly asked to keep their work - answer
+    // "Save", have the save fail - was also the case that discarded it and
+    // closed the window. A failed save is the strongest possible reason not to
+    // continue with something whose next step is to throw the buffer away.
+    return false;
+  }
 }
 
 /**
@@ -311,24 +325,21 @@ function withPythonExtension(path) {
  * fails too, the temporary is left alone and named in the error, because at
  * that point it is the only copy of the user's work.
  */
-async function writeFileSafely(path, content) {
-  const temporary = `${path}.b123d-tmp`;
-  await filesystem.writeFile(temporary, content);
-
-  try {
-    await filesystem.move(temporary, path);
-    return;
-  } catch (error) {
-    log.warn("Could not move the temporary file into place, writing directly:", error);
+/**
+ * A sentence about a failure, whatever shape the failure arrived in.
+ *
+ * Neutralino rejects with a plain object carrying `code` and `message` rather
+ * than an Error, so `String(error)` on one of those is "[object Object]" - which
+ * is exactly what a user would have been shown.
+ */
+function describe(error) {
+  if (error instanceof Error) {
+    return error.message;
   }
-
-  try {
-    await filesystem.writeFile(path, content);
-  } catch (error) {
-    log.error(`Save failed. Your content is in ${temporary}`);
-    throw error;
+  if (typeof error === "object" && error !== null && typeof error.message === "string") {
+    return error.code === undefined ? error.message : `${error.message} (${error.code})`;
   }
-  await filesystem.remove(temporary).catch(() => {});
+  return String(error);
 }
 
 export async function saveFile({ saveAs = false } = {}) {
@@ -345,7 +356,22 @@ export async function saveFile({ saveAs = false } = {}) {
     path = withPythonExtension(path);
   }
 
-  await writeFileSafely(path, getValue());
+  try {
+    const written = await writeFileSafely({ filesystem, log }, path, getValue());
+    if (written !== path) {
+      log.info(`Saved ${path}, which resolves to ${written}`);
+    }
+  } catch (error) {
+    // Said on screen here, once, so that every entry point gets it: the toolbar
+    // button, Cmd-S, and the prompt that offers to save before quitting. Before
+    // this a failed save went to the log and nowhere else, so the editor looked
+    // exactly as it does after a successful one - no dialog, and the title's
+    // modified marker cleared by the markSaved() below, which is now correctly
+    // never reached.
+    log.error("Save failed:", error);
+    await notifyFailure("Could not save", `${path} was not saved.\n\n${describe(error)}`);
+    throw error;
+  }
   setCurrentFile(path);
   markSaved();
   await setSetting(LAST_FILE_KEY, path);

@@ -1,3 +1,7 @@
+import { os } from "@neutralinojs/lib";
+
+import * as log from "./log.js";
+
 // A three-way confirmation, built in the page rather than with a native dialog.
 //
 // os.showMessageBox would be less code, but its YES_NO_CANCEL only offers
@@ -79,4 +83,25 @@ export function askThreeWay({ title, detail, save, discard, cancel }) {
     document.addEventListener("keydown", onKey, true);
     overlay.querySelector('[data-answer="save"]').focus();
   });
+}
+
+/**
+ * Tell the user something failed, and wait until they have seen it.
+ *
+ * Native here, unlike askThreeWay above, for two reasons. The objection to
+ * os.showMessageBox was its fixed button labels, and a single OK is the one set
+ * of labels that cannot be misread. And this is used on the way out of the
+ * application - a save that fails while quitting - where the page is about to
+ * stop existing and an overlay drawn in it is not a thing to depend on.
+ *
+ * Awaited, deliberately. Reporting a lost save with a toast that fades while
+ * the window closes is the same as not reporting it.
+ */
+export async function notifyFailure(title, detail) {
+  try {
+    await os.showMessageBox(title, detail, "OK", "ERROR");
+  } catch (error) {
+    // The dialog itself failing must not replace the failure being reported.
+    log.error("Could not show a message box:", error, "- the message was:", title, detail);
+  }
 }

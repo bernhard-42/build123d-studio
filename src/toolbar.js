@@ -1,7 +1,15 @@
 import { window as neuWindow } from "@neutralinojs/lib";
 
 import { newFile, openFile, saveFile } from "./editor/files.js";
-import { focusAt, runCell, runFile, runSelectionOrLine, getCurrentFile } from "./editor/monaco.js";
+import {
+  focusAt,
+  getCurrentFile,
+  isDirty,
+  onDirtyChange,
+  runCell,
+  runFile,
+  runSelectionOrLine,
+} from "./editor/monaco.js";
 import * as ipc from "./ipc.js";
 import { nextPreference, onThemeChange, setThemePreference, themePreference } from "./theme.js";
 import { showInfo } from "./info.js";
@@ -26,13 +34,37 @@ async function withErrorReporting(what, action) {
   }
 }
 
-/** Reflect the open file in the window title. Also used at startup. */
+/**
+ * Reflect the open file, and whether it is saved, in the window title.
+ *
+ * The bullet is the only place the application says a buffer differs from
+ * disk. Without it a failed save left nothing on screen once the error dialog
+ * was dismissed - the same window, the same everything, as a save that had
+ * worked. That is the defect R2 is about, and it survived the first round of it
+ * because the fix stopped at reporting the failure and never asked what the
+ * window looked like afterwards.
+ *
+ * A bullet rather than an asterisk or the word "modified": it is what an editor
+ * user reads without being told, it needs no translation, and it does not look
+ * like part of a filename the way a trailing * can.
+ */
 export async function updateTitle() {
   const file = getCurrentFile();
-  await neuWindow.setTitle(file === null ? "build123d Studio" : `build123d Studio — ${file}`);
+  const marker = isDirty() ? " •" : "";
+  const name = file === null ? "build123d Studio" : `build123d Studio — ${file}`;
+  await neuWindow.setTitle(`${name}${marker}`);
 }
 
 export function initToolbar() {
+  // The title has to follow the buffer, not only the explicit actions below: a
+  // keystroke makes it dirty and a successful save makes it clean again, and
+  // neither goes through a button. Fired on the transition rather than on every
+  // change - see onDirtyChange - and its failure is logged rather than left as
+  // an unhandled rejection, because a title is not worth breaking typing over.
+  onDirtyChange(() => {
+    updateTitle().catch((error) => log.warn("Could not update the window title:", error));
+  });
+
   const actions = {
     "btn-new": () => withErrorReporting("New", async () => {
       if (await newFile()) {
