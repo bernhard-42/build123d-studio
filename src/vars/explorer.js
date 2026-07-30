@@ -169,12 +169,28 @@ export function initVariables() {
   // The namespace these rows describe died with the backend. Showing them until
   // the replacement's first idle would be showing variables that no longer
   // exist, in a pane whose whole job is to say what does.
-  ipc.on("sidecar.restarting", () => {
+  //
+  // A kernel restart is the same statement about the same rows, and it was not
+  // handled here. It did not show, because until the refresh was gated on
+  // execute_request the replacement console's kernel_info_request went idle,
+  // any idle bought an inspection, and the pane was emptied by that. Gating the
+  // refresh is right - a question the console asked cannot have changed the
+  // namespace - but it took an accident with it that was doing real work.
+  // Measured across the gating commit: two vars.data frames after a restart
+  // before it, the last one empty; none after it, and the dead kernel's rows
+  // still on screen.
+  //
+  // Emptied here rather than re-inspected, because a restarted kernel's
+  // namespace *is* empty - that is what restart means - so there is nothing to
+  // ask it. The next Run refreshes as usual.
+  const forget = () => {
     rows = [];
     details.clear();
     expanded.clear();
     render();
-  });
+  };
+  ipc.on("sidecar.restarting", forget);
+  ipc.on("kernel.restarting", forget);
 
   render();
 }
