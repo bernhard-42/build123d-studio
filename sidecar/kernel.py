@@ -73,6 +73,30 @@ class Kernel:
         # Bounded: only recent ids can still be referenced by in-flight traffic.
         self._internal_requests = collections.deque(maxlen=64)
 
+        # Guards the deque above, and it is the ordering rather than the deque
+        # that needs guarding.
+        #
+        # The id used to be recorded after the send returned, which leaves a gap
+        # the kernel can answer inside: it publishes busy for a request the pump
+        # then fails to recognise as ours, because the id is not in the deque
+        # yet. The refresh that follows every idle is the one that hits it, and
+        # a leaked pair is visible in any Windows log of the period as a busy
+        # and an idle a millisecond apart, right after the warm-up:
+        #
+        #     17:41:38.520  Kernel busy
+        #     17:41:38.521  Kernel idle
+        #
+        # The toolbar flickers, and the explorer treats its own refresh as user
+        # activity and queues another - the exact loop the deque exists to
+        # prevent, arrived at by losing a race rather than by forgetting.
+        #
+        # The send and the record now happen together, and is_internal takes
+        # this too, so the pump cannot read the deque in between. Taken *inside*
+        # _shell_lock, never around it: a restart can hold that one for the
+        # length of a kernel start, and holding this while waiting for it would
+        # park the pump - and the pump is what tells the toolbar anything.
+        self._internal_lock = threading.Lock()
+
         # evaluate() reads the shell channel, and is reached from both the iopub
         # pump (on idle) and the channel thread (on an explicit refresh). Two
         # readers would steal each other's replies.
@@ -104,14 +128,22 @@ class Kernel:
         self._warm_msg_id = None
         self._warm_started = None
 
-    def _send_execute(self, code, **kwargs):
+    def _send_execute(self, code, internal=False, **kwargs):
         """The only place an execute_request is put on the shell socket.
 
         Every caller funnels through here so that no two threads can be inside
         client.execute() at once. See _shell_lock.
+
+        ``internal`` marks a request this class makes on its own behalf, and
+        recording it is part of sending it rather than something the caller
+        remembers to do afterwards - see _internal_lock for what the gap cost.
         """
         with self._shell_lock:
-            return self.client.execute(code, **kwargs)
+            with self._internal_lock:
+                msg_id = self.client.execute(code, **kwargs)
+                if internal:
+                    self._internal_requests.append(msg_id)
+        return msg_id
 
     def kernel_environment(self):
         """Environment for the kernel process.
@@ -213,10 +245,14 @@ class Kernel:
                     '__import__("importlib").import_module("build123d_studio.inspector")',
                 ]
             ),
+            internal=True,
             silent=True,
             store_history=False,
         )
-        self._internal_requests.append(msg_id)
+        # Not covered by _internal_lock, and it does not need to be: losing this
+        # race costs the "warm-up finished" line, not a refresh loop. It is the
+        # same shape as the defect that lock exists for, so if a warm-up ever
+        # goes untimed in a log, this is why.
         self._warm_msg_id = msg_id
         self._warm_started = time.monotonic()
         log("Kernel warm-up started: importing build123d")
@@ -236,7 +272,8 @@ class Kernel:
 
     def is_internal(self, message):
         """True for iopub traffic caused by this class rather than by the user."""
-        return message["parent_header"].get("msg_id") in self._internal_requests
+        with self._internal_lock:
+            return message["parent_header"].get("msg_id") in self._internal_requests
 
     def _pump_iopub(self):
         """Forward every iopub message to the sidecar.
@@ -290,11 +327,11 @@ class Kernel:
     def _evaluate(self, expression, timeout):
         msg_id = self._send_execute(
             "",
+            internal=True,
             silent=True,
             store_history=False,
             user_expressions={"value": expression},
         )
-        self._internal_requests.append(msg_id)
 
         deadline = time.monotonic() + timeout
         discarded = 0
@@ -378,10 +415,12 @@ class Kernel:
         self.working_dir = path
         if self.client is None:
             return
-        msg_id = self._send_execute(
-            f"__import__('os').chdir({path!r})", silent=True, store_history=False
+        self._send_execute(
+            f"__import__('os').chdir({path!r})",
+            internal=True,
+            silent=True,
+            store_history=False,
         )
-        self._internal_requests.append(msg_id)
 
     def interrupt(self):
         if self.manager is not None:
