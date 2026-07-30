@@ -20,7 +20,7 @@ target-version = "py314"
 
 # Only what this repository actually owns. `runtime/` is the generated user
 # environment and `reviews/` is prose.
-include = ["sidecar/**/*.py", "kernel/**/*.py"]
+include = ["sidecar/**/*.py", "kernel/**/*.py", "tests/**/*.py"]
 
 line-length = 100
 
