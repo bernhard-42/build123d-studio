@@ -35,6 +35,18 @@ INSPECTOR = '__import__("build123d_studio.inspector", fromlist=["inspector"])'
 INSPECT = "inspect"
 CONTROL = "control"
 
+# Running code, and the working directory that goes with it. Both reach the
+# kernel's shell socket, which is shared and can legitimately be held for
+# seconds - a restart owns it outright for as long as the kernel takes to come
+# back - so neither belongs on the receive thread.
+#
+# That is what turned a stuck shell socket into a dead application rather than a
+# slow one. on_execute blocked the receive thread, the webview's frames stopped
+# being read, and websockets' keepalive closed the link twenty seconds later:
+# console keystrokes, the variable explorer and Restart Kernel all went with it,
+# and none of them had anything to do with the kernel being stuck.
+EXECUTE = "execute"
+
 # The refresh that follows an idle is answered by a kernel that has just gone
 # idle, so its reply is immediate or it is not coming. Fifteen seconds is right
 # for a refresh the user asked for and far too long for one nobody did: it would
@@ -86,13 +98,22 @@ class Sidecar:
         # The port is OS-assigned, so nothing can collide.
         self.models = ModelSocket(on_model=self.on_model)
 
-        # Inline: these only forward. Running them on the receive thread is what
-        # keeps a keystroke ahead of everything else.
+        # Inline: these only forward, and none of them waits on a lock. Running
+        # them on the receive thread is what keeps a keystroke ahead of
+        # everything else. Interrupt belongs here in particular - it is the way
+        # out of a kernel that is stuck, so it must never queue behind the
+        # execution it is meant to stop, and it signals the kernel process
+        # rather than going through the shell socket.
         self.channel.on("console.resize", self.on_console_resize)
-        self.channel.on("kernel.execute", self.on_execute)
         self.channel.on("kernel.interrupt", self.on_interrupt)
-        self.channel.on("kernel.cwd", self.on_cwd)
         self.channel.on("shutdown", self.on_shutdown)
+
+        # Ordered with respect to each other, which is why they share one lane:
+        # opening a file sets the working directory and then runs, and a Run
+        # that overtook its own chdir would resolve relative paths against the
+        # previous file's directory.
+        self.channel.on("kernel.execute", self.on_execute, lane=EXECUTE)
+        self.channel.on("kernel.cwd", self.on_cwd, lane=EXECUTE)
 
         # Slow, and none of it is worth a dropped keystroke: an inspection waits
         # on the kernel for up to fifteen seconds, activating a measure tool
@@ -243,6 +264,12 @@ class Sidecar:
 
         if msg_type == "status":
             state = content.get("execution_state")
+            # Logged, because the frontend's timestamps then say exactly when
+            # the kernel *started* the user's code as opposed to when the Run
+            # was sent. The gap between the two is queueing behind something
+            # else, and without these two lines a Run waiting its turn and a
+            # Run running slowly look identical from the outside.
+            log(f"Kernel {state}")
             self.channel.send("kernel.status", state=state)
             if state == "idle":
                 # Namespace may have changed - whoever executed it, editor or
@@ -351,6 +378,17 @@ class Sidecar:
         # between the frame never arriving, the kernel refusing it, and the
         # result never being displayed. One line here separates all three.
         msg_id = self.kernel.execute(code)
+
+        # Say "busy" here rather than waiting for the kernel to say it.
+        #
+        # The kernel serves shell requests one at a time and only publishes busy
+        # when it *starts* one, so a Run that queues behind something else left
+        # the toolbar reading "idle" with the user's own code waiting in line.
+        # On a cold Windows machine the startup warm-up is seventy seconds of
+        # importing OCP, and for all of it the application claimed to be doing
+        # nothing. The request has been accepted by the time we get here, so
+        # busy is simply true; the kernel's own idle ends it exactly as before.
+        self.channel.send("kernel.status", state="busy")
         log(f"Execute: {len(code)} chars, msg_id {msg_id}")
 
     def on_interrupt(self, _message):

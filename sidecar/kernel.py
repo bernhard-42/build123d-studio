@@ -95,6 +95,15 @@ class Kernel:
         # for a reply - see _evaluate.
         self._shell_lock = threading.Lock()
 
+        # The warm-up's request id and start time, so it can be timed. It is the
+        # one internal request long enough to matter - the kernel serves the
+        # shell channel serially, so a Run pressed during it waits for all of
+        # it, and on a cold Windows machine that has been over a minute of
+        # loading OCP's libraries. Without a measurement that is indistinguishable
+        # from the Run itself being slow.
+        self._warm_msg_id = None
+        self._warm_started = None
+
     def _send_execute(self, code, **kwargs):
         """The only place an execute_request is put on the shell socket.
 
@@ -208,6 +217,22 @@ class Kernel:
             store_history=False,
         )
         self._internal_requests.append(msg_id)
+        self._warm_msg_id = msg_id
+        self._warm_started = time.monotonic()
+        log("Kernel warm-up started: importing build123d")
+
+    def _note_warm_up(self, message):
+        """Log how long the warm-up import took, once its idle comes back."""
+        if self._warm_msg_id is None:
+            return
+        if message["parent_header"].get("msg_id") != self._warm_msg_id:
+            return
+        if message["header"]["msg_type"] != "status":
+            return
+        if message.get("content", {}).get("execution_state") != "idle":
+            return
+        log(f"Kernel warm-up finished in {time.monotonic() - self._warm_started:.1f}s")
+        self._warm_msg_id = None
 
     def is_internal(self, message):
         """True for iopub traffic caused by this class rather than by the user."""
@@ -229,6 +254,7 @@ class Kernel:
                     log(f"iopub pump stopped: {exc}")
                 return
             try:
+                self._note_warm_up(message)
                 self.on_iopub(message)
             except Exception as exc:  # noqa: BLE001
                 log(f"iopub handler failed: {exc}")
@@ -272,8 +298,30 @@ class Kernel:
 
         deadline = time.monotonic() + timeout
         discarded = 0
-        while time.monotonic() < deadline:
+        while True:
+            # The clock is read once and the value that comes out of it is both
+            # tested and used. This used to be `while time.monotonic() <
+            # deadline:` with a second reading taken inside the loop, and the
+            # gap between those two readings is a permanent hang.
+            #
+            # Any pause between them lets the deadline pass, and `remaining`
+            # comes out negative: the GIL's 5 ms switch interval is an order of
+            # magnitude more than is needed. jupyter_client then computes
+            # int(remaining * 1000) milliseconds and hands it to zmq's poller,
+            # which reads *any* negative timeout as "wait for ever"
+            # (zmq/sugar/poll.py: `if timeout is None or timeout < 0: timeout =
+            # -1`). Measured on the pinned pyzmq: poll(0.25) returns after
+            # 0.251 s, poll(-0.005) never returns at all.
+            #
+            # It never returned while holding _shell_lock, so every later Run
+            # blocked in _send_execute on the sidecar's receive thread; the
+            # webview's frames stopped being consumed; and twenty seconds after
+            # that websockets' keepalive tore the connection down - "Sidecar
+            # socket closed: 1011 keepalive ping timeout". The whole session
+            # died, unrecoverably, from one missed millisecond.
             remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
             # Polled in slices rather than waiting for the whole timeout in one
             # call, because the shell socket is shared: holding the lock for the
             # full fifteen seconds would stall every Run behind an inspection
