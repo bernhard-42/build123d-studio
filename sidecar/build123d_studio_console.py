@@ -22,9 +22,11 @@ jupyter_console's classes.
 """
 
 import asyncio
+import io
 import signal
 import sys
 import time
+from functools import partial
 
 from jupyter_client.utils import ensure_async
 from jupyter_console.app import JupyterConsoleApp, ZMQTerminalIPythonApp
@@ -177,20 +179,57 @@ class Build123dStudioShell(ZMQTerminalInteractiveShell):
         # a single write - a copy that would quietly drift from upstream.
         self._expect_remote_code = True
 
-    def _render_pending(self):
-        """Drain and print iopub messages with the prompt out of the way.
+    def _drain_pending(self):
+        """Consume pending iopub messages, capturing what they would print.
 
-        Called from run_in_terminal, so the prompt has already been erased and
-        the cursor sits on a clean line.
+        Deliberately *not* inside run_in_terminal, which is the whole point.
+        Most of what arrives here prints nothing at all: a silent
+        execute_request still publishes status busy and status idle, and the
+        application makes those constantly on its own behalf - the warm-up
+        import and every variable-explorer refresh. Rendering them inside
+        run_in_terminal meant erasing and redrawing the prompt for traffic with
+        no output, and a redraw is not free: prompt_toolkit reserves room below
+        the prompt by writing a screenful of newlines and then moving the cursor
+        back up, so in a pane shorter than that reservation each one scrolls.
+
+        The result was a console that pushed its own banner off the top and left
+        a column of stale "In [1]:" prompts behind - reported as four of them
+        with only the last still on screen. It appeared when the warm-up moved
+        after the console's handshake, because that put the application's own
+        kernel traffic *after* the first prompt was drawn rather than before.
+
+        So the messages are consumed with output captured to a buffer, and the
+        terminal is only taken if there is something to put in it.
         """
+        buffer = io.StringIO()
         real_stdout, real_stderr = sys.stdout, sys.stderr
-        sys.stdout = _CrlfWriter(real_stdout, shell=self)
-        sys.stderr = _CrlfWriter(real_stderr)
+        sys.stdout = _CrlfWriter(buffer, shell=self)
+        sys.stderr = _CrlfWriter(buffer)
         self._expect_remote_code = False
         try:
             self.handle_iopub()
+        except Exception as exc:  # noqa: BLE001 - one bad message must not stop the stream
+            buffer.write(f"\r\n[build123d-studio] error rendering kernel output: {exc}\r\n")
+        finally:
+            sys.stdout, sys.stderr = real_stdout, real_stderr
+        return buffer.getvalue()
+
+    def _emit(self, text):
+        """Print captured output with the prompt out of the way.
+
+        Called from run_in_terminal, so the prompt has already been erased and
+        the cursor sits on a clean line. The text arrives already translated by
+        _CrlfWriter, so it goes to the real stream untouched; only the follow
+        below prints anything new, and that needs the wrapper again.
+        """
+        real_stdout, real_stderr = sys.stdout, sys.stderr
+        try:
+            real_stdout.write(text)
+            real_stdout.flush()
             if self._saw_remote_input:
                 self._saw_remote_input = False
+                sys.stdout = _CrlfWriter(real_stdout, shell=self)
+                sys.stderr = _CrlfWriter(real_stderr)
                 self._follow_remote_execution()
         except Exception as exc:  # noqa: BLE001 - one bad message must not stop the stream
             real_stderr.write(f"\r\n[build123d-studio] error rendering kernel output: {exc}\r\n")
@@ -280,7 +319,14 @@ class Build123dStudioShell(ZMQTerminalInteractiveShell):
         while self.keep_running:
             poll_result = await ensure_async(self.client.iopub_channel.socket.poll(0))
             if poll_result:
-                await run_in_terminal(self._render_pending)
+                # Consumed first, printed second, and only if there is anything
+                # to print - see _drain_pending. _saw_remote_input is checked as
+                # well as the text, because following another client's run to
+                # its end is a reason to hold the terminal even for a moment
+                # when nothing has been written yet.
+                pending = self._drain_pending()
+                if pending != "" or self._saw_remote_input:
+                    await run_in_terminal(partial(self._emit, pending))
             await asyncio.sleep(0.5)
 
 
