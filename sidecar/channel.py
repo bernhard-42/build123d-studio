@@ -121,6 +121,8 @@ class Channel:
         something is already stuck.
         """
         self._handlers[message_type] = (handler, lane)
+        if lane is not None:
+            self.open_lane(lane)
 
     def submit(self, lane, work):
         """Run a callable on a lane, for work that no frame arrived for.
@@ -131,16 +133,55 @@ class Channel:
         """
         self._lane(lane).put(("(internal)", work, None))
 
-    def _lane(self, name):
+    def open_lane(self, name):
+        """Create a lane and its worker thread now, rather than on first use.
+
+        Lanes used to be created lazily, inside _lane, holding _lanes_lock
+        across threading.Thread.start(). On Windows that is a deadlock, and it
+        cost the application every Run.
+
+        The first idle-triggered variable refresh is what opened the inspect
+        lane, and it runs on the iopub pump a fraction of a second after the
+        warm-up import finishes - which is precisely when the measurement
+        backend's own import is part-way through loading OCP's and numpy's
+        native extensions. Loading a .pyd is LoadLibrary, which holds the
+        Windows loader lock; starting a thread runs DLL_THREAD_ATTACH in every
+        loaded DLL, which wants the same lock. The two waited on each other for
+        good, and the pump was holding _lanes_lock while it waited - the lock
+        every kernel.execute must take to reach its own lane. So Run pressed:
+        the frame arrived, the receive thread blocked acquiring _lanes_lock,
+        and the sidecar went silent for the rest of the session without
+        managing to log a single line about it. Reproduced headlessly on
+        Windows; three faulthandler dumps forty seconds apart were identical.
+        Measured on its own, one Thread.start() during that import blocked for
+        0.64 s even in the runs that did recover, so this was never only a
+        Windows problem - it was a stall everywhere and a deadlock there.
+
+        Every lane is registered from Sidecar.__init__, before the first
+        background import is started, so by the time anything could race there
+        is no thread left to start. _lane is a plain lookup afterwards: nothing
+        on the receive thread takes a lock to find its lane any more.
+        """
         with self._lanes_lock:
-            lane = self._lanes.get(name)
-            if lane is None:
-                lane = queue.Queue()
-                self._lanes[name] = lane
-                threading.Thread(
-                    target=self._run_lane, args=(lane,), name=f"lane-{name}", daemon=True
-                ).start()
-            return lane
+            if name in self._lanes:
+                return
+            lane = queue.Queue()
+            self._lanes[name] = lane
+        threading.Thread(
+            target=self._run_lane, args=(lane,), name=f"lane-{name}", daemon=True
+        ).start()
+
+    def _lane(self, name):
+        """The queue of an already-open lane.
+
+        Deliberately not a create-if-missing: opening one here would put a
+        Thread.start() back on whatever thread happened to arrive first, which
+        is the deadlock described in open_lane.
+        """
+        lane = self._lanes.get(name)
+        if lane is None:
+            raise KeyError(f"Lane {name!r} was never opened; call open_lane at registration")
+        return lane
 
     def _run_lane(self, lane):
         while True:
