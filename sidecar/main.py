@@ -189,10 +189,21 @@ class Sidecar:
         def on_output(data):
             if self.console is not console:
                 return
-            # First byte means the console has its kernel_info reply and is
-            # drawing its banner - the point after which a long-running import
-            # can no longer delay it.
-            self.warm_kernel()
+            # The warm-up used to be fired from here, on the console's first
+            # byte, on the reasoning that a first byte meant the console had
+            # its kernel_info reply and was drawing its banner.
+            #
+            # That is true of a POSIX pty and false on Windows. Under ConPTY
+            # the first bytes are prompt_toolkit setting the terminal up -
+            # "\x1b[1t\x1b[c\x1b[?1004h..." - and they arrive before the
+            # console has asked the kernel anything. So the warm-up went in
+            # first, and the console's kernel_info_request then queued behind
+            # a whole build123d import on the kernel's serial shell channel.
+            # The pane cleared "Initializing console" the moment those setup
+            # bytes arrived and then sat empty for the length of the import:
+            # 3.7 s warm here, thirty-odd seconds on a cold machine, which is
+            # exactly the delay the warm-up exists to avoid, moved from the
+            # first Run onto every startup. See on_iopub for what fires it now.
             self.channel.send_binary(KIND_CONSOLE, data)
 
         def on_exit():
@@ -229,7 +240,14 @@ class Sidecar:
         # happen, so the first Run after that restart paid the full import.
         if self._warm_timer is not None:
             self._warm_timer.cancel()
-        self._warm_timer = threading.Timer(5.0, self.warm_kernel)
+        # Generous, because it is now only a backstop for a console that never
+        # handshakes at all. It was five seconds when the console's first byte
+        # was the trigger; at that length it would simply reintroduce the bug
+        # this stopped - a cold Windows console takes longer than five seconds
+        # to import IPython and reach its kernel_info_request, and the timer
+        # would fire first and put the import back in front of it. Warming up
+        # late costs a slower first Run; warming up early costs every startup.
+        self._warm_timer = threading.Timer(30.0, self.warm_kernel)
         self._warm_timer.start()
 
     def warm_kernel(self):
@@ -268,6 +286,25 @@ class Sidecar:
         # response to its own refresh.
         if self.kernel.is_internal(message):
             return
+
+        # The console's handshake, observed rather than guessed at.
+        #
+        # Every shell request publishes busy/idle on iopub with the request's
+        # type in parent_header, so the idle that follows a kernel_info_request
+        # is the console having been answered - the point the first-byte
+        # trigger was reaching for and missing on Windows. Warming up here puts
+        # the import strictly after the handshake instead of racing it, on
+        # every platform, without reading terminal bytes to guess what the
+        # console is doing.
+        #
+        # Nothing else in this application sends kernel_info_request: the
+        # sidecar's own goes through wait_for_ready, before the pump exists.
+        if (
+            msg_type == "status"
+            and content.get("execution_state") == "idle"
+            and message["parent_header"].get("msg_type") == "kernel_info_request"
+        ):
+            self.warm_kernel()
 
         if msg_type == "status":
             state = content.get("execution_state")
