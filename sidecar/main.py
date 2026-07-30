@@ -288,6 +288,10 @@ class Sidecar:
         """
         msg_type = message["header"]["msg_type"]
         content = message.get("content", {})
+        # What the kernel was answering when it published this. Status messages
+        # carry it, and it is the difference between "somebody ran code" and
+        # "the console asked a question" - see the refresh below.
+        parent_type = message["parent_header"].get("msg_type")
 
         # Warm-up and inspection requests produce status traffic of their own.
         # Treating that as user activity would make the explorer refresh in
@@ -310,7 +314,7 @@ class Sidecar:
         if (
             msg_type == "status"
             and content.get("execution_state") == "idle"
-            and message["parent_header"].get("msg_type") == "kernel_info_request"
+            and parent_type == "kernel_info_request"
         ):
             self.warm_kernel()
 
@@ -323,7 +327,17 @@ class Sidecar:
             # Run running slowly look identical from the outside.
             log(f"Kernel {state}")
             self.channel.send("kernel.status", state=state)
-            if state == "idle":
+            # Only code can have changed the namespace.
+            #
+            # This used to refresh after *any* request went idle, which is most
+            # visible at startup: the console's kernel_info_request and
+            # history_request each bought an inspection, and the first landed
+            # behind the warm-up import on the kernel's serial shell channel and
+            # died at its five-second budget - "Inspection timed out after 5s,
+            # having discarded 1 unrelated shell replies" on every cold start,
+            # for a namespace that was empty and had not changed. A console
+            # tab-completion's complete_request bought one too.
+            if state == "idle" and parent_type == "execute_request":
                 # Namespace may have changed - whoever executed it, editor or
                 # console. Pushed rather than polled, so an idle session costs
                 # nothing.
