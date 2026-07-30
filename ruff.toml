@@ -1,0 +1,48 @@
+# The Python half of the correctness linting. See eslint.config.js for why this
+# exists at all and why it stops at correctness.
+#
+# The defect that earned it: on_iopub referenced a local that a later edit was
+# supposed to add and did not. Every iopub message then raised NameError inside
+# the pump, where the handler's own `except Exception` logged it and carried on,
+# so Run kept working and show() kept working and only the variable explorer
+# quietly stopped updating. F821 is one second of checking against an afternoon
+# of not noticing.
+#
+# Run through uv rather than installed anywhere: `uvx ruff@<version> check`. The
+# application's Python environment is the *user's*, generated from a rendered
+# pyproject.toml at first launch and pinned to exactly what the app needs, so a
+# development tool has no business in it. See package.json's lint:py script for
+# the pinned version - pinned for the same reason everything else here is, and
+# note that `ruff` on npm is an unrelated package by a different author, not
+# Astral's.
+
+target-version = "py314"
+
+# Only what this repository actually owns. `runtime/` is the generated user
+# environment and `reviews/` is prose.
+include = ["sidecar/**/*.py", "kernel/**/*.py"]
+
+line-length = 100
+
+[lint]
+# Ruff's default set, named explicitly so that adding to it is a decision rather
+# than a side effect of upgrading:
+#
+#   E4  imports (unsorted/multiple on a line)
+#   E7  statement-level mistakes - `== None`, bare `except:`, lambda assignment
+#   E9  syntax and IO errors
+#   F   pyflakes: undefined names (F821), unused imports (F401), unused locals,
+#       f-strings with no placeholders, redefinitions
+#
+# Plus two the project's own rules ask for and a linter can actually enforce:
+#
+#   PLE  pylint errors - genuine bugs only, not preferences
+#   B    flake8-bugbear's real traps, of which B023 (a closure over a loop
+#        variable) is the one this codebase's callback style could plausibly hit
+select = ["E4", "E7", "E9", "F", "PLE", "B"]
+
+[lint.per-file-ignores]
+# The sidecar is run by path, so its own directory is on sys.path and its
+# imports of sibling modules are plain top-level names. That is deliberate and
+# documented in main.py.
+"sidecar/main.py" = ["E402"]

@@ -4,7 +4,7 @@ import "./icons.css";
 
 import { ensureEnvironment } from "./bootstrap/setup.js";
 import { appDir } from "./bootstrap/envroot.js";
-import { fail, hideSplash, setStatus, showSplash, splashVisible } from "./bootstrap/splash.js";
+import { fail, hideSplash, showSplash, splashVisible } from "./bootstrap/splash.js";
 import { initSplitters } from "./layout/splitter.js";
 import { initConsole } from "./console/terminal.js";
 import { focusAt, initEditor } from "./editor/monaco.js";

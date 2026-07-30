@@ -41,6 +41,13 @@ except ImportError as _exc:  # pragma: no cover - depends on the installed ocp_v
 
 from ocp_vscode.utils import CommsWarning
 
+# This package's own modules. Up here with everything else, rather than below
+# the ocp_vscode setup where they used to sit: neither imports ocp_vscode and
+# neither reads the port or the warning filters, so the placement said they
+# depended on that setup when they do not.
+from .buffers import split_buffers
+from .transport import NotConnected, send_model
+
 # Settle the port up front.
 #
 # ocp_vscode's get_port() otherwise runs viewer discovery on first use and then
@@ -64,9 +71,6 @@ if _ISOLATION_PORT is not None and _ISOLATION_PORT.isdigit():
 #     its own default (config.py:688-693). Worth fixing upstream.
 warnings.filterwarnings("ignore", category=CommsWarning)
 warnings.filterwarnings("ignore", message="Unknown collapse value from viewer")
-
-from .buffers import split_buffers
-from .transport import NotConnected, send_model
 
 __all__ = ["show", "show_object", "reset_show", "show_clear", "NotConnected"]
 

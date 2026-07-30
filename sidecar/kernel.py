@@ -25,7 +25,6 @@ import ast
 import collections
 import os
 import queue
-import sys
 import threading
 import time
 
