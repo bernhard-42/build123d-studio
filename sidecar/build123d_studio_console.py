@@ -137,6 +137,10 @@ class Build123dStudioShell(ZMQTerminalInteractiveShell):
     # echo somebody's code" precisely the distinction that is wanted.
     _saw_remote_input = False
 
+    # The In[n] of the other client's cell being echoed, so the prompt that
+    # follows it can be numbered after it. See _follow_remote_execution.
+    _remote_execution_count = None
+
     # --- prompts ---
     #
     # The base class draws prompts with print_formatted_text() against
@@ -164,6 +168,7 @@ class Build123dStudioShell(ZMQTerminalInteractiveShell):
             return
         sys.stdout.write(f"{GREEN}{self.other_output_prefix}In [{ec}]: {RESET}")
         self._saw_remote_input = True
+        self._remote_execution_count = int(ec)
 
         # In the base class this call is immediately followed by
         # `sys.stdout.write(content['code'] + '\n')`, with nothing in between.
@@ -235,6 +240,28 @@ class Build123dStudioShell(ZMQTerminalInteractiveShell):
                 # handle_sigint raises rather than interrupting. Give the prompt
                 # back instead of looking stuck.
                 break
+
+        # Number the next prompt after the cell that has just run.
+        #
+        # handle_iopub keeps the kernel's counter in two places: execute_input
+        # sets it to ec + 1, and execute_result sets it back to ec so that
+        # "Out[n]" carries the number of the cell it belongs to. For the
+        # console's own input, handle_execute_reply then puts it back to ec + 1
+        # - but another client's reply goes to that client, so nothing restored
+        # it here. A cell run from the editor that *returned a value* therefore
+        # left the counter one short and the next prompt repeated the number
+        # that had just been used:
+        #
+        #     Out[1]: bbox: -5.0 <= x <= 5.0, ...
+        #
+        #     In [1]:
+        #
+        # A cell returning nothing publishes no execute_result and was
+        # unaffected, which is what made it look intermittent rather than
+        # systematic.
+        if self._remote_execution_count is not None:
+            self.execution_count = max(self.execution_count, self._remote_execution_count + 1)
+            self._remote_execution_count = None
 
     async def handle_external_iopub(self, loop=None):
         """Poll iopub while sitting at the prompt, printing above it.
