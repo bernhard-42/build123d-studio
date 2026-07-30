@@ -1,6 +1,7 @@
 import { events, os } from "@neutralinojs/lib";
 
 import { quoteFor } from "./quoting.js";
+import * as log from "./log.js";
 
 // Thin wrappers over Neutralino's spawnProcess.
 //
@@ -52,6 +53,44 @@ export function quote(value) {
 }
 
 /**
+ * Put our variables where a child will inherit them, and never use
+ * spawnProcess's envs parameter.
+ *
+ * That parameter cannot be used on Windows at all. Neutralino's vendored
+ * tiny-process-library builds the environment block as UTF-16 under #ifdef
+ * UNICODE and then calls CreateProcess without CREATE_UNICODE_ENVIRONMENT
+ * (lib/tinyprocess/process_win.cpp - the flag appears nowhere in the file), so
+ * Windows reads a wide block as ANSI, sees nonsense, and refuses to create the
+ * process. Every spawn carrying any environment at all returns pid 0 and exit
+ * code -1 with no output, whatever the variables are: measured, then confirmed
+ * against the source.
+ *
+ * It is also wrong everywhere else, if less fatally: given an envs map
+ * Neutralino builds the child's whole environment from it and inherits nothing,
+ * so the sidecar has been running on macOS with exactly two variables - no
+ * PATH, no HOME - and the kernel inherited that.
+ *
+ * Setting them on this process fixes both. Children inherit them natively,
+ * which is what an empty envs map already asks Neutralino to do. The variables
+ * are ours (UV_*, PYTHON*), they are the same for every spawn that wants them,
+ * and the only processes this application starts are the ones they are meant
+ * for.
+ */
+async function exportEnvironment(envs) {
+  if (envs === undefined || Object.keys(envs).length === 0) {
+    return;
+  }
+  for (const [name, value] of Object.entries(envs)) {
+    try {
+      await os.setEnv(name, value);
+    } catch (error) {
+      log.warn(`Could not set ${name} for child processes:`, error);
+    }
+  }
+  log.info(`spawn environment: exported ${Object.keys(envs).length} variables to inherit`);
+}
+
+/**
  * Start a long-lived process and keep a handle on it.
  *
  * @returns {Promise<{id: number, pid: number, write: (s: string) => Promise<void>,
@@ -66,7 +105,24 @@ export async function spawn(command, { cwd, envs, onStdOut, onStdErr } = {}) {
     settleExit = resolve;
   });
 
-  const proc = await os.spawnProcess(command, { cwd, envs });
+  // Logged either side of the call, because "exited with -1" cannot distinguish
+  // a process that was never created from one that started and died: both look
+  // identical from the exit handler, and on Windows the first is what a bad
+  // command line, a rejected working directory or a malformed environment block
+  // all produce.
+  await exportEnvironment(envs);
+
+  log.info(`spawn: cwd=${cwd ?? "(inherited)"} command=${command.slice(0, 300)}`);
+  let proc;
+  try {
+    // Deliberately no envs: see exportEnvironment. Passing one is fatal on
+    // Windows and lossy everywhere else.
+    proc = await os.spawnProcess(command, { cwd });
+  } catch (error) {
+    log.error("spawnProcess refused to start the process:", error);
+    throw error;
+  }
+  log.info(`spawned: id=${proc.id} pid=${proc.pid}`);
 
   handlers.set(proc.id, {
     onStdOut: onStdOut ?? (() => {}),
