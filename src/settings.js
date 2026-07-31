@@ -41,13 +41,14 @@ const RESTART_TIMEOUT = 120000;
 /**
  * Restart the kernel and wait for the outcome.
  *
- * Shared by both flows here so neither can forget one of the ways this ends.
+ * Shared by both flows here, and by the recovery banner when the kernel dies
+ * on its own, so none of them can forget one of the ways this ends.
  * Awaiting only kernel.restarted/kernel.restart_failed was not enough: if the
  * sidecar process dies during the restart, or was already gone when the send
  * happened to succeed, neither frame is ever sent and the splash stays up for
  * ever with no OK button.
  */
-async function awaitKernelRestart() {
+export async function awaitKernelRestart() {
   ipc.send("kernel.restart");
   await ipc.awaitOutcome(
     "kernel.restarted",

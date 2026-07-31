@@ -31,6 +31,7 @@ import tempfile
 import threading
 import time
 
+import psutil
 from websockets.sync.client import connect
 
 # Binary frame kinds, matching sidecar/channel.py and src/ipc.js.
@@ -152,6 +153,26 @@ class Sidecar:
             pass
 
 
+def kernel_process(sidecar_pid):
+    """The ipykernel child of the sidecar, or None.
+
+    Found by walking the process tree rather than asked for, because nothing in
+    the protocol exposes it - which is the same reason the sidecar could not
+    tell the kernel had died until it started asking its kernel manager.
+    """
+    try:
+        parent = psutil.Process(sidecar_pid)
+    except psutil.Error:
+        return None
+    for child in parent.children(recursive=True):
+        try:
+            if any("ipykernel" in argument for argument in child.cmdline()):
+                return child
+        except psutil.Error:
+            continue
+    return None
+
+
 def main():
     parser = argparse.ArgumentParser("build123d Studio integration test")
     parser.add_argument("--env-root", required=True)
@@ -250,6 +271,39 @@ def main():
     # The replacement kernel's namespace is empty, so it needs warming again.
     at_second, _ = side.wait_log("Kernel warm-up started", 120, count=2)
     check("the warm-up runs again after a restart", at_second is not None)
+
+    # --- the kernel process dying is noticed ---
+    #
+    # Killed rather than asked to stop, because the case is an out-of-memory
+    # tessellation, and a dead ZMQ peer produces no exception at all: before
+    # this was watched for, execute() went on succeeding into a socket with
+    # nobody behind it and the toolbar kept reading "busy" for the rest of the
+    # session.
+    kernel = kernel_process(side.proc.pid)
+    if kernel is None:
+        check("the kernel process can be found", False, "no ipykernel child")
+    else:
+        before = len(side.frames)
+        # Both in the sidecar's own time base, because that is what wait_frame
+        # reports; subtracting one from the other is the detection latency, and
+        # printing the raw timestamp as though it were the delay is a mistake
+        # this line made once already.
+        killed_at = time.monotonic() - side.started
+        kernel.kill()
+        at_died, _ = side.wait_frame("kernel.died", 60, since=before)
+        check("a dead kernel is reported", at_died is not None,
+              f"{at_died - killed_at:.2f}s after the kill"
+              if at_died is not None else "never reported")
+
+        # And the offered way back has to work, or the banner is decoration.
+        os.remove(marker)
+        before = len(side.frames)
+        side.send("kernel.restart")
+        at_back, _ = side.wait_frame("kernel.restarted", ACTION_TIMEOUT, since=before)
+        check("the kernel restarts after dying", at_back is not None)
+        side.send("kernel.execute", code=f"open({marker!r}, 'w').write('ok')\n")
+        check("a Run works after the kernel died and was restarted",
+              side.wait_file(marker, ACTION_TIMEOUT))
 
     # Anything the sidecar itself called a failure. The NameError that stopped
     # the variable explorer was reported exactly this way and read by nobody.

@@ -138,9 +138,10 @@
          and offers a way back rather than blocking the window. -->
     <div id="backend-banner" class="backend-banner" hidden>
       <span class="backend-banner-text" id="backend-banner-text"></span>
-      <button type="button" class="backend-banner-action" id="backend-banner-restart">
-        Restart backend
-      </button>
+      <!-- Labelled from script: this banner now covers two different deaths,
+           and "Restart backend" is the wrong offer for a kernel that died
+           inside a healthy sidecar. -->
+      <button type="button" class="backend-banner-action" id="backend-banner-restart"></button>
     </div>
 
     <div id="busy" class="busy-overlay" hidden>

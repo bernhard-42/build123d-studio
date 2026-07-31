@@ -44,13 +44,19 @@ EVALUATE_TIMEOUT = 15
 class Kernel:
     """Owns the kernel process and the sidecar's client to it."""
 
-    def __init__(self, env_root, app_dir, model_port, model_token, on_iopub, isolation_port):
+    def __init__(self, env_root, app_dir, model_port, model_token, on_iopub, on_died,
+                 isolation_port):
         self.env_root = env_root
         self.app_dir = app_dir
         self.model_port = model_port
         self.model_token = model_token
         self.on_iopub = on_iopub
+        self.on_died = on_died
         self.isolation_port = isolation_port
+
+        # Said once per kernel, not once per half-second. Cleared by start(), so
+        # a replacement kernel can report its own death later.
+        self._death_reported = False
 
         # A stable, discoverable location: an external `jupyter console
         # --existing <path>` can attach to the very same namespace.
@@ -204,6 +210,7 @@ class Kernel:
         self.client.start_channels()
         self.client.wait_for_ready(timeout=60)
 
+        self._death_reported = False
         self._stop.clear()
         self._iopub_thread = threading.Thread(
             target=self._pump_iopub, name="iopub", daemon=True
@@ -256,6 +263,31 @@ class Kernel:
         self._warm_started = time.monotonic()
         log("Kernel warm-up started: importing build123d")
 
+    def _check_alive(self):
+        """Report a kernel process that has gone, once.
+
+        Deliberately silent while _stop is set: a restart stops this pump before
+        replacing the kernel, and the seconds in between are a kernel that is
+        *supposed* to be absent. Announcing that as a death would put a "the
+        kernel stopped" banner over every restart the user asked for.
+        """
+        if self._death_reported or self._stop.is_set() or self.manager is None:
+            return
+        try:
+            alive = self.manager.is_alive()
+        except Exception as exc:  # noqa: BLE001 - a failed check is not a death
+            log(f"Could not check whether the kernel is alive: {exc}")
+            return
+        if alive:
+            return
+
+        self._death_reported = True
+        log("Kernel process died")
+        try:
+            self.on_died()
+        except Exception as exc:  # noqa: BLE001
+            log(f"Kernel death handler failed: {exc}")
+
     def _note_warm_up(self, message):
         """Log how long the warm-up import took, once its idle comes back."""
         if self._warm_msg_id is None:
@@ -284,6 +316,23 @@ class Kernel:
             try:
                 message = self.client.get_iopub_msg(timeout=0.5)
             except queue.Empty:
+                # The half-second the pump would otherwise spend doing nothing,
+                # spent asking whether there is still a kernel to hear from.
+                #
+                # Silence is not a signal here. A dead ZMQ peer raises nothing -
+                # zmq reconnects for ever - so an exhausted kernel looked
+                # exactly like an idle one: execute() went on succeeding into a
+                # socket with nobody behind it, the toolbar kept whatever state
+                # it had last been given, and a kernel that died mid-run left it
+                # reading "busy" until the application was restarted. Running
+                # out of memory tessellating a large model is the realistic way
+                # in, and it is the case A2's recovery was written for - except
+                # that A2 covers the *sidecar* dying, and the memory is spent in
+                # the kernel.
+                #
+                # The heartbeat channel exists for exactly this and is never
+                # read; asking the kernel manager is cheaper than starting to.
+                self._check_alive()
                 continue
             except Exception as exc:  # noqa: BLE001
                 if not self._stop.is_set():

@@ -114,6 +114,10 @@ export function initToolbar() {
     setKernelState(frame.state === "busy" ? "busy" : "idle");
   });
   ipc.on("sidecar.disconnected", () => setKernelState("dead"));
+  // The kernel dying without the sidecar is the case that used to leave this
+  // reading "busy" for the rest of the session, because nothing was watching
+  // the process and a dead ZMQ peer says nothing.
+  ipc.on("kernel.died", () => setKernelState("dead"));
   ipc.on("sidecar.exit", () => setKernelState("dead"));
   ipc.on("kernel.restarting", () => setKernelState("busy"));
   ipc.on("kernel.restarted", () => setKernelState("idle"));

@@ -178,9 +178,20 @@ class Sidecar:
             model_port=self.models.port,
             model_token=self.models.token,
             on_iopub=self.on_iopub,
+            on_died=self.on_kernel_died,
             isolation_port=self.channel.port,
         )
         return self.kernel.start()
+
+    def on_kernel_died(self):
+        """Tell the UI the kernel process is gone.
+
+        Separate from the sidecar's own death, which the frontend already
+        notices through the socket closing: this process is fine, the namespace
+        and everything in it is not, and the way back is a kernel restart rather
+        than a backend one.
+        """
+        self.channel.send("kernel.died")
 
     def console_start(self):
         # Both callbacks check that they still belong to the current console.

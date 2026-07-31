@@ -17,6 +17,7 @@ import {
 } from "./editor/files.js";
 import { initViewer, showLogo } from "./viewer/viewer.js";
 import { initVariables } from "./vars/explorer.js";
+import { awaitKernelRestart } from "./settings.js";
 import { initToolbar, updateTitle } from "./toolbar.js";
 import * as ipc from "./ipc.js";
 import { initTheme } from "./theme.js";
@@ -109,37 +110,80 @@ function installBackendRecovery(console_) {
   const text = document.getElementById("backend-banner-text");
   const button = document.getElementById("backend-banner-restart");
   let restarting = false;
+  // What the button does, which now depends on what died. Held here rather than
+  // branched on inside the handler so that adding a third kind of death means
+  // describing it rather than editing a conditional.
+  let recovery = null;
 
-  const show = (message) => {
+  const show = (message, action) => {
     text.textContent = message;
+    if (action !== undefined) {
+      recovery = action;
+      button.textContent = action.label;
+    }
     button.disabled = false;
     banner.hidden = false;
   };
 
-  ipc.on("sidecar.exit", (frame) =>
-    show(`The Python backend stopped (exit code ${frame.code}).`),
-  );
-  ipc.on("sidecar.disconnected", () => show("The Python backend disconnected."));
-
-  button.addEventListener("click", async () => {
-    if (restarting) {
-      return;
-    }
-    restarting = true;
-    button.disabled = true;
-    showBusy("Restarting the Python backend…");
-    try {
+  /** The sidecar process itself is gone: everything Python-side went with it. */
+  const restartBackend = {
+    label: "Restart backend",
+    busy: "Restarting the Python backend…",
+    run: async () => {
       await ipc.restartSidecar();
       // The replacement knows nothing about this session: where the open file
       // lives, or how big the console pane is. Both are sent at startup and
       // have to be sent again.
       syncKernelDirectory();
       console_.syncSize();
-      banner.hidden = true;
       log.info("Python backend restarted");
+    },
+  };
+
+  /**
+   * The kernel process is gone but the sidecar is not.
+   *
+   * A different repair from the one above, which is why this banner had to
+   * learn a second action rather than reuse the first: restarting the whole
+   * backend here would throw away a console and a model socket that are
+   * perfectly healthy, to fix something one restart request can fix. The
+   * working directory survives, because the sidecar's Kernel object outlives
+   * the process it manages.
+   */
+  const restartKernel = {
+    label: "Restart kernel",
+    busy: "Restarting the kernel…",
+    run: async () => {
+      await awaitKernelRestart();
+      log.info("Kernel restarted after it died");
+    },
+  };
+
+  ipc.on("sidecar.exit", (frame) =>
+    show(`The Python backend stopped (exit code ${frame.code}).`, restartBackend),
+  );
+  ipc.on("sidecar.disconnected", () => show("The Python backend disconnected.", restartBackend));
+
+  // Deliberately distinct wording. "The backend stopped" over a working console
+  // and a working viewer would be a lie, and the user's next question - what
+  // did I lose - has a different answer: the namespace, not the session.
+  ipc.on("kernel.died", () =>
+    show("The Python kernel stopped. Variables and imports are gone.", restartKernel),
+  );
+
+  button.addEventListener("click", async () => {
+    if (restarting || recovery === null) {
+      return;
+    }
+    restarting = true;
+    button.disabled = true;
+    showBusy(recovery.busy);
+    try {
+      await recovery.run();
+      banner.hidden = true;
     } catch (error) {
-      log.error("Could not restart the Python backend:", error);
-      show(`Could not restart the backend: ${error?.message ?? error}`);
+      log.error(`${recovery.label} failed:`, error);
+      show(`Could not recover: ${error?.message ?? error}`);
     } finally {
       restarting = false;
       hideBusy();
