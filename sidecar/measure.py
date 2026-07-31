@@ -16,6 +16,8 @@ That integration is known tech debt upstream, so build123d-studio overrides the 
 handlers instead of switching it on.
 """
 
+import threading
+
 import orjson
 from ocp_vscode.backend import Tool, ViewerBackend
 from ocp_vscode.measure import get_distance, get_properties
@@ -56,38 +58,71 @@ class MeasurementBackend(ViewerBackend):
         return response
 
 
+class ShownModel:
+    """One shown model, and the index built from it on demand.
+
+    Immutable in the sense that matters: the mapping it was constructed with
+    never changes, so everything derived from it describes that one model. A
+    newly shown model produces a new instance rather than mutating this one.
+
+    That is the fix for a check-then-use spread across three fields.
+    Measurements.load ran on the model socket's thread and set _mapping_bytes,
+    _loaded and backend one after another, while _ensure_loaded read the same
+    three on the inspect lane - and indexing is slow, because it deserialises a
+    BRep per face, edge and vertex. A show() landing inside it left
+    _loaded=True with backend=None, after which every measurement raised
+    AttributeError for the rest of the session; the other interleaving was
+    worse and quieter, answering a selection from the superseded model's
+    geometry, which is the one thing this backend exists to prevent.
+
+    Now a show() rebinds one reference. A measurement already in flight keeps
+    the instance it started with and finishes describing the model that was on
+    screen when the selection was made, which is the honest answer; the next one
+    picks up the new model.
+    """
+
+    def __init__(self, mapping_bytes):
+        self.mapping_bytes = mapping_bytes
+        self._backend = None
+        # The index is built once, on first use. The inspect lane is serial so
+        # two callers cannot arrive together today, but the cost of being wrong
+        # about that is indexing a large assembly twice.
+        self._lock = threading.Lock()
+
+    def backend(self):
+        """The indexed backend for this model, building it on first use.
+
+        Indexing is deferred rather than done at show(): load_model explodes
+        every solid into its faces, edges and vertices and deserialises a BRep
+        per entry, which is wasted work for the common case of looking at a
+        model without ever measuring it.
+        """
+        with self._lock:
+            if self._backend is None:
+                backend = MeasurementBackend()
+                backend.load_model(orjson.loads(self.mapping_bytes))
+                self._backend = backend
+                log("Measurement model indexed")
+            return self._backend
+
+
 class Measurements:
-    """Owns the backend and translates the viewer's notifications for it."""
+    """Owns the shown model and translates the viewer's notifications for it."""
 
     def __init__(self):
-        self.backend = None
-        self._mapping_bytes = None
-        self._loaded = False
+        self._shown = None
         # Tracked here rather than on the backend, so that a tool can be
-        # activated without forcing the model to be indexed first.
+        # activated without forcing the model to be indexed first. It belongs to
+        # the session rather than to a model, which is why it survives a show().
         self._active_tool = None
 
     def load(self, mapping_bytes):
         """Take the mapping for a freshly shown model.
 
-        Only stored here. Both the JSON parse and the model walk are deferred
-        to the first measurement: load_model explodes every solid into its
-        faces, edges and vertices and deserialises a BRep per entry, which is
-        wasted work for the common case of looking at a model without ever
-        measuring it.
+        One assignment, and that is the point: there is no window in which the
+        object describes a mixture of two models.
         """
-        self._mapping_bytes = mapping_bytes
-        self._loaded = False
-        self.backend = None
-
-    def _ensure_loaded(self):
-        if self._loaded:
-            return
-        if self.backend is None:
-            self.backend = MeasurementBackend()
-        self.backend.load_model(orjson.loads(self._mapping_bytes))
-        self._loaded = True
-        log("Measurement model indexed")
+        self._shown = ShownModel(mapping_bytes)
 
     def handle_changes(self, changes):
         """Handle a UI change notification from the viewer.
@@ -95,7 +130,11 @@ class Measurements:
         Mirrors ViewerBackend.handle_event's UPDATES branch: a tool becomes
         active, then selections arrive and are answered while it stays active.
         """
-        if self._mapping_bytes is None:
+        # Read once, used throughout. A show() arriving while this runs replaces
+        # the attribute, and re-reading it halfway would be the same
+        # check-then-use this class was restructured to remove.
+        shown = self._shown
+        if shown is None:
             return None
 
         if "activeTool" in changes:
@@ -111,11 +150,11 @@ class Measurements:
         # face, edge and vertex of every model ever shown, in sessions that
         # never measure anything. Doing it at activation rather than at the
         # first click also means that first click answers immediately.
-        self._ensure_loaded()
-        self.backend.activated_tool = self._active_tool
+        backend = shown.backend()
+        backend.activated_tool = self._active_tool
 
         try:
-            return self.backend.handle_activated_tool(changes)
+            return backend.handle_activated_tool(changes)
         except Exception as exc:  # noqa: BLE001 - a bad selection must not kill the sidecar
             log(f"Measurement failed: {exc}")
             return None

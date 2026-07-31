@@ -30,6 +30,7 @@ import secrets
 import socket
 import struct
 import threading
+import time
 
 from channel import log
 
@@ -44,18 +45,45 @@ MAX_MESSAGE = 512 * 1024 * 1024
 # read something large before anything has been checked.
 MAX_TOKEN = 256
 
-# Per-recv, not per-message: a model of any size streams in well under this over
-# loopback, while a client that sends the length prefix and then goes quiet used
-# to park the accept loop for ever. accept() is serial, so that one connection
-# was enough to make every later show() fail with a refused connection and no
-# hint as to why.
+# Per-recv: a peer that stops talking mid-message gives up the connection.
 SOCKET_TIMEOUT = 30
 
+# And two bounds on whole connections, because a per-recv timeout bounds only a
+# single recv: a client sending one byte every twenty-nine seconds resets it
+# every time and holds the accept loop, which is serial, for as long as it
+# likes. Every later show() then fails with a refused connection and no hint as
+# to why.
+#
+# Two rather than one, because who is holding the loop matters. Until the token
+# has been checked the peer is a stranger - any process on this machine can
+# connect - and a stranger gets seconds, not minutes, because that number is
+# exactly how long an unauthenticated process can stop the viewer working. After
+# the token, it is our own kernel delivering a model, and the budget is generous:
+# the largest measured here is 46 MB, which crosses loopback in a fraction of a
+# second, so this is a limit on accident rather than on anything real.
+HANDSHAKE_TIMEOUT = 5
+MESSAGE_TIMEOUT = 120
 
-def _receive_exactly(connection, count):
+
+def _receive_exactly(connection, count, deadline):
+    """Read exactly count bytes, or give up at the deadline.
+
+    The per-recv timeout alone is not a bound on the connection. A client that
+    sends one byte every twenty-nine seconds resets it every time and holds the
+    accept loop - which is serial - for as long as it likes, and every later
+    show() then fails with a refused connection and no hint as to why. That is
+    the same shape as the timeout that already exists, one level up: bounding
+    each step bounds nothing about the whole.
+    """
     chunks = []
     remaining = count
     while remaining > 0:
+        budget = deadline - time.monotonic()
+        if budget <= 0:
+            raise TimeoutError(f"Gave up with {remaining} bytes still to come")
+        # Whichever expires first: the idle timeout for a peer that has stopped
+        # talking, the deadline for one that is talking too slowly to matter.
+        connection.settimeout(min(SOCKET_TIMEOUT, budget))
         chunk = connection.recv(min(remaining, 1 << 20))
         if chunk == b"":
             raise ConnectionError("The kernel closed the connection early")
@@ -97,7 +125,6 @@ class ModelSocket:
                     log("Model channel accept failed")
                 return
             try:
-                connection.settimeout(SOCKET_TIMEOUT)
                 self._read_model(connection)
             except Exception as exc:  # noqa: BLE001 - one bad model must not stop the server
                 log(f"Failed to read a model: {exc}")
@@ -105,7 +132,9 @@ class ModelSocket:
                 connection.close()
 
     def _read_model(self, connection):
-        total = PREFIX.unpack(_receive_exactly(connection, PREFIX.size))[0]
+        # The stranger's budget until the token proves otherwise.
+        deadline = time.monotonic() + HANDSHAKE_TIMEOUT
+        total = PREFIX.unpack(_receive_exactly(connection, PREFIX.size, deadline))[0]
         if total > MAX_MESSAGE:
             raise ValueError(f"Refusing a {total} byte model message")
 
@@ -119,17 +148,24 @@ class ModelSocket:
         # of an unauthenticated peer contradicted it.
         if total < SHORT.size:
             raise ValueError(f"Truncated model message: {total} bytes")
-        token_length = SHORT.unpack(_receive_exactly(connection, SHORT.size))[0]
+        token_length = SHORT.unpack(_receive_exactly(connection, SHORT.size, deadline))[0]
         if token_length > MAX_TOKEN or SHORT.size + token_length > total:
             raise ValueError(f"Refusing a model message declaring a {token_length} byte token")
 
-        token = _receive_exactly(connection, token_length).decode("ascii", "replace")
-        if not secrets.compare_digest(token, self.token):
+        # Compared as bytes, never decoded. compare_digest on two str values
+        # requires both to be ASCII-only, and decoding with "replace" is exactly
+        # what produces a non-ASCII one: a single stray byte becomes U+FFFD and
+        # the comparison raises TypeError, which this module then reported as
+        # "Failed to read a model" - a bad token described as a broken kernel.
+        token = _receive_exactly(connection, token_length, deadline)
+        if not secrets.compare_digest(token, self.token.encode("ascii")):
             # Nothing beyond the token has been read, and nothing more will be.
             log("Rejected a model message with a bad token")
             return
 
-        body = _receive_exactly(connection, total - SHORT.size - token_length)
+        # Authenticated now, so the generous budget applies to the body.
+        deadline = time.monotonic() + MESSAGE_TIMEOUT
+        body = _receive_exactly(connection, total - SHORT.size - token_length, deadline)
 
         # Every length is checked against what is actually left. Trusting them
         # turned a truncated message into a confusing struct.error from

@@ -24,6 +24,7 @@ and passes --env-root to the sidecar.
 import argparse
 import json
 import os
+import socket
 import struct
 import subprocess
 import sys
@@ -199,7 +200,7 @@ def main():
 
     # --- startup ---
 
-    at_ready, _ = side.wait_frame("ready", READY_TIMEOUT)
+    at_ready, ready_frame = side.wait_frame("ready", READY_TIMEOUT)
     if not check("the sidecar reaches ready", at_ready is not None,
                  f"{at_ready:.2f}s" if at_ready is not None else "timed out"):
         # Nothing below can mean anything without it, and the log is what says
@@ -294,6 +295,85 @@ def main():
     # The replacement kernel's namespace is empty, so it needs warming again.
     at_second, _ = side.wait_log("Kernel warm-up started", 120, count=2)
     check("the warm-up runs again after a restart", at_second is not None)
+
+    # --- the measurement backend indexes the model that is on screen ---
+    #
+    # Activating a measure tool is what triggers indexing, and indexing is the
+    # slow step a show() used to be able to land inside: load() set three fields
+    # one after another while _ensure_loaded read the same three, so a model
+    # arriving mid-index left the object claiming to be loaded with no backend,
+    # or answering from geometry that had already been replaced. A shown model
+    # is one immutable object now, swapped whole.
+    #
+    # Asserted through the log line the indexing itself emits, because a
+    # selection response needs shape ids that only the viewer has.
+    side.send("viewer.changes", changes={"activeTool": "Properties"})
+    indexed = side.wait_log("Measurement model indexed", 60)[0] is not None
+    check("activating a measure tool indexes the shown model", indexed)
+
+    # A second model must be indexed in its own right rather than answered from
+    # the first one's index.
+    before = len(side.binary)
+    # Imported again rather than relying on the namespace: the kernel has been
+    # restarted since the earlier show(), so Box and show are gone. The shown
+    # model survived that restart, because it belongs to the sidecar rather than
+    # to the kernel - which is why the check above still had something to index.
+    side.send("kernel.execute", code=(
+        "from build123d import Box\n"
+        "from build123d_studio import show\n"
+        "show(Box(3, 3, 3))\n"
+    ))
+    side.wait_binary(KIND_MODEL, ACTION_TIMEOUT, since=before)
+    side.send("viewer.changes", changes={"activeTool": "Properties"})
+    reindexed = side.wait_log("Measurement model indexed", 60, count=2)[0] is not None
+    check("a newly shown model is indexed again", reindexed)
+
+    # --- the model socket, from a peer that is not the kernel ---
+    #
+    # Reachable by any process on this machine, which is the premise the token
+    # exists for, so the two ways of abusing it are worth asserting rather than
+    # arguing about.
+    model_port = ready_frame["model_port"]
+
+    # A token that is not valid ASCII. It used to be decoded with "replace",
+    # which turns a stray byte into U+FFFD, and compare_digest refuses to
+    # compare non-ASCII str at all - so a bad token raised TypeError and was
+    # reported as "Failed to read a model", blaming the kernel for a stranger.
+    before = len(side.log)
+    with socket.create_connection(("127.0.0.1", model_port), timeout=10) as peer:
+        token = b"\xff\xfe" + b"x" * 41
+        body = struct.pack(">H", len(token)) + token
+        peer.sendall(struct.pack(">Q", len(body)) + body)
+        peer.recv(1)
+    rejected = side.wait_log("Rejected a model message with a bad token", 15)[0] is not None
+    blamed = [text for _, text in side.log[before:] if "Failed to read a model" in text]
+    check("a non-ASCII token is rejected as a bad token", rejected and len(blamed) == 0,
+          "; ".join(blamed[:1]))
+
+    # And a peer that connects, says almost nothing, and holds on. accept() is
+    # serial, so for as long as this one is tolerated nothing else can deliver a
+    # model - which is the whole viewer, stopped by an unauthenticated process.
+    stall = socket.create_connection(("127.0.0.1", model_port), timeout=30)
+    stall.sendall(b"\x00\x00")
+    before = len(side.binary)
+    started = time.monotonic()
+    side.send("kernel.execute", code=(
+        "from build123d import Box\n"
+        "from build123d_studio import show\n"
+        "show(Box(2, 2, 2))\n"
+    ))
+    delivered = side.wait_binary(KIND_MODEL, 60, since=before)
+    stall.close()
+    # Fifteen seconds discriminates, which is the point of choosing it. An
+    # unauthenticated peer now holds the loop for HANDSHAKE_TIMEOUT, five
+    # seconds; before, it held it for the per-recv SOCKET_TIMEOUT of thirty, and
+    # a peer that dribbled a byte every twenty-nine seconds held it for as long
+    # as it cared to. The dribbler is the real case and takes minutes to
+    # demonstrate, so this asserts the bound that covers it.
+    held = time.monotonic() - started
+    check("a stalled stranger cannot hold the model socket",
+          delivered is not None and held < 15,
+          f"model arrived after {held:.1f}s" if delivered is not None else "no model at all")
 
     # --- restarting under load ---
     #
@@ -391,9 +471,16 @@ def main():
 
     # Anything the sidecar itself called a failure. The NameError that stopped
     # the variable explorer was reported exactly this way and read by nobody.
+    # Two of these the test causes on purpose, by stalling the model socket and
+    # by presenting a bad token, and both are the sidecar correctly saying so.
+    # Listed rather than filtered by wording, so that a genuine failure with
+    # similar words is not quietly swallowed with them.
+    provoked = ("Failed to read a model: timed out",
+                "Failed to read a model: Gave up with")
     complaints = [text for _, text in side.log
-                  if "failed" in text or "timed out" in text or "Traceback" in text]
-    check("the sidecar reported no failures", len(complaints) == 0,
+                  if ("failed" in text or "timed out" in text or "Traceback" in text)
+                  and not text.startswith(provoked)]
+    check("the sidecar reported no unexpected failures", len(complaints) == 0,
           "; ".join(complaints[:3]))
 
     side.stop()
