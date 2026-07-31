@@ -53,6 +53,21 @@ class PtyConsole:
         self._reader = None
         self._stopped = threading.Event()
 
+        # Guards use of the pty handle against the close that ends it.
+        #
+        # write() and set_size() checked _stopped and then used _fd, and since
+        # the lanes landed, stop() runs on a different thread from either: a
+        # restart can close the descriptor in between. A closed descriptor
+        # number is not inert, it is reissued to whatever this process opens
+        # next - a file the user is editing, the log, a socket - so the failure
+        # is not a lost keystroke but keystrokes written somewhere they were
+        # never meant to go, and TIOCSWINSZ aimed at something that is not a
+        # terminal.
+        #
+        # Small and never held across anything slow: one os.write to a pty
+        # buffer, one ioctl, or the close itself.
+        self._fd_lock = threading.Lock()
+
     def _command(self):
         return [
             self.python,
@@ -87,7 +102,14 @@ class PtyConsole:
         else:
             self._start_posix(columns, rows)
 
-        self._reader = threading.Thread(target=self._pump, name="pty", daemon=True)
+        # The handle goes to the reader as an argument, for the same reason the
+        # kernel's pump takes a generation: stop() drops it from self, and a
+        # thread that read the field afterwards would find None where it
+        # expected a descriptor. Its own copy stays valid until the close makes
+        # the read fail, which is exactly how this loop is meant to end.
+        self._reader = threading.Thread(
+            target=self._pump, args=(self._fd, self._winpty), name="pty", daemon=True
+        )
         self._reader.start()
         log(f"Console started (pid {self.pid})")
 
@@ -118,17 +140,17 @@ class PtyConsole:
         )
         self.pid = self._winpty.pid
 
-    def _pump(self):
+    def _pump(self, fd, winpty):
         """Read pty output until the console exits."""
         while not self._stopped.is_set():
             try:
                 if IS_WINDOWS:
-                    data = self._winpty.read(READ_CHUNK)
+                    data = winpty.read(READ_CHUNK)
                     if data == "":
                         break
                     chunk = data.encode("utf-8", "replace")
                 else:
-                    chunk = os.read(self._fd, READ_CHUNK)
+                    chunk = os.read(fd, READ_CHUNK)
                     if chunk == b"":
                         break
             except OSError:
@@ -186,42 +208,59 @@ class PtyConsole:
 
     def write(self, data: bytes):
         """Send keystrokes from xterm.js to the console."""
-        if self._stopped.is_set():
-            return
-        try:
-            if IS_WINDOWS:
-                self._winpty.write(data.decode("utf-8", "replace"))
-            else:
-                os.write(self._fd, data)
-        except OSError as exc:
-            log(f"Console write failed: {exc}")
+        with self._fd_lock:
+            if self._stopped.is_set():
+                return
+            try:
+                if IS_WINDOWS:
+                    if self._winpty is None:
+                        return
+                    self._winpty.write(data.decode("utf-8", "replace"))
+                else:
+                    if self._fd is None:
+                        return
+                    os.write(self._fd, data)
+            except OSError as exc:
+                log(f"Console write failed: {exc}")
 
     def set_size(self, columns, rows):
         """Propagate a pane resize so prompt_toolkit rewraps correctly."""
-        if self._stopped.is_set():
-            return
-        try:
-            if IS_WINDOWS:
-                self._winpty.setwinsize(rows, columns)
-            else:
-                packed = struct.pack("HHHH", rows, columns, 0, 0)
-                fcntl.ioctl(self._fd, termios.TIOCSWINSZ, packed)
-        except Exception as exc:  # noqa: BLE001
-            log(f"Console resize failed: {exc}")
+        with self._fd_lock:
+            if self._stopped.is_set():
+                return
+            try:
+                if IS_WINDOWS:
+                    if self._winpty is None:
+                        return
+                    self._winpty.setwinsize(rows, columns)
+                else:
+                    if self._fd is None:
+                        return
+                    packed = struct.pack("HHHH", rows, columns, 0, 0)
+                    fcntl.ioctl(self._fd, termios.TIOCSWINSZ, packed)
+            except Exception as exc:  # noqa: BLE001
+                log(f"Console resize failed: {exc}")
 
     def stop(self):
         self._stopped.set()
-        try:
-            if IS_WINDOWS:
-                # pywinpty holds the process handle and terminates it outright,
-                # so there is nothing to reap on this side.
-                if self._winpty is not None:
-                    self._winpty.terminate(force=True)
-            else:
-                if self.pid is not None:
-                    os.kill(self.pid, signal.SIGTERM)
-                if self._fd is not None:
-                    os.close(self._fd)
-        except (OSError, ProcessLookupError):
-            pass
+        # The handle is dropped before it is closed, and both happen under the
+        # lock, so a writer either goes first with a live descriptor or arrives
+        # afterwards and finds None. There is no third case in which it holds a
+        # number that has stopped meaning this pty.
+        with self._fd_lock:
+            fd, self._fd = self._fd, None
+            winpty, self._winpty = self._winpty, None
+            try:
+                if IS_WINDOWS:
+                    # pywinpty holds the process handle and terminates it
+                    # outright, so there is nothing to reap on this side.
+                    if winpty is not None:
+                        winpty.terminate(force=True)
+                else:
+                    if self.pid is not None:
+                        os.kill(self.pid, signal.SIGTERM)
+                    if fd is not None:
+                        os.close(fd)
+            except (OSError, ProcessLookupError):
+                pass
         self._reap()

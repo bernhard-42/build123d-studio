@@ -67,6 +67,11 @@ class Sidecar:
         self.binary = []
         self.log = []
         self.started = None
+        # Set to stop reading the socket, which is how M3's precondition is
+        # arranged: with nobody draining it, a large model frame blocks in
+        # connection.send holding _send_lock, and the iopub pump blocks behind
+        # it - for longer than a restart used to wait before giving up on it.
+        self.paused = threading.Event()
 
     def start(self):
         self.started = time.monotonic()
@@ -86,7 +91,12 @@ class Sidecar:
                              + "\n".join(text for _, text in self.log))
         announcement = json.loads(line)
         self.ws = connect(
-            f"ws://127.0.0.1:{announcement['port']}/?token={announcement['token']}"
+            f"ws://127.0.0.1:{announcement['port']}/?token={announcement['token']}",
+            # No cap, matching the server and the browser. websockets' client
+            # defaults to 1 MB, which a real model exceeds immediately - the
+            # webview has no such limit, so a test that kept it would fail where
+            # the application works.
+            max_size=None,
         )
         threading.Thread(target=self._pump_ws, daemon=True).start()
 
@@ -99,6 +109,8 @@ class Sidecar:
     def _pump_ws(self):
         try:
             for message in self.ws:
+                while self.paused.is_set():
+                    time.sleep(0.05)
                 at = time.monotonic() - self.started
                 if isinstance(message, bytes):
                     self.binary.append((at, struct.unpack_from(">B", message)[0]))
@@ -207,6 +219,17 @@ def main():
     check("the measurement backend loads", at_backend is not None,
           f"at {at_backend:.2f}s" if at_backend is not None else "never - see the Windows deadlock")
 
+    # The native import has to finish before anything can connect, because a
+    # connection starts a thread and on Windows that deadlocks against the
+    # loader lock the import holds. Checked as an ordering in the sidecar's own
+    # log rather than as an assertion about threads, because the ordering is the
+    # property and it is the thing a future rearrangement would break.
+    at_connected, _ = side.wait_log("Webview connected", 30)
+    check("the backend is imported before the first connection is accepted",
+          at_backend is not None and at_connected is not None and at_backend < at_connected,
+          f"import {at_backend:.2f}s, first connection {at_connected:.2f}s"
+          if at_backend is not None and at_connected is not None else "missing")
+
     # The warm-up must follow the console's kernel_info handshake rather than
     # racing it. Reversed, the import queues ahead of the console on the kernel's
     # serial shell channel and the pane sits empty for the length of it.
@@ -271,6 +294,67 @@ def main():
     # The replacement kernel's namespace is empty, so it needs warming again.
     at_second, _ = side.wait_log("Kernel warm-up started", 120, count=2)
     check("the warm-up runs again after a restart", at_second is not None)
+
+    # --- restarting under load ---
+    #
+    # R4's acceptance, and the one case here that cannot be done by hand:
+    # restart repeatedly while a model is in flight and keystrokes are arriving.
+    # This is the pattern that has already cost days - two threads on one zmq
+    # socket, reported as "Invalid Signature: b'<IDS|MSG>'" because the kernel
+    # read one message's frames as another's - and it only appears when a
+    # restart lands on top of traffic rather than on an idle session.
+    typing = threading.Event()
+
+    def keep_typing():
+        while not typing.is_set():
+            # Straight to the pty, the hottest path in the application and the
+            # one whose file descriptor a restart closes underneath it.
+            side.ws.send(struct.pack(">BxxxI", KIND_CONSOLE, 0) + b"# typing\r")
+            time.sleep(0.01)
+
+    typist = threading.Thread(target=keep_typing, daemon=True)
+    typist.start()
+
+    rounds = 0
+    for _ in range(3):
+        # Big enough to fill the socket buffers, because that is the whole
+        # point: with the reader paused below, the model frame blocks in
+        # connection.send holding _send_lock, the iopub pump blocks behind it
+        # trying to forward a status, and the restart then finds a pump that
+        # will not stop. A single small box never blocks, the pump exits inside
+        # the join, and the race this is here for never opens - which is what
+        # the first version of this test failed to notice, passing identically
+        # against the code it was meant to catch.
+        side.send("kernel.execute", code=(
+            "from build123d import Box\n"
+            "from build123d_studio import show\n"
+            "show(*[Box(1, 1, 1).translate((i * 2, 0, 0)) for i in range(150)])\n"
+        ))
+        side.paused.set()
+        # Deliberately not waiting for the model: the restart is supposed to
+        # land while the delivery is still happening.
+        time.sleep(2.0)
+        mark = len(side.frames)
+        side.send("kernel.restart")
+        time.sleep(1.0)
+        side.paused.clear()
+        if side.wait_frame("kernel.restarted", ACTION_TIMEOUT, since=mark)[0] is not None:
+            rounds += 1
+
+    typing.set()
+    typist.join(timeout=5)
+    check("restarts survive a model in flight and typing", rounds == 3, f"{rounds}/3 rounds")
+
+    # The kernel has to be usable afterwards, which is the part a corrupted
+    # shell socket fails: the frames interleave, the kernel rejects the message,
+    # and Run silently stops working.
+    os.remove(marker)
+    side.send("kernel.execute", code=f"open({marker!r}, 'w').write('ok')\n")
+    check("the kernel still runs code after that", side.wait_file(marker, ACTION_TIMEOUT))
+
+    corrupt = [text for _, text in side.log if "Invalid Signature" in text or "DELIM" in text]
+    check("no corrupted messages on the shell socket", len(corrupt) == 0,
+          "; ".join(corrupt[:2]))
 
     # --- the kernel process dying is noticed ---
     #

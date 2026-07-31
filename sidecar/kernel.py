@@ -32,6 +32,16 @@ from jupyter_client.manager import KernelManager
 
 from channel import log
 
+# What one kernel's worth of state looks like to the thread that reads it. See
+# Kernel._generation.
+Generation = collections.namedtuple("Generation", "manager client stop")
+
+# How long a restart waits for the previous pump to notice it should stop. The
+# pump polls iopub in half-second slices, so it normally exits well inside this;
+# the timeout is for the case where it is stuck in a handler, and proceeding
+# anyway is safe because the generation it holds is already closed.
+PUMP_JOIN_TIMEOUT = 5
+
 # How long one receive may hold the shell lock. Short enough that a Run never
 # waits noticeably behind an in-flight inspection, long enough not to spin.
 SHELL_POLL = 0.25
@@ -69,7 +79,25 @@ class Kernel:
         self.manager = None
         self.client = None
         self._iopub_thread = None
-        self._stop = threading.Event()
+
+        # One generation of kernel, client and stop flag, handed to the pump as
+        # arguments rather than read off self.
+        #
+        # A restart used to set a single shared _stop, join the pump with a two
+        # second timeout, and then *clear* that same flag in start(). A pump
+        # that had not finished in two seconds - one blocked in channel.send,
+        # which holds _send_lock for the length of an entire model frame - woke
+        # up afterwards, found the flag clear because the replacement had
+        # cleared it, and carried on reading self.client: the new one. Two
+        # threads on one zmq socket, which is the fault that produced "Invalid
+        # Signature: b'<IDS|MSG>'" the first time this application met it.
+        #
+        # Scoped this way, a straggler is harmless whatever it does. It holds
+        # its own stop flag, which stays set, and its own client, which has been
+        # closed - so it cannot touch the replacement even if it never exits at
+        # all. That is what makes the join below a courtesy rather than a
+        # correctness requirement, and why it can afford a timeout.
+        self._generation = None
 
         # Requests this class makes on its own behalf - warm-up and namespace
         # inspection. A silent execute_request still publishes status busy/idle
@@ -211,9 +239,12 @@ class Kernel:
         self.client.wait_for_ready(timeout=60)
 
         self._death_reported = False
-        self._stop.clear()
+        generation = Generation(
+            manager=self.manager, client=self.client, stop=threading.Event()
+        )
+        self._generation = generation
         self._iopub_thread = threading.Thread(
-            target=self._pump_iopub, name="iopub", daemon=True
+            target=self._pump_iopub, args=(generation,), name="iopub", daemon=True
         )
         self._iopub_thread.start()
 
@@ -263,18 +294,19 @@ class Kernel:
         self._warm_started = time.monotonic()
         log("Kernel warm-up started: importing build123d")
 
-    def _check_alive(self):
+    def _check_alive(self, generation):
         """Report a kernel process that has gone, once.
 
-        Deliberately silent while _stop is set: a restart stops this pump before
-        replacing the kernel, and the seconds in between are a kernel that is
-        *supposed* to be absent. Announcing that as a death would put a "the
-        kernel stopped" banner over every restart the user asked for.
+        Deliberately silent once this generation has been told to stop: a
+        restart retires the pump before replacing the kernel, and the seconds in
+        between are a kernel that is *supposed* to be absent. Announcing that as
+        a death would put a "the kernel stopped" banner over every restart the
+        user asked for.
         """
-        if self._death_reported or self._stop.is_set() or self.manager is None:
+        if self._death_reported or generation.stop.is_set():
             return
         try:
-            alive = self.manager.is_alive()
+            alive = generation.manager.is_alive()
         except Exception as exc:  # noqa: BLE001 - a failed check is not a death
             log(f"Could not check whether the kernel is alive: {exc}")
             return
@@ -306,15 +338,19 @@ class Kernel:
         with self._internal_lock:
             return message["parent_header"].get("msg_id") in self._internal_requests
 
-    def _pump_iopub(self):
+    def _pump_iopub(self, generation):
         """Forward every iopub message to the sidecar.
 
         This sees messages caused by *all* clients, which is what lets the
         variable explorer refresh after console input as well as editor runs.
+
+        Everything it touches comes from ``generation`` rather than from self,
+        so that a pump left over from a previous kernel cannot reach the current
+        one. See Kernel._generation.
         """
-        while not self._stop.is_set():
+        while not generation.stop.is_set():
             try:
-                message = self.client.get_iopub_msg(timeout=0.5)
+                message = generation.client.get_iopub_msg(timeout=0.5)
             except queue.Empty:
                 # The half-second the pump would otherwise spend doing nothing,
                 # spent asking whether there is still a kernel to hear from.
@@ -332,10 +368,10 @@ class Kernel:
                 #
                 # The heartbeat channel exists for exactly this and is never
                 # read; asking the kernel manager is cheaper than starting to.
-                self._check_alive()
+                self._check_alive(generation)
                 continue
             except Exception as exc:  # noqa: BLE001
-                if not self._stop.is_set():
+                if not generation.stop.is_set():
                     log(f"iopub pump stopped: {exc}")
                 return
             try:
@@ -474,10 +510,37 @@ class Kernel:
         if self.manager is not None:
             self.manager.interrupt_kernel()
 
+    def _retire_pump(self):
+        """Tell the current pump to stop, and wait a while for it to.
+
+        Done *before* _shell_lock is taken, and that ordering is the fix rather
+        than an accident of layout. The pump can be inside warm_kernel, which
+        takes _shell_lock - so retiring it while holding that lock would be the
+        restart waiting for a thread that is waiting for the restart. It cannot
+        happen today only because _warmed is still set when a restart begins,
+        which is a property of a different file and would not survive somebody
+        rearranging on_restart.
+
+        The timeout is deliberate and no longer load-bearing. A pump that has
+        not exited holds a generation whose client is about to be closed and
+        whose stop flag stays set for ever, so it cannot reach the replacement
+        no matter how long it takes to notice. Waiting is politeness; the
+        correctness is in Kernel._generation.
+        """
+        generation = self._generation
+        if generation is not None:
+            generation.stop.set()
+        thread = self._iopub_thread
+        self._iopub_thread = None
+        if thread is None:
+            return
+        thread.join(timeout=PUMP_JOIN_TIMEOUT)
+        if thread.is_alive():
+            log(f"iopub pump still running after {PUMP_JOIN_TIMEOUT}s; leaving it to its "
+                "own kernel, which is closed")
+
     def restart(self):
-        self._stop.set()
-        if self._iopub_thread is not None:
-            self._iopub_thread.join(timeout=2)
+        self._retire_pump()
 
         # Stop completely and start again, rather than KernelManager.restart_kernel.
         #
@@ -507,12 +570,35 @@ class Kernel:
         # it for the restart. Anything wanting the shell in the meantime waits,
         # which is correct: for those seconds there is no kernel to talk to.
         with self._shell_lock:
-            self.shutdown(now=True)
+            self._shutdown(now=True)
             self.start()
         log("Kernel restarted")
 
     def shutdown(self, now=False):
-        """Stop the kernel.
+        """Stop the kernel, taking the shell lock first.
+
+        The lock is the point. This is called from Sidecar.stop() on the way out
+        of the process, where an inspection on the inspect lane or a Run on the
+        execute lane can still be part-way through a send - and stop_channels()
+        closing the socket underneath one of them is the same fault as two
+        threads sharing it, at the least convenient moment. Benign in practice
+        because os._exit(0) follows, but "benign because of what happens next"
+        is not a property to leave lying around in threaded code.
+
+        restart() already holds the lock and calls _shutdown directly; a
+        threading.Lock is not reentrant, so the two entry points cannot be one.
+        """
+        self._retire_pump()
+        with self._shell_lock:
+            self._shutdown(now=now)
+
+    def _shutdown(self, now=False):
+        """Stop the kernel. Caller holds _shell_lock and has retired the pump.
+
+        Both preconditions, and the second is the one worth stating: retiring
+        the pump means joining it, the pump can be waiting for _shell_lock, and
+        doing that from inside the lock is a wait on a thread that is waiting on
+        the waiter.
 
         now=True kills rather than asking politely, which is what a restart
         wants: restart is what a user reaches for precisely when the kernel is
@@ -520,7 +606,6 @@ class Kernel:
         waits for exactly the thing that is never going to finish. At app exit
         the polite form is right, so it stays the default.
         """
-        self._stop.set()
         try:
             if self.client is not None:
                 self.client.stop_channels()

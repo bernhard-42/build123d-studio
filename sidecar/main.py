@@ -13,6 +13,7 @@ stdout at startup. See channel.py.
 """
 
 import argparse
+import faulthandler
 import os
 import sys
 import threading
@@ -52,6 +53,12 @@ EXECUTE = "execute"
 # for a refresh the user asked for and far too long for one nobody did: it would
 # hold the inspect lane, and the explorer's answer would be stale by then anyway.
 IDLE_REFRESH_TIMEOUT = 5
+
+# How long startup may take before the sidecar dumps every thread's stack.
+# Generous, because a cold Windows machine with a virus scanner has taken over a
+# minute to get here legitimately; the point is to catch a start that is never
+# going to finish, not a slow one.
+STARTUP_WATCHDOG = 120
 
 
 class Sidecar:
@@ -135,34 +142,43 @@ class Sidecar:
 
     # --- lifecycle ---
 
+    def load_backend(self):
+        """Import the measurement backend, before anything else has a thread.
+
+        On a background thread this deadlocked. Loading OCP's native extensions
+        is LoadLibrary, which holds the Windows loader lock, and every thread
+        the process starts needs that lock to run DLL_THREAD_ATTACH - so the
+        import and the websockets accept loop's per-connection thread waited on
+        each other for good, and show() cost seventy seconds. See
+        measure_service.py for the full account.
+
+        Moving it to the main thread was the first fix and was not enough. What
+        the rule actually says is that *nothing may create a thread while this
+        runs*, and which thread performs the import is beside the point. The
+        accept loop is the one thread creation whose timing this process does
+        not control, so this now happens before it starts - see Channel.bind.
+
+        The assertion is the rule written where it will be enforced rather than
+        read, and it checks the accept loop specifically rather than counting
+        threads. Threads already exist by now - the lanes open theirs during
+        __init__, deliberately, for a neighbouring deadlock - and that is fine.
+        The requirement is not that none exists but that none is *created* while
+        this runs, and every other thread in this process is started by code
+        here at a moment of its own choosing. The accept loop is the exception,
+        because a connection arrives when a stranger decides it does.
+        """
+        assert not self.channel.accepting, (
+            "the measurement backend must be imported before the accept loop starts: "
+            "a connection arriving during the import creates a thread, and on Windows "
+            "that deadlocks against the loader lock the import is holding"
+        )
+        self.measurements.load_backend()
+
     def start(self):
         self.models.start()
 
         info = self.kernel_start()
         self.console_start()
-
-        # Deliberately here: last of the startup work, and on this thread.
-        #
-        # On a background thread it deadlocked. Loading OCP's native extensions
-        # is LoadLibrary, which holds the Windows loader lock, and every thread
-        # the process starts needs that lock to run DLL_THREAD_ATTACH - so this
-        # import and the websockets accept loop's per-connection thread waited
-        # on each other for good, and show() cost seventy seconds. See
-        # measure_service.py for the full account.
-        #
-        # What that costs is startup, so the position matters as much as the
-        # thread. Everything above has already started its threads - the model
-        # socket, the iopub pump, the pty reader and the warm-up timer - and
-        # "ready" below is what lets the user run anything, so no show() can
-        # arrive to make the accept loop start one. That leaves nothing in this
-        # process creating a thread while this runs, which is the whole
-        # requirement, and it lets the console's own startup and handshake
-        # overlap the import instead of queueing behind it.
-        #
-        # Measured on Windows: with this first in start(), the console pane
-        # filled 3.3 s later than it needed to, and the import was 59% of the
-        # time between spawning the sidecar and a usable prompt.
-        self.measurements.load_backend()
 
         self.channel.send(
             "ready",
@@ -547,10 +563,25 @@ def main():
     # which is what turned an "upgrade packages" into an unrestartable kernel.
     os.chdir(os.path.expanduser("~"))
 
+    # A wedged startup is silent by construction, and that silence is what made
+    # the Windows deadlock expensive: the sidecar simply stopped, having logged
+    # nothing, and every diagnosis had to begin by adding this. Armed here and
+    # cancelled once the application is up, so a healthy start prints nothing
+    # and a hung one prints every thread's stack into a log the user already
+    # knows how to send. It writes to stderr, which the frontend timestamps and
+    # files with everything else.
+    faulthandler.dump_traceback_later(STARTUP_WATCHDOG, file=sys.stderr)
+
     sidecar = Sidecar(env_root=args.env_root, app_dir=args.app_dir)
-    sidecar.channel.start()
+    sidecar.channel.bind()
 
     try:
+        # Before the accept loop, while this process is still single-threaded.
+        # See Sidecar.load_backend - this ordering is a deadlock fix, not a
+        # preference, and the assertion in there enforces it.
+        sidecar.load_backend()
+        sidecar.channel.accept()
+
         # Kernel and console only come up once the UI is listening, so their
         # first output - the console banner in particular - is not lost.
         sidecar.channel.wait_for_client()
@@ -559,6 +590,8 @@ def main():
         sidecar.channel.error("Sidecar startup", exc)
         sidecar.stop()
         return 1
+    finally:
+        faulthandler.cancel_dump_traceback_later()
 
     try:
         # stdin closing is how the app says "we are going away". It stays the

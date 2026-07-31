@@ -99,6 +99,9 @@ class Channel:
         self._connected = threading.Event()
         self._server = None
         self._rejection_logged = False
+        # Whether the accept loop is running. Read by Sidecar.load_backend, whose
+        # whole correctness rests on this being False while it works.
+        self.accepting = False
         self.port = None
         self.token = secrets.token_urlsafe(32)
 
@@ -200,8 +203,32 @@ class Channel:
 
     # --- lifecycle ---
 
-    def start(self):
-        """Bind, announce the port on stdout, and serve in the background."""
+    def bind(self):
+        """Take a port and announce it, without accepting anything yet.
+
+        Split from accept() so that there is a window in which this process is
+        listening but single-threaded, and the measurement backend's native
+        import can happen inside it. On Windows, loading a .pyd holds the OS
+        loader lock while CPython holds the GIL, and starting a thread needs
+        that same lock for DLL_THREAD_ATTACH - so the import deadlocks against
+        any thread creation that overlaps it.
+
+        The accept loop starts a thread per connection (websockets
+        sync/server.py:285), which makes it the one thread creation this process
+        does not control the timing of. Bernhard's cold Windows log shows how
+        close that came: the import held the main thread for 10.3 s, a Run was
+        pressed inside that window, and it survived only because the kernel's
+        own build123d import released the shell channel 103 ms after the
+        sidecar's import finished. Two unrelated durations from two unrelated
+        dependency graphs; had the kernel been quicker, show()'s viewer
+        discovery would have connected here and the application would have hung
+        exactly as it did before.
+
+        Nothing is lost by waiting. The port is on stdout before the import, so
+        the frontend's handshake deadline is unaffected, and a webview that
+        connects meanwhile waits in the listen backlog - which is what a backlog
+        is for.
+        """
         self._server = serve(
             self._handle_connection,
             "127.0.0.1",
@@ -209,19 +236,21 @@ class Channel:
             max_size=MAX_MESSAGE,
             process_request=self._check_token,
         )
-        port = self._server.socket.getsockname()[1]
-        self.port = port
+        self.port = self._server.socket.getsockname()[1]
 
+        sys.stdout.write(
+            json.dumps({"type": "listening", "port": self.port, "token": self.token}) + "\n"
+        )
+        sys.stdout.flush()
+        log(f"Listening on 127.0.0.1:{self.port}")
+        return self.port
+
+    def accept(self):
+        """Start taking connections. See bind() for why this is separate."""
+        self.accepting = True
         threading.Thread(
             target=self._server.serve_forever, name="ws-server", daemon=True
         ).start()
-
-        sys.stdout.write(
-            json.dumps({"type": "listening", "port": port, "token": self.token}) + "\n"
-        )
-        sys.stdout.flush()
-        log(f"Listening on 127.0.0.1:{port}")
-        return port
 
     def wait_for_client(self, timeout=30):
         """Block until the webview connects, so no early output is lost."""
