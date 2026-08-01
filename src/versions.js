@@ -14,9 +14,10 @@ import { version, dependencies } from "../package.json";
  * The version, with a development build number when there is one.
  *
  * Every locally packaged build increments it, so an installed application can
- * be named exactly - "0.1.3.dev17 is the one" - instead of two builds of 0.1.3
- * being indistinguishable once they are in /Applications. A release has no
- * counter file to read, so it is plain 0.1.3; see scripts/dev-build.mjs.
+ * be named exactly - "0.2.0.dev17 is the one" - instead of two builds of one
+ * version being indistinguishable once they are in /Applications. A release has
+ * no counter file to read, so it carries the plain version; see
+ * scripts/dev-build.mjs.
  *
  * `.devN` rather than `+N` or `-devN` deliberately: it is what a Python
  * developer reads without being told, and this application's users are Python

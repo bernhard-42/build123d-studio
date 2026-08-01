@@ -4,7 +4,7 @@
 // which has already cost real time: a Windows fix was tested twice against a
 // package that turned out to predate it, and the only way to tell was to
 // compare checksums by hand. A number that goes up on every package makes
-// "0.1.3.dev17 is the one" a sentence that can be said and checked.
+// "0.2.0.dev17 is the one" a sentence that can be said and checked.
 //
 // The counter lives in .dev-build, which is gitignored, and that is the whole
 // mechanism for keeping it out of releases: a CI checkout does not have the
