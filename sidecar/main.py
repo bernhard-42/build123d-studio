@@ -14,6 +14,7 @@ stdout at startup. See channel.py.
 
 import argparse
 import faulthandler
+import json
 import os
 import sys
 import threading
@@ -97,6 +98,16 @@ class Sidecar:
         # Set while an idle-triggered refresh is queued or running, so repeats
         # collapse into one. See request_refresh.
         self._refresh_queued = threading.Event()
+
+        # Names with a detail request already queued or running, for the same
+        # reason refreshes coalesce. Expanding a row is one click, but the pane
+        # re-requests whatever is open after every execution, and a cell that
+        # runs quickly produces requests faster than a large assembly can be
+        # measured. They pile up on the inspect lane, each describing a value
+        # the next has already superseded - and a measure click, which shares
+        # that lane, then waits behind all of them.
+        self._pending_details = set()
+        self._details_lock = threading.Lock()
         # The fallback timer that warms the kernel if the console never speaks.
         # Held so it can be cancelled: see console_start.
         self._warm_timer = None
@@ -128,8 +139,14 @@ class Sidecar:
         # About dialog walks the installed distributions.
         self.channel.on("viewer.changes", self.on_viewer_changes, lane=INSPECT)
         self.channel.on("vars.refresh", self.on_vars_refresh, lane=INSPECT)
-        self.channel.on("vars.detail", self.on_vars_detail, lane=INSPECT)
         self.channel.on("app.info", self.on_app_info, lane=INSPECT)
+
+        # Inline, and it does not read anything: it claims the name and puts the
+        # slow part on the lane itself. Registering it with lane=INSPECT would
+        # coalesce nothing, because the queueing happens when the frame is
+        # dispatched and the handler only runs once the lane reaches it - by
+        # which time the duplicates are already queued behind it.
+        self.channel.on("vars.detail", self.on_vars_detail)
 
         # Its own lane deliberately. Restart is what a user reaches for when
         # something is already stuck, so it must not queue behind the very
@@ -414,8 +431,25 @@ class Sidecar:
     # execute_request carrying a user_expression: the answer comes back on the
     # shell channel, so the console never sees it and In[n] does not advance.
 
+    def _inspect(self, expression, timeout=None):
+        """Evaluate an inspector call, which answers with a JSON string.
+
+        A string rather than a structure because IPython's pretty printer
+        renders user_expressions results and truncates any sequence at 1000
+        items with a literal "..." - which literal_eval reads as Ellipsis and
+        json.dumps then refuses. See the inspector's module docstring.
+        """
+        answer = self.kernel.evaluate(expression, timeout=timeout)
+        if answer is None:
+            return None
+        try:
+            return json.loads(answer)
+        except (TypeError, ValueError) as exc:
+            log(f"Inspection returned something that is not JSON: {exc}")
+            return None
+
     def refresh_variables(self, timeout=None):
-        rows = self.kernel.evaluate(f"{INSPECTOR}.variables()", timeout=timeout)
+        rows = self._inspect(f"{INSPECTOR}.variables()", timeout=timeout)
         if rows is not None:
             self.channel.send("vars.data", variables=rows)
 
@@ -444,11 +478,42 @@ class Sidecar:
         self.refresh_variables()
 
     def on_vars_detail(self, message):
+        """Claim the name here, do the reading on the lane.
+
+        Runs on the receive thread, which is why it must not read anything: all
+        it does is a set membership test. Dropping a duplicate rather than
+        queueing it is the whole coalescing - the answer the in-flight request
+        produces is the answer this one would, and it goes to the same row.
+        """
         name = message["name"]
+        with self._details_lock:
+            if name in self._pending_details:
+                return
+            self._pending_details.add(name)
+        self.channel.submit(INSPECT, lambda: self._send_detail(name))
+
+    def _send_detail(self, name):
+        try:
+            self._read_detail(name)
+        finally:
+            # Cleared after the answer has been sent, so that a request arriving
+            # while this one runs is dropped rather than answered twice, and one
+            # arriving afterwards - the namespace having changed again - is not.
+            with self._details_lock:
+                self._pending_details.discard(name)
+
+    def _read_detail(self, name):
         # repr() so a name can never be injected into the expression.
-        detail = self.kernel.evaluate(f"{INSPECTOR}.detail({name!r})")
-        if detail is not None:
-            self.channel.send("vars.detail", detail=detail)
+        detail = self._inspect(f"{INSPECTOR}.detail({name!r})")
+        if detail is None:
+            # Answered anyway. The row is showing "loading" and only a reply
+            # takes that away, so staying silent here left it saying so for the
+            # rest of the session - which is what a suspension assembly did,
+            # via a bounding_box() that cost 19 s against a 15 s budget. The
+            # inspector no longer spends that long, but something will, and
+            # "could not be read" is a result where "loading" for ever is a bug.
+            detail = {"name": name, "error": "could not be read in time"}
+        self.channel.send("vars.detail", detail=detail)
 
     # --- UI -> sidecar ---
 

@@ -296,6 +296,47 @@ def main():
     at_second, _ = side.wait_log("Kernel warm-up started", 120, count=2)
     check("the warm-up runs again after a restart", at_second is not None)
 
+    # --- the explorer survives a real namespace ---
+    #
+    # A thousand names is the cliff: user_expressions results go through
+    # IPython's pretty printer, which truncates any sequence there with a
+    # literal "...", and literal_eval reads that as Ellipsis. json.dumps then
+    # refused it inside channel.send, on every idle, for ever - the explorer
+    # froze on its last good state and said nothing. `from sympy import *` is
+    # enough to reach it.
+    side.send("kernel.execute", code="\n".join(f"n{i} = {i}" for i in range(1100)) + "\n")
+    time.sleep(1.0)
+    before = len(side.frames)
+    side.send("vars.refresh")
+    _, big = side.wait_frame("vars.data", ACTION_TIMEOUT, since=before)
+    check("a namespace past a thousand names still refreshes", big is not None,
+          f"{len(big['variables'])} rows" if big is not None else "no vars.data at all")
+
+    if big is not None:
+        # And it says what it left out rather than stopping silently, which is
+        # indistinguishable from having lost the rest.
+        names = [r["name"] for r in big["variables"]]
+        check("a truncated listing says how much it hid",
+              any("more" in n for n in names), names[-1] if len(names) > 0 else "")
+
+    # An expansion has to answer, always. A row that asks for detail and is told
+    # nothing shows "loading" until the application is restarted - which is what
+    # a suspension assembly did, through a bounding_box() costing 19 s against a
+    # 15 s budget.
+    before = len(side.frames)
+    side.send("vars.detail", name="n1")
+    _, detail = side.wait_frame("vars.detail", ACTION_TIMEOUT, since=before)
+    check("expanding a row is answered", detail is not None)
+
+    # Including one that cannot be read at all, which is the case that used to
+    # be silent.
+    before = len(side.frames)
+    side.send("vars.detail", name="does_not_exist")
+    _, missing = side.wait_frame("vars.detail", ACTION_TIMEOUT, since=before)
+    check("expanding a name that is gone is answered too",
+          missing is not None and "error" in missing["detail"],
+          str(missing["detail"]) if missing is not None else "silence")
+
     # --- the measurement backend indexes the model that is on screen ---
     #
     # Activating a measure tool is what triggers indexing, and indexing is the
