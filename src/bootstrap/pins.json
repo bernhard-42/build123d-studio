@@ -13,26 +13,28 @@
     "To move the pin, run scripts/pin-uv.mjs - it re-derives every checksum and",
     "verifies provenance before rewriting this file. Do not edit the digests by hand.",
     "",
-    "Provenance of the values below, verified 2026-07-28:",
-    "  gh attestation verify uv-aarch64-apple-darwin.tar.gz --repo astral-sh/uv",
-    "    -> exit 0, 1 attestation, full Sigstore chain and transparency log",
-    "    -> issuer   https://token.actions.githubusercontent.com",
-    "    -> workflow https://github.com/astral-sh/uv/.github/workflows/release.yml@refs/heads/main",
-    "  All five artifacts additionally carry a slsa.dev/provenance/v1 attestation",
-    "  naming astral-sh/uv's release.yml, checked through the attestation API."
+    "Provenance of the values below, verified 2026-08-01 by scripts/pin-uv.mjs:",
+    "  gh attestation verify <artifact> --repo astral-sh/uv",
+    "    uv-aarch64-apple-darwin.tar.gz: 1 attestation(s), https://github.com/astral-sh/uv/.github/workflows/release.yml@refs/heads/main",
+    "    uv-x86_64-apple-darwin.tar.gz: 1 attestation(s), https://github.com/astral-sh/uv/.github/workflows/release.yml@refs/heads/main",
+    "    uv-aarch64-unknown-linux-gnu.tar.gz: 1 attestation(s), https://github.com/astral-sh/uv/.github/workflows/release.yml@refs/heads/main",
+    "    uv-x86_64-unknown-linux-gnu.tar.gz: 1 attestation(s), https://github.com/astral-sh/uv/.github/workflows/release.yml@refs/heads/main",
+    "    uv-x86_64-pc-windows-msvc.zip: 1 attestation(s), https://github.com/astral-sh/uv/.github/workflows/release.yml@refs/heads/main",
+    "  Every artifact additionally matched the digest published by the releases",
+    "  API, which is a different origin from the release CDN it was fetched from."
   ],
 
   "python": "3.14.6",
 
   "uv": {
-    "version": "0.11.33",
-    "recorded": "2026-07-28",
+    "version": "0.12.0",
+    "recorded": "2026-08-01",
     "artifacts": {
-      "aarch64-apple-darwin": "d75e3d2bfc203d17388edaabd3aa37958edbcbfc36219e3ee0d31bb080b4baa2",
-      "x86_64-apple-darwin": "f1b919f740bd6be1d014ff58c4271b0779a32198adfb19ad9c5d1c4d9b2b4301",
-      "aarch64-unknown-linux-gnu": "9ed88a9a42de3102f9704d021ab186fdf8a69a7ad9a1d3f3486ac6b1e55d6141",
-      "x86_64-unknown-linux-gnu": "aa9fca823c03289fb6e3460b3dc864f3ea895cafaf9b99247701a67b17d1b018",
-      "x86_64-pc-windows-msvc": "c253ce868ad48d29327b661452ce184c9e333e6d6f5bc8d6fcfbf4dd52b83442"
+      "aarch64-apple-darwin": "2b9e582af54f84fa50c115427451a6c13e80f43b52f8282b8af5791077317bbf",
+      "x86_64-apple-darwin": "d41593beaefc54bab7d062af0ef6ca093bfb81d001d58ebbef39e44423f9c496",
+      "aarch64-unknown-linux-gnu": "2c5d6e3092cc5223b10ff403880cc75121bf64e84644e7a0c69f643b0d89ac95",
+      "x86_64-unknown-linux-gnu": "eaf842262aa1c418d8ecc5605f02ee1ebfd369124fa48548e85f9481a47831a9",
+      "x86_64-pc-windows-msvc": "68200e25de594df92387186bbfb9d9df606ec1d87efaa0ae0c7f690970e53db6"
     }
   }
 }
