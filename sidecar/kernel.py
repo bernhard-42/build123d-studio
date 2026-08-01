@@ -216,8 +216,19 @@ class Kernel:
         env["OCP_PORT"] = str(self.isolation_port)
         return env
 
-    def start(self):
-        self.manager = KernelManager(
+    def new_manager(self):
+        """Build the kernel manager and launch its process.
+
+        The one method here that starts an operating system process, and split
+        out for exactly that reason: everything this class is actually difficult
+        about - generation scoping, the pump, what the shell lock covers, which
+        request ids count as internal - is in the lifecycle *around* the kernel
+        rather than in jupyter_client. Overriding this in a test replaces the
+        process and leaves all of that running as shipped, so the restart races
+        can be driven deterministically instead of hoped for. See
+        tests/sidecar/test_kernel_restart.py.
+        """
+        manager = KernelManager(
             kernel_name="python3",
             connection_file=self.connection_file,
             transport="tcp",
@@ -232,8 +243,11 @@ class Kernel:
         # replacing the bundle while the app runs deletes it out from under the
         # process, after which os.getcwd() raises FileNotFoundError and
         # jupyter_client cannot launch a kernel at all.
-        self.manager.start_kernel(env=self.kernel_environment(), cwd=self.working_dir)
+        manager.start_kernel(env=self.kernel_environment(), cwd=self.working_dir)
+        return manager
 
+    def start(self):
+        self.manager = self.new_manager()
         self.client = self.manager.client()
         self.client.start_channels()
         self.client.wait_for_ready(timeout=60)

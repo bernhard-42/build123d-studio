@@ -109,7 +109,7 @@ Done, released as v0.2.0. What was wrong and why it mattered, grouped by what a 
 - Add an OS menu to get Cmd-C/Cmd-V/Cmd-X. Would also deliver Cmd-Q, ... (a prerequisite for code completion in group 5: without it macOS never binds the standard shortcuts, so Ctrl-Space is swallowed by the system's input-source shortcut)
 - Logically, idle/busy indicator belongs to kernel button group. move it before the interrupt button
 - Add all log paths to the info box
-- Fix the Application icon on MacOS
+- Fix the Application icon on MacOS (logo.svg should now be compliant with Apple rules for Tahoe)
 - Config should get a multiline field where I can add code that should be used during "New File"
 - Three distinct run shortcuts, currently two:
   - run block and move the cursor on
@@ -132,7 +132,7 @@ It is also what an editor is expected to do: browsers and VS Code both do it, an
 
 **Nothing about that is fundamental.** Every port is already OS-assigned, so the sidecar socket, the model socket and the kernel's ZMQ ports never contend. What collides is four places written when there was only ever going to be one:
 
-- `envRoot/kernel.json` is a single hardcoded name, so the second kernel overwrites the first and either restart rewrites it under the other. Reproduced on macOS by starting two instances in the same millisecond, and the failure is worse than "the file is wrong": the kernel process is launched with `-f {connection_file}` and reads its ports *from that file*, so instance A writes ports P, instance B overwrites with ports Q, B's kernel binds Q, and A's kernel then reads Q and dies on a zmq bind because B already holds them. A's client then waits sixty seconds for a kernel that never existed and the sidecar exits. A per-instance file removes the second step and the whole chain with it
+- `envRoot/kernel.json` is a single hardcoded name, so the second kernel overwrites the first and either restart rewrites it under the other. Reproduced on macOS by starting two instances in the same millisecond, and the failure is worse than "the file is wrong": the kernel process is launched with `-f {connection_file}` and reads its ports _from that file_, so instance A writes ports P, instance B overwrites with ports Q, B's kernel binds Q, and A's kernel then reads Q and dies on a zmq bind because B already holds them. A's client then waits sixty seconds for a kernel that never existed and the sidecar exits. A per-instance file removes the second step and the whole chain with it
 - `settings.json` is rewritten whole from an in-memory copy, so layout, theme and package sources are last-writer-wins
 - the log is read and rewritten at startup, so two instances truncate each other
 - both run stage-files then `uv lock` then `uv sync` against one virtual environment; uv locks the sync itself, but not that whole sequence
@@ -145,7 +145,7 @@ One shared path is genuinely unsafe rather than merely shared: `runtime/uv-downl
 
 **Per-instance directory**, which is what makes that first collision disappear and answers the product question underneath it. Phase 1 promises the connection file lives at a discoverable path so an external `jupyter console --existing` can attach to the same namespace, and with several instances "the same namespace" stops being well defined. Choosing a primary instance would be a guess at which one the user meant. So the discoverable path becomes a directory rather than a file: each instance owns `runtime/instances/<uuid>/`, puts its connection file there, and the About dialog names its own.
 
-A random id, not the port, and identity is kept separate from liveness. `NL_PORT` was the first suggestion, on the reasoning the reverted single-instance guard used - the OS frees a port when a process dies, unlike a pid file, which goes stale exactly when it matters. But ports are reused, and that breaks both jobs at once: a new instance can be handed a dead one's number and inherit its directory, so an external `jupyter console --existing` reads a connection file naming ports that now belong to something else; and the sweep asks "does that port still serve this application", gets "yes" because the *new* instance holds it, and never cleans the old directory up.
+A random id, not the port, and identity is kept separate from liveness. `NL_PORT` was the first suggestion, on the reasoning the reverted single-instance guard used - the OS frees a port when a process dies, unlike a pid file, which goes stale exactly when it matters. But ports are reused, and that breaks both jobs at once: a new instance can be handed a dead one's number and inherit its directory, so an external `jupyter console --existing` reads a connection file naming ports that now belong to something else; and the sweep asks "does that port still serve this application", gets "yes" because the _new_ instance holds it, and never cleans the old directory up.
 
 So the directory is named by a uuid, which is never reused, and liveness is a `lock` file inside it that the instance holds open under an exclusive lock for as long as it runs. That keeps what the port was chosen for and drops what it was bad at: the operating system releases the lock when the process dies - verified including under SIGKILL - and unlike a port nobody else can acquire it and be mistaken for the owner. The sweep is then simply "try to take each lock; if it is granted, the owner is gone" - so a crashed instance tidies up after itself, and `studio --list` has something true to print.
 
@@ -187,5 +187,3 @@ Its own group rather than a usability quick win, because it is the first place f
 ## Phase 5 "Add feature tests"
 
 - Write comprehensive feature test suite: the panes, the editor, the viewer and the workflows, as distinct from Phase 3's ipc, communication and threading
-
- enhance phase 2 "fix all findings" in requs.md by a list of fixed topics (not the how, but the what and why)

@@ -12,9 +12,19 @@ whose own reasoning was sound - a name referenced before it was assigned, and a
 refresh that turned out to be load-bearing. Neither showed up in anything that
 was committed. The unit tests are eight assertions about shell quoting.
 
-Deliberately happy paths only. Restart under load, malformed frames, lane
-ordering and race widening belong with the rest of the threading work; this is
-the floor, not the ceiling.
+This file was once happy paths only and said so; it is not any more. Restart
+under load, a stranger holding the model socket, a bad token and the kernel
+process dying all landed here during Phase 2, and the note claiming otherwise
+outlived them by a release.
+
+What it still cannot do is see inside. Everything here is asserted through the
+socket, the way the webview sees it, so it can say a restart survived but not
+which generation a retired pump was holding, and it can say a keystroke arrived
+but not whether the descriptor it went to was still the pty's. Those live in
+tests/sidecar, which drives the classes directly and widens the races on
+purpose - `yarn test:sidecar`. The two are complements, not a floor and a
+ceiling: this one is the only thing that runs the real kernel, the real console
+and the real environment.
 
 Run it with `yarn test:integration`, which resolves the environment and hands it
 here - the same split the application uses, where the frontend owns path policy
