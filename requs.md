@@ -82,9 +82,25 @@ The name is deliberately not tied to a single library. "OCP" is the OpenCascade 
 - Deep Security review (including check for supply-chain-attacks)
 - Fix all findings
 
+Done, released as v0.2.0. What was wrong and why it mattered, grouped by what a user would have noticed. The how is in the commits.
+
+**Windows could not run the application at all.** Neutralino's spawnProcess replaces a child's environment instead of adding to it, and builds it as UTF-16 while telling Windows it is ANSI - so uv never started, and the sidecar had been running on macOS with no PATH and no HOME since Phase 1. Then three deadlocks, all one platform property: on Windows, loading a native extension blocks thread creation, so importing OCP anywhere near a thread being started hung the application. It cost every Run in one place, sixty seconds per show() in another, and the console's whole startup in a third.
+
+**Work could be lost silently.** A save that failed looked exactly like one that worked, and quitting after one discarded the buffer the user had just asked to keep. Saving through a symlink destroyed the link and orphaned the real file, reporting success each time. Nothing on screen ever said a buffer differed from disk.
+
+**The application could go quiet and stay quiet.** A kernel that died - running out of memory tessellating a large model is the ordinary way - left the toolbar reading "busy" for ever, because a dead ZMQ peer raises nothing. A restart could leave two threads on one socket. A variable expansion that cost more than fifteen seconds left the row saying "loading" until the application was restarted; on a real assembly the bounding box alone cost nineteen.
+
+**The variable explorer broke permanently on a large namespace.** Past a thousand names the answer came back truncated with an Ellipsis in it, which then failed to serialise on every idle from then on. `from sympy import *` was enough.
+
+**Things that were trusted and should not have been.** The webview read lengths off the wire and used them to index a buffer with no bounds check. A quote in a Windows path escaped the command line, and the test that certified it safe modelled the wrong parser. Any local process could hold the model socket open and stop the viewer working. The pin file named a tool that verified uv's provenance, and that tool did not exist.
+
+**And the reason several of those shipped at all:** there was no linter, and nothing tested the application above the level of a single function. Both now exist and run on every change.
+
 ## Phase 3 "Ensure ipc, comms and threading are sound"
 
 - Write tests for ipc, communication and threading
+- one owning thread per zmq socket, with request/reply futures instead of a shared socket under a lock
+- Make the log append-only. Pulled forward from the instance model in Phase 4 because it is what everything else is diagnosed from: two instances currently read and rewrite it at startup and truncate each other, so the file misrepresents what happened exactly when something went wrong. Each line should also carry which instance wrote it, or two interleaved runs cannot be told apart
 
 ## Phase 4 "Feature release"
 
@@ -106,19 +122,44 @@ The name is deliberately not tied to a single library. "OCP" is the OpenCascade 
 
 - Open Folder should work as in VS Code with a left sidebar and with tabs for files. tab label is filename with full path on hover
 
-Deliberately before the instance model. Opening a folder in one window is what VS Code users reach for *instead of* a second window, so this may remove most of the demand for multi-instance - which turns the next group from a design change into a smaller decision, answered with evidence rather than guessed at.
+Before the instance model, but not because it replaces it - see group 3, the two are orthogonal. It comes first because it is the smaller and safer piece: it is self-contained, every project needs it whether or not a second window is ever opened, and it touches none of the shared state the instance work has to make safe.
 
-### 3. Instance Model (design change)
+### 3. Instance Model (decided: multi-instance)
 
-- Decide the instance model, and make it true either way
-  - Today a second instance starts happily and quietly corrupts what the first one owns. Nothing about that is fundamental: every port is already OS-assigned, so the sidecar socket, the model socket and the kernel's ZMQ ports never contend. What collides is four places that were written assuming there would only ever be one:
-    - envRoot/kernel.json is a single hardcoded name, so the second kernel overwrites the first and either restart rewrites it under the other
-    - settings.json is rewritten whole from an in-memory copy, so layout, theme and package sources are last-writer-wins
-    - the log is read and rewritten at startup, so two instances truncate each other
-    - both run stage-files then uv lock then uv sync against one virtual environment; uv locks the sync itself, but not that whole sequence
-  - Multi-instance is the expected behaviour for an editor - browsers and VS Code both do it - and each of the four has an ordinary fix: a per-instance connection file, read-merge-write settings under a lock, an append-only or per-instance log, and one lock around the environment bootstrap
-  - One genuine product question rather than a mechanical one: Phase 1 promises the connection file lives at a discoverable path so an external "jupyter console --existing" can attach to the same namespace. With several instances "the same namespace" is not well defined, so decide - most recently focused wins, the user picks from a list, or the path is per-instance and the About dialog names it
-  - If the answer turns out to be "one instance only" instead, the guard is written and was reverted rather than deleted: a lock file recording Neutralino's own NL_PORT, with liveness decided by whether that port still serves this application. Port rather than pid because NL_PID is not exposed to the webview, matching a process list by name is too loose, and the operating system frees a port on a crash - which is exactly when a pid file goes stale and locks the user out
+Multi-instance, deliberately, and it is not an alternative to multi-file above - the two are orthogonal. Multi-file is one project with many files; multi-instance is several projects open at once. A build123d project is normally a hierarchy of files under one root, and the workflow that matters is a large assembly open beside the self-contained components it is built from. Tabs do not serve that, and neither does one window.
+
+It is also what an editor is expected to do: browsers and VS Code both do it, and today a second instance already starts happily - it just quietly corrupts what the first one owns.
+
+**Nothing about that is fundamental.** Every port is already OS-assigned, so the sidecar socket, the model socket and the kernel's ZMQ ports never contend. What collides is four places written when there was only ever going to be one:
+
+- `envRoot/kernel.json` is a single hardcoded name, so the second kernel overwrites the first and either restart rewrites it under the other
+- `settings.json` is rewritten whole from an in-memory copy, so layout, theme and package sources are last-writer-wins
+- the log is read and rewritten at startup, so two instances truncate each other
+- both run stage-files then `uv lock` then `uv sync` against one virtual environment; uv locks the sync itself, but not that whole sequence
+
+**The split is smaller than it sounds.** One environment stays shared, because it is the expensive part and every instance wants the same one - measured on a working install: 593 MB of uv cache, 74 MB of interpreters, 72 MB of bytecode cache, 38 MB of uv itself, and the lock file that `uv sync --frozen` reconciles against on every start. What is genuinely per-instance is the connection file, and it is **295 bytes**: five ZMQ ports and an HMAC key, all of them already unique per instance because every port is OS-assigned. Nothing needs duplicating; one filename needs to stop being shared.
+
+The bytecode cache stays shared deliberately. It is keyed by source path, and two instances importing the same module write the same file - safe, because CPython writes a temporary and renames. Per-instance would triple it and lose the benefit.
+
+One shared path is genuinely unsafe rather than merely shared: `runtime/uv-download`, a scratch directory that is removed and recreated when uv is fetched. Two instances bootstrapping at once would delete each other's download mid-flight. It only runs when uv is missing or the wrong version - first start, or straight after an app upgrade, which is exactly when someone is most likely to double-click twice. That is the concrete reason the environment bootstrap needs a lock.
+
+**Per-instance directory**, which is what makes the first collision disappear and answers the product question underneath it. Phase 1 promises the connection file lives at a discoverable path so an external `jupyter console --existing` can attach to the same namespace, and with several instances "the same namespace" stops being well defined. Choosing a primary instance would be a guess at which one the user meant. So the discoverable path becomes a directory rather than a file: each instance owns `runtime/instances/<uuid>/`, puts its connection file there, and the About dialog names its own.
+
+A random id, not the port, and identity is kept separate from liveness. `NL_PORT` was the first suggestion, on the reasoning the reverted single-instance guard used - the OS frees a port when a process dies, unlike a pid file, which goes stale exactly when it matters. But ports are reused, and that breaks both jobs at once: a new instance can be handed a dead one's number and inherit its directory, so an external `jupyter console --existing` reads a connection file naming ports that now belong to something else; and the sweep asks "does that port still serve this application", gets "yes" because the *new* instance holds it, and never cleans the old directory up.
+
+So the directory is named by a uuid, which is never reused, and liveness is a `lock` file inside it that the instance holds open under an exclusive lock for as long as it runs. That keeps what the port was chosen for and drops what it was bad at: the operating system releases the lock when the process dies - verified including under SIGKILL - and unlike a port nobody else can acquire it and be mistaken for the owner. The sweep is then simply "try to take each lock; if it is granted, the owner is gone" - so a crashed instance tidies up after itself, and `studio --list` has something true to print.
+
+The sidecar is the natural owner of all of it: it already writes the connection file, it lives exactly as long as the instance, and it already reports the path to the frontend in its `ready` frame.
+
+Measured on all three platforms before committing to it, because "reasonable on paper, different on Windows" has already cost this project days once. macOS and Ubuntu 26.04 use `fcntl.flock`, Windows uses `msvcrt.locking`, and all three agree: an owner holding the lock reads as alive, the same owner after being killed reads as stale, and the directory is then removable.
+
+Two of the checks exist only because Windows differs. Its locks cover a byte range from the current position, so a zero-length lock file is an edge case that would fail there and nowhere else - the file needs a byte written into it before it can be locked. And a file held open by a live process cannot be deleted at all, which is a property worth having rather than working around: a sweep with a bug in it fails loudly on Windows instead of quietly removing a running instance's connection file. Release on process death holds everywhere, including abnormal termination.
+
+The remaining three are ordinary work: read-merge-write settings under a lock, one lock around the environment bootstrap, and an append-only log. **The log fix belongs in Phase 3, not here** - it is small, and until it is done the primary diagnostic artefact corrupts itself precisely when two instances are doing something interesting. Measured: of fifteen launches on one machine, four looked broken in the log and only one actually was; the rest were lines another instance had truncated, which made the log actively misleading.
+
+Not needed, but worth recording so nobody rediscovers it: a single-instance guard was written and reverted rather than deleted, in case this decision ever goes the other way.
+
+**Command line tool.** `studio <file>` and `studio <folder>` open a new instance on that file or folder, installable from a menu entry. `studio --list` names the live instances and their connection files, which is where a user would ask the "which namespace" question. This is also the natural entry point for the desktop integration that makes double-clicking a `.py` file open it here.
 
 ### 4. Extra packages from the UI
 
@@ -137,11 +178,14 @@ Its own group rather than a usability quick win, because it is the first place f
   - Allows to hook into "breakpoint reached" or "Step finished" to including visual debugging, i.e. execute show_all(locals())
 - The variable explorer needs to get multilevel for iterables (`a = dict(a=12, b="wert", c=[1,2,3,4,5,6], d=dict(x=dict(aa=1, bb="sdfg"), y=2))`)
 - Show the repr in an expanded variable explorer row. Removing bounding box, volume and area is done - they cost 19 s, 2.8 s and 2.2 s on a real assembly and hung the pane
+- Update to uv 0.12.1
 
 ### 6. OCP VS Code integration
 
-- show_clear, show_object, push_object, show_objects, show_all need to work (Note in a separate project ocp_vscode needs to be restructured to better work with jupyter-cadquery and build123d studio)
+- show_clear, show_object, push_object, show_objects, show_all, set_defaults, get_defaults, set_default, workspace_cofig, combined_config, status, ... need to work (Note in a separate project ocp_vscode needs to be restructured to better work with jupyter-cadquery and build123d studio)
 
 ## Phase 5 "Add feature tests"
 
 - Write comprehensive feature test suite: the panes, the editor, the viewer and the workflows, as distinct from Phase 3's ipc, communication and threading
+
+ enhance phase 2 "fix all findings" in requs.md by a list of fixed topics (not the how, but the what and why)
