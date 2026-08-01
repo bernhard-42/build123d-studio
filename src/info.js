@@ -41,10 +41,17 @@ function row(label, value) {
   return { label, value: value === undefined || value === null ? "unknown" : String(value) };
 }
 
+// How long the About dialog waits for the sidecar's answer. Long enough for a
+// backend that is merely busy, short enough that the dialog opens promptly when
+// there is no backend at all.
+const INFO_TIMEOUT = 4000;
+
 async function gather() {
   const sections = [];
 
-  const pending = ipc.isConnected() ? ipc.once("app.info") : null;
+  // The wait is bounded where the subscription lives, so a sidecar that never
+  // answers releases the listener rather than only the waiting. See ipc.once.
+  const pending = ipc.isConnected() ? ipc.once("app.info", { timeout: INFO_TIMEOUT }) : null;
   if (pending !== null) {
     try {
       ipc.send("app.info");
@@ -73,14 +80,9 @@ async function gather() {
 
   const { path: envRoot } = await resolveEnvRoot();
 
-  let info = null;
-  if (pending !== null) {
-    // The sidecar may still be starting; do not hang the dialog on it.
-    info = await Promise.race([
-      pending,
-      new Promise((resolve) => setTimeout(() => resolve(null), 4000)),
-    ]);
-  }
+  // The sidecar may still be starting; the dialog does not hang on it, and the
+  // rows below say "starting…" when it did not answer.
+  const info = pending === null ? null : await pending;
 
   sections.push({
     title: "Python environment",

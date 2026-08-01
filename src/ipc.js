@@ -1,3 +1,4 @@
+import { decodeBinary, encodeBinary } from "./frame.js";
 import { spawn, quote } from "./proc.js";
 import * as log from "./log.js";
 
@@ -18,11 +19,8 @@ import * as log from "./log.js";
 // a typed-array view throws if its byte offset is not a multiple of the element
 // size. The length field is the true JSON length, with the padding implied.
 
-export const KIND_CONSOLE = 1;
-export const KIND_MODEL = 2;
-
-const FRAME_PREFIX = 8;
-const ALIGNMENT = 8;
+// Re-exported so callers need only one import for the link.
+export { KIND_CONSOLE, KIND_MODEL } from "./frame.js";
 
 // Backstop for the sidecar's "ready", which it sends once the kernel answers.
 // The kernel's own wait_for_ready is 60 s, and the console starts after it, so
@@ -30,10 +28,6 @@ const ALIGNMENT = 8;
 // reported as a failure. It exists for the case where nothing arrives at all -
 // a wedged sidecar that is still connected sends neither "error" nor an exit.
 const READY_TIMEOUT = 90000;
-
-function alignUp(length) {
-  return length + ((-length % ALIGNMENT) + ALIGNMENT) % ALIGNMENT;
-}
 
 const handlers = new Map();
 const binaryHandlers = new Map();
@@ -63,28 +57,20 @@ function dispatch(frame) {
 }
 
 function dispatchBinary(buffer) {
-  const view = new DataView(buffer);
-  const kind = view.getUint8(0);
-  const headerLength = view.getUint32(4);
-  const payloadOffset = FRAME_PREFIX + alignUp(headerLength);
-
-  let header = {};
-  if (headerLength > 0) {
-    const bytes = new Uint8Array(buffer, FRAME_PREFIX, headerLength);
-    header = JSON.parse(new TextDecoder().decode(bytes));
+  const frame = decodeBinary(buffer, (problem) => log.warn(problem));
+  if (frame === null) {
+    return;
   }
-  // A view, not a copy - the whole point of the binary frame.
-  const payload = new Uint8Array(buffer, payloadOffset);
 
-  const listener = binaryHandlers.get(kind);
+  const listener = binaryHandlers.get(frame.kind);
   if (listener === undefined) {
-    log.warn("Unhandled binary frame kind:", kind);
+    log.warn("Unhandled binary frame kind:", frame.kind);
     return;
   }
   try {
-    listener(payload, header, buffer, payloadOffset);
+    listener(frame.payload, frame.header, buffer, frame.payloadOffset);
   } catch (error) {
-    log.error(`Binary handler for kind ${kind} failed:`, error);
+    log.error(`Binary handler for kind ${frame.kind} failed:`, error);
   }
 }
 
@@ -108,13 +94,40 @@ export function onBinary(kind, listener) {
   binaryHandlers.set(kind, listener);
 }
 
-/** Wait for a single message of the given type. */
-export function once(type) {
+/**
+ * Wait for a single message of the given type.
+ *
+ * With a timeout, resolves null when nothing arrives in time - and, which is
+ * the point, unsubscribes. Without one, a frame that never comes leaves a
+ * listener in the map for the life of the session: the About dialog asks for
+ * app.info and gives up after four seconds, but only the *waiting* stopped, so
+ * opening it again against a dead sidecar left another one behind each time.
+ *
+ * The timeout belongs here rather than in a Promise.race at the call site,
+ * because whoever owns the subscription has to own its lifetime. Racing it
+ * elsewhere abandons the listener by construction.
+ */
+export function once(type, { timeout = null } = {}) {
   return new Promise((resolve) => {
-    const off = on(type, (frame) => {
-      off();
+    let timer = null;
+    let off = null;
+
+    const settle = (frame) => {
+      if (off !== null) {
+        off();
+        off = null;
+      }
+      if (timer !== null) {
+        clearTimeout(timer);
+        timer = null;
+      }
       resolve(frame);
-    });
+    };
+
+    off = on(type, settle);
+    if (timeout !== null) {
+      timer = setTimeout(() => settle(null), timeout);
+    }
   });
 }
 
@@ -220,19 +233,7 @@ export function sendBinary(kind, payload, header = null) {
   if (socket === null || socket.readyState !== WebSocket.OPEN) {
     return;
   }
-  const headerBytes =
-    header === null ? new Uint8Array(0) : new TextEncoder().encode(JSON.stringify(header));
-  const body = payload instanceof Uint8Array ? payload : new Uint8Array(payload);
-  const payloadOffset = FRAME_PREFIX + alignUp(headerBytes.length);
-
-  const frame = new Uint8Array(payloadOffset + body.length);
-  const view = new DataView(frame.buffer);
-  view.setUint8(0, kind);
-  view.setUint32(4, headerBytes.length);
-  frame.set(headerBytes, FRAME_PREFIX);
-  frame.set(body, payloadOffset);
-
-  socket.send(frame);
+  socket.send(encodeBinary(kind, payload, header));
 }
 
 export function isConnected() {
@@ -248,7 +249,12 @@ export function isConnected() {
  * useful to a process already on this machine, but it has no business on disk.
  */
 function redactToken(line) {
-  return line.replace(/("token"\s*:\s*")[^"]*(")/g, "$1<redacted>$2");
+  // The closing quote is optional, because the line that most needs redacting
+  // is the one that did not arrive whole. A handshake truncated mid-token has
+  // no closing quote, so a pattern that required one matched nothing and
+  // printed the token - and a truncated handshake is exactly what reaches the
+  // "malformed" branch below, which is the only place this is used.
+  return line.replace(/("token"\s*:\s*")[^"]*("|$)/g, "$1<redacted>$2");
 }
 
 /** Read the sidecar's handshake line off stdout. */

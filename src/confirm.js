@@ -14,6 +14,8 @@ import * as log from "./log.js";
 // question was asked.
 
 let overlay = null;
+// Whether a question is on screen. See askThreeWay.
+let asking = false;
 
 function build() {
   overlay = document.createElement("div");
@@ -39,6 +41,24 @@ function build() {
  * @returns {Promise<"save"|"discard"|"cancel">}
  */
 export function askThreeWay({ title, detail, save, discard, cancel }) {
+  // One question at a time, and a second asker is told no rather than shown a
+  // dialog.
+  //
+  // There is a single overlay and a single set of listeners, so a second call
+  // used to overwrite the first's text and add its own handlers to the same
+  // buttons. One click then resolved both promises: quitting during the New
+  // File prompt answered both with "save", and two saves started on one
+  // temporary file, racing to move it into place. Cmd-Q is the realistic way
+  // in, because it can arrive while any other prompt is open.
+  //
+  // "cancel" is the safe answer for the loser: whatever it was about to do, not
+  // doing it cannot lose work, and the question that is already on screen is
+  // the one the user is actually looking at.
+  if (asking) {
+    return Promise.resolve("cancel");
+  }
+  asking = true;
+
   if (overlay === null) {
     build();
   }
@@ -54,6 +74,7 @@ export function askThreeWay({ title, detail, save, discard, cancel }) {
       overlay.hidden = true;
       overlay.removeEventListener("click", onClick);
       document.removeEventListener("keydown", onKey, true);
+      asking = false;
       resolve(answer);
     };
 

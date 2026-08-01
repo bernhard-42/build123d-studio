@@ -4,7 +4,7 @@ import "./icons.css";
 
 import { ensureEnvironment } from "./bootstrap/setup.js";
 import { appDir } from "./bootstrap/envroot.js";
-import { fail, hideSplash, showSplash, splashVisible } from "./bootstrap/splash.js";
+import { acknowledge, fail, hideSplash, showSplash, splashVisible } from "./bootstrap/splash.js";
 import { initSplitters } from "./layout/splitter.js";
 import { initConsole } from "./console/terminal.js";
 import { focusAt, initEditor } from "./editor/monaco.js";
@@ -243,11 +243,19 @@ async function main() {
     }
   });
   ipc.on("kernel.restarted", () => hideBusy());
-  ipc.on("kernel.restart_failed", (frame) => {
+  ipc.on("kernel.restart_failed", async (frame) => {
     resetBusy();
     log.error("Kernel restart failed:", frame.message);
     fail("The kernel could not be restarted.", frame.message);
     showSplash();
+    // And then let the user out of it. Without the acknowledgement this raised
+    // a full-screen overlay with no button over an editor that was still
+    // perfectly usable, and nothing else ever took it down - the buffer was
+    // there, unsaved, behind a splash that could not be dismissed. A dead
+    // kernel is worth reporting loudly and is not worth losing the window over;
+    // the banner offers a restart once this is gone.
+    await acknowledge();
+    hideSplash();
   });
 
   // A restart started from the toolbar has no caller awaiting its outcome, so
@@ -299,10 +307,20 @@ async function main() {
     installBackendRecovery(console_);
   } catch (err) {
     log.error("Sidecar failed to start", err);
-    // The window is already up, so report this in place rather than by
-    // resurrecting the splash over a working editor.
+    // The comment here used to say this reported in place "rather than by
+    // resurrecting the splash over a working editor", and then did exactly
+    // that - with no OK button, so the editor stayed unreachable behind it.
+    //
+    // The splash is still right: without a sidecar there is no kernel, no
+    // console and no viewer, and saying so over the whole window is honest.
+    // What was wrong is that it never came back. The editor works, whatever
+    // was restored into it is there to be saved, and the backend banner offers
+    // a retry once this is dismissed.
     fail("Could not start the Python sidecar.", err?.message ?? err);
     showSplash();
+    await acknowledge();
+    hideSplash();
+    installBackendRecovery(console_);
   }
 }
 

@@ -49,8 +49,11 @@ export async function appDir() {
 /**
  * Per-user directory for everything the application writes.
  *
- * ~/Library/Application Support/build123d-studio on macOS, %LOCALAPPDATA% on
- * Windows, ~/.local/share on Linux.
+ * ~/Library/Application Support/build123d-studio on macOS, %APPDATA% on Windows
+ * - Roaming, not Local - and ~/.local/share on Linux. os.getPath("data")
+ * resolves the per-OS convention; the Windows answer was written down as
+ * LOCALAPPDATA here and is not, as the shipped application's own logs say:
+ * C:\Users\<user>\AppData\Roaming\build123d-studio.
  *
  * The application writes nothing into its own directory, so an installation can
  * be read-only: a .app dragged to /Applications, an AppImage's read-only mount,
@@ -70,9 +73,9 @@ export async function appDataDir() {
 /**
  * Directory holding the interpreter, venv, uv cache and the uv project files.
  *
- * ~/Library/Application Support/build123d-studio/runtime on macOS, %LOCALAPPDATA% on
- * Windows, ~/.local/share on Linux - os.getPath("data") resolves the per-OS
- * convention. Resolved once per session.
+ * Under the app-data directory above, so ~/Library/Application
+ * Support/build123d-studio/runtime on macOS and the equivalent elsewhere.
+ * Resolved once per session.
  *
  * It survives replacing the application, which is what makes an app update
  * cheap: uv.lock ships with the app and is staged here on every start, so

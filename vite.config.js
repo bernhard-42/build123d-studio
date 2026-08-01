@@ -4,9 +4,13 @@ import { current as devBuild } from "./scripts/dev-build.mjs";
 
 // Vite builds into resources/, which is Neutralino's documentRoot.
 //
-// emptyOutDir is deliberate: resources/.tmp holds the model payload files that
-// the sidecar writes for the viewer to fetch, and a build should start from a
-// clean slate. Static assets that must survive live in public/.
+// emptyOutDir is deliberate: a build should start from a clean slate rather
+// than layering over whatever the last one left. Static assets that must
+// survive live in public/.
+//
+// It used to say resources/.tmp held model payload files for the viewer to
+// fetch. That design is gone - a model is one binary WebSocket frame now, and
+// nothing is written to disk for it.
 export default defineConfig(({ mode }) => ({
   root: ".",
   base: "./",
