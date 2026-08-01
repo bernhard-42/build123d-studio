@@ -1,6 +1,7 @@
 import { filesystem } from "@neutralinojs/lib";
 
 import { appDataDir } from "./bootstrap/envroot.js";
+import { append, rotate } from "./logfile.js";
 
 // The webview has no visible console when the app runs outside a dev browser,
 // so anything worth diagnosing goes to a file.
@@ -13,12 +14,39 @@ import { appDataDir } from "./bootstrap/envroot.js";
 // Logging starts before the app-data directory has been resolved - the first
 // line is written during module initialisation - so lines are buffered until
 // initLog() supplies the path.
+//
+// Append-only, and every line names the instance that wrote it. Both matter
+// because more than one instance can run at once. initLog used to read the
+// whole file and write it back with the new lines appended, which meant two
+// instances starting near each other each kept their own copy and whichever
+// wrote last silently discarded the other's - so the file misrepresented what
+// happened at exactly the moment something interesting was happening. Measured
+// on one machine: of fifteen launches, four looked broken in the log and only
+// one actually was; the rest were lines another instance had removed. That is
+// worse than a missing log, because it is a log that lies.
 
 const FILE_NAME = "build123d-studio.log";
-// Dropped at startup past this, so a long-lived install does not accumulate an
-// unbounded file. Rotation would be more machinery than the problem deserves:
-// what has ever been useful is the current session and the one before it.
+
+// Rotated rather than truncated past this. The old approach - drop everything
+// and start again - cannot be made safe when two instances share the file, and
+// a rename keeps the session that was interesting rather than deleting it.
 const MAX_BYTES = 1024 * 1024;
+
+/**
+ * Which instance wrote a line.
+ *
+ * Two instances append to one file, so without this an interleaved log cannot
+ * be read at all: the timestamps alone put lines in an order no single process
+ * ever saw. Eight hex characters is enough to tell a handful of concurrent
+ * windows apart and short enough not to crowd the line.
+ *
+ * Generated from getRandomValues rather than crypto.randomUUID, which needs a
+ * secure context. Phase 4's per-instance directory wants an identity too, and
+ * it should be this one.
+ */
+export const instanceId = Array.from(crypto.getRandomValues(new Uint8Array(4)))
+  .map((byte) => byte.toString(16).padStart(2, "0"))
+  .join("");
 
 let path = null;
 let buffered = [];
@@ -31,10 +59,10 @@ function write(line) {
     buffered.push(line);
     return;
   }
-  pending = pending.then(() => filesystem.appendFile(path, line)).catch(() => {
-    // Logging must never break the caller, and a failure here has nowhere left
-    // to be reported anyway.
-  });
+  // Serialised within this process so two appends cannot interleave mid-line.
+  // Across processes that is the operating system's job, and append is the only
+  // operation for which it does it - see logfile.js.
+  pending = pending.then(() => append(filesystem, path, line));
 }
 
 function format(level, parts) {
@@ -53,29 +81,20 @@ function format(level, parts) {
       return String(part);
     })
     .join(" ");
-  return `${new Date().toISOString()} ${level} ${text}\n`;
+  return `${new Date().toISOString()} ${instanceId} ${level} ${text}\n`;
 }
 
 /** Resolve the log path and flush everything buffered before now. */
 export async function initLog() {
   const resolved = `${await appDataDir()}/${FILE_NAME}`;
+  await rotate(filesystem, resolved, MAX_BYTES);
 
-  let previous = "";
-  try {
-    const stats = await filesystem.getStats(resolved);
-    if (stats.size <= MAX_BYTES) {
-      previous = await filesystem.readFile(resolved);
-    }
-  } catch {
-    // No log yet.
-  }
-
+  // Appended, never rewritten. This is the whole fix: a process only ever adds
+  // its own lines, so it cannot remove anybody else's.
   const flush = buffered.join("");
   buffered = [];
-  // One write rather than truncate-then-append, so the file is never briefly
-  // empty and a crash during startup cannot lose the lines explaining it.
-  await filesystem.writeFile(resolved, `${previous}${flush}`);
   path = resolved;
+  await append(filesystem, resolved, flush);
   return resolved;
 }
 

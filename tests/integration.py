@@ -19,6 +19,15 @@ the floor, not the ceiling.
 Run it with `yarn test:integration`, which resolves the environment and hands it
 here - the same split the application uses, where the frontend owns path policy
 and passes --env-root to the sidecar.
+
+Quit the application before running this. The harness deliberately uses the real
+environment root, because an environment built for a test is a different
+environment from the one that breaks - but that means it shares `kernel.json`
+with any running instance, and a kernel started here will fight one started
+there. Observed: a run that failed once and passed immediately afterwards, with
+two app instances open at the time. That is the same collision the instance
+model in requs.md exists to remove, and until it is removed this file is subject
+to it too.
 """
 
 import argparse
