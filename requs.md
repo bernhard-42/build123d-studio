@@ -117,16 +117,48 @@ Done. What changed, and why it was worth doing.
 ### 1. Usability (quick wins)
 
 - Add an OS menu to get Cmd-C/Cmd-V/Cmd-X. Would also deliver Cmd-Q, ... (a prerequisite for code completion in group 5: without it macOS never binds the standard shortcuts, so Ctrl-Space is swallowed by the system's input-source shortcut). Same for Windows and Linux including typical short-cuts on these OS.
+
+  `Neutralino.window.setMainMenu` is the API and it exists in the pinned 6.9.0 - checked in the JS client and in all three native binaries. The comment in `src/main.js` claiming "Neutralino creates no native menu bar" is stale, and the hand-rolled Cmd-Q keydown handler underneath it exists because of that belief; both go when the menu lands.
+
+  | menu | items |
+  |---|---|
+  | File | New, Open File…, Open Folder…, Save, Save As…, Save All, Close, Close All, Close Tab |
+  | Edit | Cut, Copy, Paste |
+  | Run | Run Cell, Run Cell (Keep Cursor), Run Selection or Line, Run File |
+
+  The File items that need tabs - Save All, Close All, Close Tab, and Open Folder itself - are built now and disabled (`isDisabled`) until group 2 enables them. The structure is what is expensive to retrofit; the items are not.
+
+  Four Run items rather than five bindings, because run-selection and run-line share one chord and differ only by whether there is a selection. A menu cannot show the same shortcut twice, so the item is "Run Selection or Line" and the distinction stays where the user actually experiences it.
+
+  Two things to establish on the first build rather than assume. Clicks come back as a `mainMenuItemClicked` event carrying the item id, so **every item's behaviour is ours to implement** - and `WindowMenuItem` has an `action` field which may be a native role, except that no role vocabulary (`copy`, `paste`, `cut`) appears in any of the three binaries. If roles work, Edit is trivial; if not, Cut/Copy/Paste needs a focus-aware dispatcher, because Monaco has its own clipboard actions, xterm.js needs the selection written out and pasted text pushed to the pty, and dialog inputs are a third case. Either way the menu solves the problem it was added for, which is getting the keystroke *delivered* rather than swallowed.
+
+  Menu behaviour also differs by platform - a system bar on macOS, inside the window elsewhere, which may shift the pane layout and make stored splitter positions mean something slightly different across an upgrade. Worth a real build on each early rather than at the end of the group.
+
+  The menu is a pure function of state - which items are enabled, and what each one's shortcut currently is - so it is rebuilt rather than mutated, and that function is unit-testable without a window.
+- **The application must never reload.** There is no guard today: the only global key handler is Cmd/Ctrl-Q, so an accidental F5 (Windows, Linux) or Cmd-R (macOS) discards the editor buffer and re-runs the whole bootstrap. Same family as the Phase 2 work on losing edits silently, and a prerequisite for binding F5 to anything.
 - Logically, idle/busy indicator belongs to kernel button group. move it before the interrupt button
 - Add all log paths to the info box
 - Fix the Application icon on MacOS (logo.svg should now be compliant with Apple rules for Tahoe)
 - Config should get a multiline field where I can add code that should be used during "New File"
-- Three distinct run shortcuts, currently two:
-  - run block and move the cursor on
-  - run block and leave the cursor where it is
-  - run line or selection
+- Five run actions, of which two are bound today and one is implemented but unreachable - `runCell` and `runSelectionOrLine` both take an `advance` flag that nothing ever passes as false.
 
-  Most of this exists already: runCell and runSelectionOrLine both take an "advance" flag, but nothing ever passes false, so "run and keep the cursor" is implemented and unreachable. What is missing is the keymap and the bindings. Note that "run line" is inherently one physical line, so sending a block header alone - "for i in range(5):" - is incomplete input and the kernel says so; that is the shortcut behaving as named, and the reason the third one has to be clearly distinguished from the first two. Worth deciding whether run line should instead extend to the whole statement under the cursor
+  | shortcut | action | cursor |
+  |---|---|---|
+  | Shift-Enter | run cell | next cell |
+  | Ctrl-Enter, and Cmd-Enter on macOS | run cell | stays |
+  | Ctrl-Shift-Enter, and Cmd-Shift-Enter on macOS, *with a selection* | run selection | end of the selection |
+  | the same, *with no selection* | run line | next line |
+  | F5 | run whole file | - |
+
+  Ctrl and Shift throughout, which is Jupyter's own pair for the two cell actions - Shift-Enter to advance, Ctrl-Enter to stay - so the muscle memory that matters most for this audience carries over exactly. macOS additionally accepts Cmd, as Jupyter does there.
+
+  Monaco's modifiers do not line up with that intent and the trap is worth writing down: `KeyMod.CtrlCmd` is Ctrl on Windows and Linux but **Cmd** on macOS, while `KeyMod.WinCtrl` is the Super key on Windows and Linux but **Ctrl** on macOS. So literal Ctrl everywhere is `CtrlCmd` plus, on macOS only, `WinCtrl` - registering `WinCtrl` off macOS would only bind a Super chord the window manager takes.
+
+  **"Run line" means one physical line.** A line that is not valid on its own - `for i in range(5):` - gets the kernel's "incomplete input" back, and that is the shortcut behaving as named. Blocks are what run-cell and run-selection are for, and second-guessing the user by extending to the enclosing statement would make the one literal action ambiguous.
+
+- Keyboard shortcuts are subjective, so the five above are **defaults rather than verdicts**: a defaults map, the bindings read from `settings.json`, and a `parseChord("ctrl+shift+enter")` function turning a VS Code-style string into Monaco modifiers. That parser is a pure function and is where the platform subtlety above lives, so it is unit-testable in the way `quoting` already is. The editing dialog is group 4, where the config dialog is being opened up anyway; nothing is thrown away, because by then actions are already registered from a map instead of from literals.
+
+  The map has to land before or with the menu rather than after it. Menu items carry their own `shortcut` strings, so configurable bindings mean the menu is rebuilt when they change - trivial if both read the same map from the start, and a rewrite if the menu is built from literals first.
 
 ### 2. Multi file support
 
@@ -171,9 +203,10 @@ Not needed, but worth recording so nobody rediscovers it: a single-instance guar
 
 **Command line tool.** `studio <file>` and `studio <folder>` open a new instance on that file or folder, installable from a menu entry. `studio --list` names the live instances and their connection files, which is where a user would ask the "which namespace" question. This is also the natural entry point for the desktop integration that makes double-clicking a `.py` file open it here.
 
-### 4. Extra packages from the UI
+### 4. Config dialog: extra packages, and editing the shortcuts
 
 - Config should get a field where users can add extra packages in pyproject.toml syntax. They will be added to pyproject.toml (a "custom" section: `# --- custom: own packages ---`)
+- Editing the keyboard shortcuts, on top of the defaults map group 1 lands. This is the expensive half of "shortcuts are configurable" and is deliberately not a quick win: capturing a chord, detecting conflicts both between our own actions and against Monaco's built-in bindings, reset-to-default, and displaying each binding the way its platform writes it (⌘⇧↵ against Ctrl+Shift+Enter). By this point the storage, the parser and the re-registration all exist, so it is a form over data rather than new machinery.
 
 Its own group rather than a usability quick win, because it is the first place free user text reaches a command line. Everything interpolated into a command already goes through quote(), which on Windows now refuses a value containing a double quote outright rather than escaping it - that refusal exists for this field, before the field does. It wants the same care as a security item: what happens to a malformed entry, what a failed sync leaves behind, and whether the custom section survives an "upgrade packages".
 
@@ -187,6 +220,7 @@ Its own group rather than a usability quick win, because it is the first place f
   - Using the variable explorer (if possible)
   - Allows to hook into "breakpoint reached" or "Step finished" to including visual debugging, i.e. execute show_all(locals())
 - The variable explorer needs to get multilevel for iterables (`a = dict(a=12, b="wert", c=[1,2,3,4,5,6], d=dict(x=dict(aa=1, bb="sdfg"), y=2))`)
+- the variable explorer needs to support paging to avoid showing hundreds of objects for arrays
 - Show the repr in an expanded variable explorer row. Removing bounding box, volume and area is done - they cost 19 s, 2.8 s and 2.2 s on a real assembly and hung the pane
 - Update to uv 0.12.1
 
@@ -198,7 +232,7 @@ Its own group rather than a usability quick win, because it is the first place f
 
 Last, and deliberately so - it is a real defect but not a pressing one, and it wants the rest of this phase settled first.
 
-Expanding a variable while a cell is running shows "Loading..." until the cell finishes. The kernel serves shell requests serially and the variable explorer inspects with a silent execute_request, so the inspection waits in the *kernel's* queue. Measured on a ten second loop: 13.32 s before Phase 3c and 13.43 s after, so it is not the sidecar's doing and 3c neither caused nor could fix it. Past EVALUATE_TIMEOUT it is worse than slow - the row reports "could not be read in time", which is untrue: the value was readable and the kernel was busy.
+Expanding a variable while a cell is running shows "Loading..." until the cell finishes. The kernel serves shell requests serially and the variable explorer inspects with a silent execute_request, so the inspection waits in the _kernel's_ queue. Measured on a ten second loop: 13.32 s before Phase 3c and 13.43 s after, so it is not the sidecar's doing and 3c neither caused nor could fix it. Past EVALUATE_TIMEOUT it is worse than slow - the row reports "could not be read in time", which is untrue: the value was readable and the kernel was busy.
 
 ipykernel 7 subshells (JEP 91) are the answer, and they work: a `create_subshell_request` on the control channel returns an id, a request carrying that id in its header is served by a separate thread with the same namespace, and a probe against the pinned ipykernel 7.3.0 answered in **0.01 s** while the main shell was six seconds from finishing. Route inspections there and leave Run, the chdir and the warm-up on the main shell - the chdir in particular must stay ordered with respect to Runs.
 
