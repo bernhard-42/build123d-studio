@@ -32,3 +32,8 @@ release/
 __pycache__/
 *.py[cod]
 .DS_Store
+
+# Affinity writes one of these beside a document while it is open, and it is
+# gone when the application closes. Committing it would claim the file is being
+# edited by someone who long since put it down.
+*~lock~
