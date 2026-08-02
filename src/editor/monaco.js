@@ -10,6 +10,8 @@ import "monaco-editor/languages/definitions/python/register.js";
 import EditorWorker from "monaco-editor/editor/editor.worker.js?worker";
 
 import { cellAt, findCells, nextCell } from "./cells.js";
+import { COMMANDS } from "../keys.js";
+import { bindingsFor } from "../keybindings.js";
 import * as ipc from "../ipc.js";
 import * as log from "../log.js";
 import { onThemeChange, resolvedTheme } from "../theme.js";
@@ -102,6 +104,16 @@ export function runSelectionOrLine({ advance = true } = {}) {
 
   if (selection !== null && !selection.isEmpty()) {
     execute(model.getValueInRange(selection));
+    if (advance) {
+      // To the end of what was just run, and deselected. Leaving the selection
+      // standing means the next press runs the same text again, which is the
+      // opposite of what "advance" means everywhere else here.
+      editor.setPosition({
+        lineNumber: selection.endLineNumber,
+        column: selection.endColumn,
+      });
+      editor.revealLineInCenterIfOutsideViewport(selection.endLineNumber);
+    }
     return;
   }
 
@@ -273,26 +285,47 @@ export function initEditor() {
     notifyDirtyChanged();
   });
 
-  // Keybindings mirror the ones in vscode-jupyter-console, so the muscle
-  // memory carries over.
-  editor.addAction({
-    id: "build123d-studio.runFile",
-    label: "Run File",
-    keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.Enter],
-    run: runFile,
-  });
-  editor.addAction({
-    id: "build123d-studio.runCell",
-    label: "Run Cell",
-    keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter],
-    run: () => runCell(),
-  });
-  editor.addAction({
-    id: "build123d-studio.runSelection",
-    label: "Run Selection or Line",
-    keybindings: [monaco.KeyMod.Shift | monaco.KeyCode.Enter],
-    run: () => runSelectionOrLine(),
-  });
-
+  registerRunActions(editor);
   return editor;
+}
+
+/**
+ * Bind the run commands from the keymap rather than from literals here.
+ *
+ * The chords are Jupyter's where Jupyter has an opinion - Shift-Enter runs the
+ * cell and advances, Ctrl-Enter runs it and stays - but which chord each command
+ * answers to is settings.json's business, not this file's. See keys.js: the
+ * modifier names do not mean what they look like, and getting that wrong is
+ * silent, so it is decided in one tested place instead of at four call sites.
+ *
+ * Returns the disposables, so a later binding change can re-register rather than
+ * leaving both the old and the new chord live. Group 4's dialog is what will
+ * call it a second time.
+ */
+export function registerRunActions(target) {
+  const actions = [
+    { id: "run.cell", run: () => runCell() },
+    { id: "run.cell.stay", run: () => runCell({ advance: false }) },
+    { id: "run.selectionOrLine", run: () => runSelectionOrLine() },
+    { id: "run.file", run: runFile },
+  ];
+
+  const registered = [];
+  for (const { id, run } of actions) {
+    const command = COMMANDS.find((candidate) => candidate.id === id);
+    if (command === undefined) {
+      // An id here that keys.js does not define is a bug, but losing one
+      // shortcut is a great deal better than throwing out of editor creation
+      // and taking the whole window with it.
+      log.error(`No keymap entry for ${id}; that command will have no shortcut`);
+      continue;
+    }
+    registered.push(target.addAction({
+      id: `build123d-studio.${id}`,
+      label: command.label,
+      keybindings: bindingsFor(monaco, id),
+      run,
+    }));
+  }
+  return registered;
 }
