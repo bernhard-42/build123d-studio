@@ -55,19 +55,6 @@ SHELL_TICK = 0.02
 # purely to distinguish "the outbox is deep" from "the shell thread is wedged".
 SEND_TIMEOUT = 30
 
-# How long a request submitted during a restart waits for the replacement to
-# come up, rather than being refused outright. This is what the shell lock used
-# to do by being held across the whole restart: a Run pressed a moment before
-# Restart Kernel still runs, on the new kernel. Matched to the 60 s
-# wait_for_ready in start() plus the shutdown ahead of it.
-RESTART_WAIT = 90
-
-# How often a request waiting for a replacement looks up. Only one thread is
-# ever in that wait, and only for the seconds a restart takes, so the cost is
-# nothing; what it buys is noticing a shutdown - where no replacement is coming
-# at all - instead of sitting out the full RESTART_WAIT for one.
-READY_POLL = 0.05
-
 # Default for an inspection the user asked for, where waiting is better than
 # answering "unknown". Callers that inspect on the application's own initiative
 # pass something shorter - see IDLE_REFRESH_TIMEOUT.
@@ -339,17 +326,6 @@ class Kernel:
         # parking it stops the application saying what it is doing.
         self._internal_lock = threading.Lock()
 
-        # Clear while there is no kernel to talk to, which is the seconds a
-        # restart takes. A request that arrives then waits here rather than
-        # being refused: pressing Run and then Restart Kernel should run the
-        # code on the new kernel, which is what the shell lock used to give by
-        # being held across the whole restart. See _submit.
-        self._ready = threading.Event()
-
-        # Set once the kernel is gone for good, which a restart is not. Without
-        # the distinction a request arriving after shutdown would wait out the
-        # whole restart grace for a replacement that is never coming.
-        self._retired = threading.Event()
 
         # The warm-up's request id and start time, so it can be timed. It is the
         # one internal request long enough to matter - the kernel serves the
@@ -385,40 +361,34 @@ class Kernel:
         return msg_id
 
     def _submit(self, code, internal=False, want_reply=False, **kwargs):
-        """Hand one execute_request to whichever shell thread is current.
+        """Hand one execute_request to the current shell thread, or say there is none.
 
-        The wait is what a restart used to get from holding the shell lock: for
-        the seconds between one kernel going and the next arriving there is
-        nothing to send to, and a Run that arrived a moment earlier should run
-        on the replacement rather than be told the kernel is missing.
+        Refused rather than held, and that is a deliberate simplification. An
+        earlier version waited out a restart so that a Run pressed a moment
+        before Restart Kernel would run on the replacement - which is what
+        holding the shell lock across the swap used to do. Nothing can reach it:
+        the frontend raises a full-screen overlay for the whole restart, so the
+        button cannot be clicked, and Run's keybindings are Monaco editor
+        actions that need editor focus, which clicking Restart has already taken
+        away. Confirmed on a real build.
 
-        The retry is for the seam between the two. _ready and _generation are
-        set separately, so a request can pass the first and find a generation
-        that has just been retired; that raises, and going round again either
-        finds the replacement or runs out of patience honestly.
+        What the waiting did reach was the failure path. `restart()` clears the
+        gate and only `start()` sets it, so a kernel that fails to come back
+        left it clear for good and every later request paid the full grace
+        period first: measured at 90.0 s to refuse one Run. A restart that
+        failed is exactly when the application must answer quickly and say what
+        is wrong.
+
+        No gate is needed for the ordinary case either. `_generation` is
+        assigned in start() only after wait_for_ready, and a retired
+        generation's ShellChannel refuses a submission itself, so the window
+        between one kernel going and the next arriving is already covered by the
+        two things that were going to exist anyway.
         """
-        request = Request(code, kwargs, internal, want_reply)
-        deadline = time.monotonic() + RESTART_WAIT
-        while True:
-            # A shutdown is not a restart. Nothing is coming back, so waiting
-            # out the grace period would turn "there is no kernel" into ninety
-            # seconds of a lane held by a request that was refused all along.
-            if self._retired.is_set():
-                raise KernelUnavailable("the kernel has been shut down")
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise KernelUnavailable("there is no kernel to send to")
-            if not self._ready.wait(timeout=min(READY_POLL, remaining)):
-                continue
-            generation = self._generation
-            if generation is not None:
-                try:
-                    return generation.shell.submit(request)
-                except KernelUnavailable:
-                    pass
-            # Retired between the two reads. Give the replacement a moment to
-            # be installed rather than spinning on the attribute.
-            time.sleep(0.01)
+        generation = self._generation
+        if generation is None:
+            raise KernelUnavailable("there is no kernel")
+        return generation.shell.submit(Request(code, kwargs, internal, want_reply))
 
     def _send_execute(self, code, internal=False, **kwargs):
         """Send, and wait only for it to have gone. Returns the msg_id.
@@ -518,9 +488,6 @@ class Kernel:
             target=self._pump_iopub, args=(generation,), name="iopub", daemon=True
         )
         self._iopub_thread.start()
-        # Last, so that nothing is admitted to a generation that is still being
-        # assembled. Everything waiting in _submit wakes up here.
-        self._ready.set()
 
         log(f"Kernel started, connection file {self.connection_file}")
         # warm_up() is deliberately not called here. See Sidecar.warm_kernel.
@@ -824,9 +791,10 @@ class Kernel:
         generation.shell.stop(reason)
 
     def restart(self):
-        # Nothing is admitted from here until start() sets it again. A Run that
-        # arrives in between waits in _submit and runs on the replacement.
-        self._ready.clear()
+        # Nothing else is needed to close the door. _generation still names the
+        # generation retired on the next line, and a retired ShellChannel
+        # refuses what it is handed, so anything arriving between here and the
+        # replacement is told there is no kernel. See _submit.
         self._retire_pump()
         self._retire_shell("the kernel was restarting when this was sent")
 
@@ -852,8 +820,8 @@ class Kernel:
         # could otherwise be inside client.execute() while this rebuilt it.
         # There is now exactly one thread that ever sends, and _retire_shell
         # above has already stopped it and waited for it, so by this line there
-        # is no sender left to race. Everything that arrives meanwhile is
-        # waiting on _ready, which is the same "for these seconds there is no
+        # is no sender left to race. Anything arriving meanwhile is refused by
+        # that same retired channel, which is the "for these seconds there is no
         # kernel to talk to" the lock expressed - said once, in one place,
         # instead of by every caller taking a lock it had to know about.
         self._shutdown(now=True)
@@ -874,8 +842,6 @@ class Kernel:
         The order is the guarantee, and it is the same one restart() uses:
         retire the sender, then close what it was sending on.
         """
-        self._retired.set()
-        self._ready.clear()
         self._retire_pump()
         self._retire_shell("the sidecar is shutting down")
         self._shutdown(now=now)

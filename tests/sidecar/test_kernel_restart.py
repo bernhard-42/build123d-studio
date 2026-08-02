@@ -50,6 +50,7 @@ import time
 import unittest
 
 from fakes import TestableKernel
+from kernel import KernelUnavailable
 from support import SETTLE
 
 # How long to let a straggler thread misbehave before concluding it will not.
@@ -140,11 +141,17 @@ class RestartRaceTest(unittest.TestCase):
         execute came from, so the two could not overlap. It runs on its own lane
         now, so a Run can land while the client is being replaced.
 
-        Two things have to hold, and the second is easy to lose while fixing the
-        first. The Run must not reach a torn-down client - and it must not be
-        thrown away either. Pressing Run and then Restart Kernel should run the
-        code on the new kernel, which the shell lock used to give by being held
-        across the whole swap and `_ready` gives now.
+        Two things have to hold. The Run must not reach a torn-down client, and
+        a Run that does land in the gap must be *told* so rather than
+        disappearing - a frame accepted, queued and never mentioned again is the
+        worst of the three outcomes.
+
+        It is refused rather than held for the replacement, deliberately. The
+        held version was written first and could not be reached: the frontend
+        covers the window with a full-screen overlay, and Run's keybindings need
+        editor focus that clicking Restart has already taken. What it did reach
+        was the failure path, where a kernel that never came back left every
+        later request waiting out a ninety second grace period.
 
         Widened by hammering rather than by blocking, because this window is
         opened by the restart itself and is already milliseconds wide - the
@@ -155,14 +162,18 @@ class RestartRaceTest(unittest.TestCase):
         self.addCleanup(kernel.shutdown)
 
         stop = threading.Event()
-        failures = []
+        refused = []
+        surprises = []
 
         def keep_running_code():
             while not stop.is_set():
                 try:
                     kernel.execute("1 + 1")
+                except KernelUnavailable as exc:
+                    # The correct answer for a Run that lands in the gap.
+                    refused.append(str(exc))
                 except Exception as exc:  # noqa: BLE001 - recorded, not raised
-                    failures.append(repr(exc))
+                    surprises.append(repr(exc))
 
         runner = threading.Thread(target=keep_running_code, name="run-hammer")
         runner.start()
@@ -179,7 +190,9 @@ class RestartRaceTest(unittest.TestCase):
             if len(client.executed_after_stop) > 0
         ]
         self.assertEqual(stopped, [], f"a Run reached a client whose channels were closed: {stopped}")
-        self.assertEqual(failures, [])
+        # Anything other than a clear refusal is the failure this is watching
+        # for: a Run must not die of something the user cannot be told about.
+        self.assertEqual(surprises, [])
 
     def test_shutdown_waits_for_a_send_that_is_already_in_flight(self):
         """§3.3.7, which was fixed on the strength of an argument alone.
