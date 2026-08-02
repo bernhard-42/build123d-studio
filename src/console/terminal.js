@@ -126,3 +126,24 @@ export function initConsole() {
     syncSize: sendSize,
   };
 }
+
+/** Whether the caret is in the console, for routing clipboard commands. */
+export function hasFocus() {
+  return terminal !== null && terminal !== undefined
+    && terminal.textarea === document.activeElement;
+}
+
+/** The selected transcript text, or "" when nothing is selected. */
+export function selectedText() {
+  return terminal === null || terminal === undefined ? "" : terminal.getSelection();
+}
+
+/**
+ * Send text to the pty as though it had been typed.
+ *
+ * Which is what a terminal paste is - the console's own line editor handles
+ * the rest, including a multi-line paste, exactly as it would from a keyboard.
+ */
+export function sendText(text) {
+  ipc.sendBinary(ipc.KIND_CONSOLE, encoder.encode(text));
+}

@@ -74,7 +74,13 @@ const NAMED_KEYS = {
   down: "DownArrow",
   left: "LeftArrow",
   right: "RightArrow",
+  // Spelt out because "," is the chord separator's neighbour and a bare comma
+  // in a chord string would be ambiguous to read even where it parses.
+  comma: "Comma",
 };
+
+/** Key tokens that are one character to a person, whatever they are called here. */
+export const KEY_CHARS = { comma: "," };
 
 for (let n = 1; n <= 12; n += 1) {
   NAMED_KEYS[`f${n}`] = `F${n}`;
@@ -215,6 +221,8 @@ export function describeChord(platform, chord) {
   const label = KEY_LABELS[descriptor.key];
   if (label !== undefined) {
     parts.push(mac ? label.mac : label.other);
+  } else if (Object.hasOwn(KEY_CHARS, descriptor.key)) {
+    parts.push(KEY_CHARS[descriptor.key]);
   } else if (descriptor.key.length === 1) {
     parts.push(descriptor.key.toUpperCase());
   } else {

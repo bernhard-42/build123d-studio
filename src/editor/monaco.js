@@ -50,10 +50,11 @@ show(part)
 print(f"volume = {part.volume:.3f}")
 
 # %%
-# Ctrl/Cmd+Enter runs the cell at the cursor, Shift+Enter the selection or
-# current line, Ctrl/Cmd+Shift+Enter the whole file. Output appears in the
-# console below as In [n]:, and the kernel is shared with it - so you can
-# poke at "part" down there straight after running this.
+# Shift+Enter runs the cell at the cursor and moves on, Ctrl+Enter runs it and
+# stays, Ctrl+Shift+Enter runs the selection or the current line, and F5 runs
+# the whole file. Output appears in the console below as In [n]:, and the
+# kernel is shared with it - so you can poke at "part" down there straight
+# after running this.
 part.bounding_box()
 `;
 
@@ -328,4 +329,31 @@ export function registerRunActions(target) {
     }));
   }
   return registered;
+}
+
+/** Whether the caret is in the editor, for routing clipboard commands. */
+export function hasTextFocus() {
+  return editor !== null && editor !== undefined && editor.hasTextFocus();
+}
+
+/** The selected text, or "" when nothing is selected. */
+export function selectedText() {
+  const selection = editor.getSelection();
+  if (selection === null || selection.isEmpty()) {
+    return "";
+  }
+  return editor.getModel().getValueInRange(selection);
+}
+
+/**
+ * Replace the selection, or insert at the caret when there is none.
+ *
+ * Through executeEdits rather than setValue, so that undo, the dirty flag and
+ * the cell decorations all behave exactly as they do for typing - a paste that
+ * could not be undone would be a surprise nobody asked for.
+ */
+export function replaceSelection(text) {
+  const selection = editor.getSelection();
+  editor.executeEdits("clipboard", [{ range: selection, text, forceMoveMarkers: true }]);
+  editor.focus();
 }

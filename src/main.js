@@ -6,18 +6,39 @@ import { ensureEnvironment } from "./bootstrap/setup.js";
 import { appDir } from "./bootstrap/envroot.js";
 import { acknowledge, fail, hideSplash, showSplash, splashVisible } from "./bootstrap/splash.js";
 import { initSplitters } from "./layout/splitter.js";
-import { initConsole } from "./console/terminal.js";
-import { focusAt, initEditor } from "./editor/monaco.js";
+import {
+  hasFocus as consoleHasFocus,
+  initConsole,
+  selectedText as consoleSelectedText,
+  sendText,
+} from "./console/terminal.js";
+import {
+  focusAt,
+  hasTextFocus,
+  initEditor,
+  replaceSelection,
+  runCell,
+  runFile,
+  runSelectionOrLine,
+  selectedText,
+} from "./editor/monaco.js";
+import { copy, cut, initClipboard, paste } from "./editing.js";
+import { MENU } from "./menu.js";
+import { initMenu } from "./menubar.js";
 import {
   confirmDiscardChanges,
   lastViewState,
+  newFile,
+  openFile,
   rememberPosition,
   restoreLastFile,
+  saveFile,
   syncKernelDirectory,
 } from "./editor/files.js";
 import { initViewer, showLogo } from "./viewer/viewer.js";
 import { initVariables } from "./vars/explorer.js";
-import { awaitKernelRestart } from "./settings.js";
+import { awaitKernelRestart, showSettings } from "./settings.js";
+import { showInfo } from "./info.js";
 import { initToolbar, updateTitle } from "./toolbar.js";
 import * as ipc from "./ipc.js";
 import { initTheme } from "./theme.js";
@@ -234,6 +255,38 @@ async function main() {
   initVariables();
   initToolbar();
   const console_ = initConsole();
+
+  // After the editor, because every command it offers acts on one. The Edit
+  // items are not listed here: on macOS they are the platform's own roles, which
+  // reach whatever has focus without this file knowing which pane that is.
+  // Which pane a Cut, Copy or Paste is for. Only reached where the platform has
+  // no clipboard roles of its own - macOS resolves it through the responder
+  // chain instead, and never calls any of this.
+  initClipboard({
+    editor: { hasFocus: hasTextFocus, selectedText, replaceSelection },
+    console: {
+      hasFocus: consoleHasFocus,
+      selectedText: consoleSelectedText,
+      send: sendText,
+    },
+  });
+
+  await initMenu({
+    [MENU.ABOUT]: showInfo,
+    [MENU.SETTINGS]: showSettings,
+    [MENU.QUIT]: shutdown,
+    [MENU.CUT]: cut,
+    [MENU.COPY]: copy,
+    [MENU.PASTE]: paste,
+    [MENU.NEW]: newFile,
+    [MENU.OPEN]: openFile,
+    [MENU.SAVE]: () => saveFile(),
+    [MENU.SAVE_AS]: () => saveFile({ saveAs: true }),
+    "run.cell": () => runCell(),
+    "run.cell.stay": () => runCell({ advance: false }),
+    "run.selectionOrLine": () => runSelectionOrLine(),
+    "run.file": runFile,
+  });
 
   // Before the splash lifts, so the window is revealed already showing the file
   // rather than the sample being replaced a moment later. A missing file falls
