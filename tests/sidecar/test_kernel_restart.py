@@ -29,9 +29,15 @@ What each test reproduces, verified by un-applying the fix and watching it fail:
   the new one. Two threads on one zmq socket, which is the fault that produced
   "Invalid Signature: b'<IDS|MSG>'".
 * **§3.3.7** - `shutdown()` closed the channels without holding the shell lock,
-  so it could do that underneath a thread part-way through a send.
+  so it could do that underneath a thread part-way through a send. Phase 3c
+  replaced the lock with one owning thread, so what these two now hold is the
+  ordering that took its place: retire the sender, *then* close what it was
+  sending on. The property asserted is unchanged, which is the point - it
+  survived the rewrite, and the test is how that is known rather than hoped.
 * **the restart swap** - `restart()` rebuilds `self.client`, and since the lanes
-  landed it does so on a different thread from the one a Run arrives on.
+  landed it does so on a different thread from the one a Run arrives on. Held
+  after 3c by `_ready`, which makes a Run that arrives mid-restart wait for the
+  replacement instead of being refused or reaching a torn-down client.
 * **_internal_lock** - the request id was recorded *after* the send returned, so
   the kernel could publish a status for a request the pump then failed to
   recognise as internal. The explorer treated its own refresh as user activity
@@ -39,146 +45,16 @@ What each test reproduces, verified by un-applying the fix and watching it fail:
   misclassified statuses before the fix, 2 after.
 """
 
-import itertools
-import queue
-import tempfile
 import threading
 import time
 import unittest
 
-from kernel import Kernel
+from fakes import TestableKernel
 from support import SETTLE
 
 # How long to let a straggler thread misbehave before concluding it will not.
 # It only has to lose one race, and it is released before this starts.
 MISBEHAVE_WINDOW = 1.0
-
-
-class FakeClient:
-    """A jupyter client with the sockets taken out.
-
-    Records which threads read it, which is the whole assertion for M3: a zmq
-    socket is not thread safe, so "two threads read this client" *is* the defect,
-    stated directly rather than through the corrupted messages it produces.
-    """
-
-    def __init__(self, name, on_execute=None):
-        self.name = name
-        self.channels_started = False
-        self.channels_stopped = False
-        self.readers = set()
-        self.executes = []
-        self.executed_after_stop = []
-        self._iopub = queue.Queue()
-        self._on_execute = on_execute
-        self._counter = itertools.count()
-        self._lock = threading.Lock()
-
-    # --- the surface Kernel uses ---
-
-    def start_channels(self):
-        self.channels_started = True
-
-    def wait_for_ready(self, timeout=None):
-        if not self.channels_started:
-            raise RuntimeError("waited for a client whose channels were never started")
-
-    def stop_channels(self):
-        self.channels_stopped = True
-
-    def get_iopub_msg(self, timeout=None):
-        with self._lock:
-            # By identity, not by name. Every generation's pump is started as
-            # `name="iopub"`, so a set of names cannot tell the straggler from
-            # its replacement - which is exactly the distinction under test, and
-            # it silently passed until this was an ident.
-            current = threading.current_thread()
-            self.readers.add((current.ident, current.name))
-        try:
-            return self._iopub.get(timeout=timeout)
-        except queue.Empty:
-            # Exactly what jupyter_client raises, and what the pump's own
-            # `except queue.Empty` is written for.
-            raise
-
-    def get_shell_msg(self, timeout=None):
-        time.sleep(0 if timeout is None else min(timeout, 0.01))
-        raise queue.Empty
-
-    def execute(self, code, **_kwargs):
-        with self._lock:
-            if self.channels_stopped:
-                # A send into a client whose channels have been torn down. In
-                # the real one this is an assertion inside jupyter_client, or
-                # worse, a socket being rebuilt underneath the caller.
-                self.executed_after_stop.append(code)
-            msg_id = f"{self.name}-{next(self._counter)}"
-            self.executes.append(msg_id)
-        if self._on_execute is not None:
-            self._on_execute(msg_id)
-        return msg_id
-
-    # --- what a test drives it with ---
-
-    def deliver(self, msg_id="m", msg_type="status", parent_type="execute_request",
-                state="idle"):
-        self._iopub.put({
-            "header": {"msg_type": msg_type},
-            "parent_header": {"msg_id": msg_id, "msg_type": parent_type},
-            "content": {"execution_state": state},
-        })
-
-
-class FakeManager:
-    def __init__(self, client):
-        self._client = client
-        self.alive = True
-        self.shutdowns = []
-        self.cleaned = False
-
-    def client(self):
-        return self._client
-
-    def is_alive(self):
-        return self.alive
-
-    def shutdown_kernel(self, now=False):
-        self.shutdowns.append(now)
-
-    def cleanup_resources(self):
-        self.cleaned = True
-
-    def interrupt_kernel(self):
-        pass
-
-
-class TestableKernel(Kernel):
-    """The real Kernel with the process replaced, and nothing else.
-
-    Only new_manager is overridden. Generation scoping, the pump, the shell
-    lock, the internal-request record and the restart sequence are all the
-    shipped code - which is the point, because they are what is under test.
-    """
-
-    def __init__(self, on_iopub, on_execute=None, **kwargs):
-        self.clients = []
-        self._on_execute = on_execute
-        with tempfile.TemporaryDirectory() as env_root:
-            super().__init__(
-                env_root=env_root,
-                app_dir=env_root,
-                model_port=0,
-                model_token="token",
-                on_iopub=on_iopub,
-                on_died=lambda: None,
-                isolation_port=0,
-                **kwargs,
-            )
-
-    def new_manager(self):
-        client = FakeClient(f"gen{len(self.clients)}", on_execute=self._on_execute)
-        self.clients.append(client)
-        return FakeManager(client)
 
 
 class RestartRaceTest(unittest.TestCase):
@@ -262,8 +138,13 @@ class RestartRaceTest(unittest.TestCase):
 
         Restart used to run on the receive thread, which is also where an
         execute came from, so the two could not overlap. It runs on its own lane
-        now: without the shell lock held across _shutdown() and start(), a Run
-        can land while self.client is being replaced.
+        now, so a Run can land while the client is being replaced.
+
+        Two things have to hold, and the second is easy to lose while fixing the
+        first. The Run must not reach a torn-down client - and it must not be
+        thrown away either. Pressing Run and then Restart Kernel should run the
+        code on the new kernel, which the shell lock used to give by being held
+        across the whole swap and `_ready` gives now.
 
         Widened by hammering rather than by blocking, because this window is
         opened by the restart itself and is already milliseconds wide - the
@@ -309,6 +190,11 @@ class RestartRaceTest(unittest.TestCase):
         fault as two threads sharing it, at the least convenient moment - benign
         only because os._exit(0) follows, and "benign because of what happens
         next" is not a property to leave lying around in threaded code.
+
+        Held by a lock when this was written and by an ordering since 3c -
+        retire the only sender, then close. The test did not change, which is
+        what makes it worth having: it is stated in terms of what must be true
+        rather than of the mechanism that happened to be true at the time.
 
         Widened by blocking inside client.execute, which is where the real one
         is inside a zmq send.

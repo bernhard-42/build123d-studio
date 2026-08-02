@@ -23,6 +23,7 @@ file, which is written 0600, so loopback reachability is not authority.
 
 import ast
 import collections
+import concurrent.futures
 import os
 import queue
 import threading
@@ -34,7 +35,7 @@ from channel import log
 
 # What one kernel's worth of state looks like to the thread that reads it. See
 # Kernel._generation.
-Generation = collections.namedtuple("Generation", "manager client stop")
+Generation = collections.namedtuple("Generation", "manager client stop shell")
 
 # How long a restart waits for the previous pump to notice it should stop. The
 # pump polls iopub in half-second slices, so it normally exits well inside this;
@@ -42,14 +43,222 @@ Generation = collections.namedtuple("Generation", "manager client stop")
 # anyway is safe because the generation it holds is already closed.
 PUMP_JOIN_TIMEOUT = 5
 
-# How long one receive may hold the shell lock. Short enough that a Run never
-# waits noticeably behind an in-flight inspection, long enough not to spin.
-SHELL_POLL = 0.25
+# How long the shell thread waits for a reply before looking at its outbox
+# again. This is the one latency the owning-thread design adds: a request
+# submitted the instant after a poll begins waits this long before it is sent.
+# Twenty milliseconds is well under anything a person notices, and the poll
+# itself is a zmq wait rather than a spin.
+SHELL_TICK = 0.02
+
+# How long a caller waits for the shell thread to actually put its request on
+# the socket. Not the kernel's answer - only the queueing - so it is generous
+# purely to distinguish "the outbox is deep" from "the shell thread is wedged".
+SEND_TIMEOUT = 30
+
+# How long a request submitted during a restart waits for the replacement to
+# come up, rather than being refused outright. This is what the shell lock used
+# to do by being held across the whole restart: a Run pressed a moment before
+# Restart Kernel still runs, on the new kernel. Matched to the 60 s
+# wait_for_ready in start() plus the shutdown ahead of it.
+RESTART_WAIT = 90
+
+# How often a request waiting for a replacement looks up. Only one thread is
+# ever in that wait, and only for the seconds a restart takes, so the cost is
+# nothing; what it buys is noticing a shutdown - where no replacement is coming
+# at all - instead of sitting out the full RESTART_WAIT for one.
+READY_POLL = 0.05
 
 # Default for an inspection the user asked for, where waiting is better than
 # answering "unknown". Callers that inspect on the application's own initiative
 # pass something shorter - see IDLE_REFRESH_TIMEOUT.
 EVALUATE_TIMEOUT = 15
+
+
+class KernelUnavailable(RuntimeError):
+    """Raised when there is no kernel to send to, and waiting will not help."""
+
+
+class Request:
+    """One shell request, and somewhere to put what comes back.
+
+    Two futures rather than one, because they answer different questions.
+    ``sent`` resolves when the owning thread has put the request on the socket
+    and carries the msg_id; ``reply`` resolves when the kernel answers. Callers
+    that only need the request to have gone - a Run, a chdir - wait on the
+    first and never create the second.
+
+    Splitting them also puts the timeouts where they belong. An inspection's
+    fifteen seconds is the kernel's time to answer, not time spent queued behind
+    another request, and measuring it from the send is what makes the number
+    mean what its name says.
+    """
+
+    __slots__ = ("code", "kwargs", "internal", "msg_id", "sent", "reply")
+
+    def __init__(self, code, kwargs, internal, want_reply):
+        self.code = code
+        self.kwargs = kwargs
+        self.internal = internal
+        self.msg_id = None
+        self.sent = concurrent.futures.Future()
+        self.reply = concurrent.futures.Future() if want_reply else None
+
+
+class ShellChannel:
+    """The only thread that ever touches one kernel's shell socket.
+
+    This replaces a lock. Every caller used to take _shell_lock and use the
+    socket itself - the channel thread for a Run, the iopub pump for the refresh
+    that follows an idle, the pty reader and a fallback Timer for the warm-up -
+    and correctness rested on all four remembering to. A zmq socket is not
+    thread safe, and two of them inside client.execute() at once interleaves the
+    frames of two messages on the wire: the kernel reads one message's frames as
+    another's and answers "Invalid Signature: b'<IDS|MSG>'", then "DELIM not in
+    msg_list" for the frames left over.
+
+    A lock makes that a rule to follow. One owning thread makes it a property of
+    the design: there is no way to reach the socket except by putting a request
+    in the outbox, so a future caller cannot get it wrong by not knowing.
+
+    It also removes the reply stealing. Reading was serialised but not *routed* -
+    whoever held the lock took whatever reply arrived, so an inspection could
+    swallow a reply meant for another and had to poll in slices, discarding what
+    was not its own and hoping the real consumer came back for it. Here the
+    thread that reads is the thread that dispatches, replies go to the future
+    that asked for them, and an unclaimed reply is counted rather than eaten.
+
+    One instance per kernel generation, handed to the pump's Generation and
+    retired with it, so a straggler cannot reach the replacement's socket. See
+    Kernel._generation for what that scoping is worth.
+    """
+
+    def __init__(self, client, send):
+        self._client = client
+        # How to actually put a request on the socket. Supplied by Kernel so
+        # that recording an internal request stays where its reasoning lives.
+        self._send = send
+        self._outbox = queue.Queue()
+        self._pending = {}
+        # Guards _pending, and gates submit against stop so that a request
+        # cannot be accepted into an outbox nobody will ever drain.
+        self._lock = threading.Lock()
+        self._stop = threading.Event()
+        self._thread = None
+        # Replies nobody was waiting for. A Run's execute_reply is the ordinary
+        # case and is not a problem; a number that climbs when it should not is
+        # the evidence that something else has started reading this socket.
+        self.unclaimed = 0
+
+    def start(self):
+        self._thread = threading.Thread(target=self._run, name="shell", daemon=True)
+        self._thread.start()
+
+    def submit(self, request):
+        """Queue a request. Safe from any thread; that is the whole point."""
+        with self._lock:
+            if self._stop.is_set():
+                raise KernelUnavailable("this kernel has been retired")
+            self._outbox.put(request)
+        return request
+
+    def forget(self, request):
+        """Stop waiting for a reply, so a timed-out request is not remembered.
+
+        Without this the pending map grows by one entry for every inspection
+        that ever times out, and each holds a Future nobody will look at again.
+        """
+        if request.msg_id is None:
+            return
+        with self._lock:
+            self._pending.pop(request.msg_id, None)
+
+    def stop(self, reason):
+        """Retire this channel, and answer everything still waiting on it.
+
+        Joined without a timeout, deliberately. The shell lock this replaces was
+        held across a whole restart and every caller waited on it unboundedly,
+        so this is the same guarantee rather than a new one: the socket is not
+        closed while a send is in flight. The thread polls in SHELL_TICK slices
+        and a zmq send is not a blocking operation in any ordinary sense, so the
+        wait is milliseconds unless something is genuinely wedged - in which
+        case a restart hanging is what happened before this change too.
+        """
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join()
+        self._abandon(reason)
+
+    def _run(self):
+        while not self._stop.is_set():
+            self._drain_outbox()
+            self._collect_reply()
+        # Anything queued between the last drain and the stop.
+        self._drain_outbox()
+
+    def _drain_outbox(self):
+        while True:
+            try:
+                request = self._outbox.get_nowait()
+            except queue.Empty:
+                return
+            if self._stop.is_set():
+                self._fail(request, KernelUnavailable("this kernel has been retired"))
+                continue
+            try:
+                msg_id = self._send(self._client, request)
+            except Exception as exc:  # noqa: BLE001 - reported to the caller, not raised here
+                self._fail(request, exc)
+                continue
+            request.msg_id = msg_id
+            if request.reply is not None:
+                with self._lock:
+                    self._pending[msg_id] = request
+            request.sent.set_result(msg_id)
+
+    def _collect_reply(self):
+        try:
+            reply = self._client.get_shell_msg(timeout=SHELL_TICK)
+        except queue.Empty:
+            return
+        except Exception as exc:  # noqa: BLE001
+            if not self._stop.is_set():
+                log(f"Shell channel stopped reading: {exc}")
+            self._stop.set()
+            return
+
+        msg_id = reply["parent_header"].get("msg_id")
+        with self._lock:
+            request = self._pending.pop(msg_id, None)
+        if request is None:
+            # Legitimate and common: a Run's execute_reply, which nobody awaits.
+            self.unclaimed += 1
+            return
+        request.reply.set_result(reply)
+
+    def _abandon(self, reason):
+        """Fail everything outstanding, rather than leaving it to time out.
+
+        An inspection whose kernel is replaced underneath it would otherwise sit
+        on its full fifteen seconds waiting for an answer that cannot arrive,
+        holding the inspect lane for all of it - and the variable explorer row
+        would say "loading" for that whole time for no reason.
+        """
+        with self._lock:
+            pending, self._pending = self._pending, {}
+        for request in pending.values():
+            self._fail(request, KernelUnavailable(reason))
+        while True:
+            try:
+                request = self._outbox.get_nowait()
+            except queue.Empty:
+                return
+            self._fail(request, KernelUnavailable(reason))
+
+    def _fail(self, request, exc):
+        if not request.sent.done():
+            request.sent.set_exception(exc)
+        if request.reply is not None and not request.reply.done():
+            request.reply.set_exception(exc)
 
 class Kernel:
     """Owns the kernel process and the sidecar's client to it."""
@@ -123,34 +332,24 @@ class Kernel:
         # activity and queues another - the exact loop the deque exists to
         # prevent, arrived at by losing a race rather than by forgetting.
         #
-        # The send and the record now happen together, and is_internal takes
-        # this too, so the pump cannot read the deque in between. Taken *inside*
-        # _shell_lock, never around it: a restart can hold that one for the
-        # length of a kernel start, and holding this while waiting for it would
-        # park the pump - and the pump is what tells the toolbar anything.
+        # The send and the record happen together, and is_internal takes this
+        # too, so the pump cannot read the deque in between. Held only by the
+        # shell thread while it sends, and by whoever asks - never across a wait
+        # for anything, because the pump is what tells the toolbar anything and
+        # parking it stops the application saying what it is doing.
         self._internal_lock = threading.Lock()
 
-        # evaluate() reads the shell channel, and is reached from both the iopub
-        # pump (on idle) and the channel thread (on an explicit refresh). Two
-        # readers would steal each other's replies.
-        self._evaluate_lock = threading.Lock()
+        # Clear while there is no kernel to talk to, which is the seconds a
+        # restart takes. A request that arrives then waits here rather than
+        # being refused: pressing Run and then Restart Kernel should run the
+        # code on the new kernel, which is what the shell lock used to give by
+        # being held across the whole restart. See _submit.
+        self._ready = threading.Event()
 
-        # Every touch of the shell socket - send or receive - goes through this.
-        #
-        # A zmq socket is not thread-safe, and four threads reach this class:
-        # the channel thread (Run, and an explicit variable refresh), the iopub
-        # pump (the refresh that follows every idle), the pty reader (warm_up,
-        # fired by the console's first byte) and the 5 s fallback Timer (warm_up
-        # again). Two of them sending at once interleaves the frames of two
-        # messages on the wire, and the kernel then reads one message's frames
-        # as another's: "Invalid Signature: b'<IDS|MSG>'" - it took the
-        # delimiter for the signature - followed by "DELIM not in msg_list" for
-        # the frames left over. Reproduced by firing executes while warm_up
-        # runs; three corrupt messages inside two kernel restarts.
-        #
-        # Held for one send, or for one short receive poll, never across a wait
-        # for a reply - see _evaluate.
-        self._shell_lock = threading.Lock()
+        # Set once the kernel is gone for good, which a restart is not. Without
+        # the distinction a request arriving after shutdown would wait out the
+        # whole restart grace for a replacement that is never coming.
+        self._retired = threading.Event()
 
         # The warm-up's request id and start time, so it can be timed. It is the
         # one internal request long enough to matter - the kernel serves the
@@ -161,22 +360,75 @@ class Kernel:
         self._warm_msg_id = None
         self._warm_started = None
 
-    def _send_execute(self, code, internal=False, **kwargs):
-        """The only place an execute_request is put on the shell socket.
+    def _execute_and_record(self, client, request):
+        """Put one execute_request on the shell socket, and claim it if it is ours.
 
-        Every caller funnels through here so that no two threads can be inside
-        client.execute() at once. See _shell_lock.
+        Called only by the shell thread, which is the only thread that touches
+        the socket at all - see ShellChannel. The client comes in as an argument
+        rather than off self for the same reason the pump takes a generation: a
+        retired shell thread must not be able to send to the replacement.
 
         ``internal`` marks a request this class makes on its own behalf, and
-        recording it is part of sending it rather than something the caller
-        remembers to do afterwards - see _internal_lock for what the gap cost.
+        recording it is part of sending it rather than something a caller
+        remembers to do afterwards. The record is inside the same critical
+        section as the send because the kernel can answer in between: it
+        publishes busy for a request the pump then fails to recognise as ours,
+        the variable explorer treats its own refresh as user activity and queues
+        another, and the toolbar flickers a busy and an idle a millisecond
+        apart. Reproduced in tests/sidecar/test_kernel_restart.py, which
+        measured 100 misreadings in 100 attempts without this.
         """
-        with self._shell_lock:
-            with self._internal_lock:
-                msg_id = self.client.execute(code, **kwargs)
-                if internal:
-                    self._internal_requests.append(msg_id)
+        with self._internal_lock:
+            msg_id = client.execute(request.code, **request.kwargs)
+            if request.internal:
+                self._internal_requests.append(msg_id)
         return msg_id
+
+    def _submit(self, code, internal=False, want_reply=False, **kwargs):
+        """Hand one execute_request to whichever shell thread is current.
+
+        The wait is what a restart used to get from holding the shell lock: for
+        the seconds between one kernel going and the next arriving there is
+        nothing to send to, and a Run that arrived a moment earlier should run
+        on the replacement rather than be told the kernel is missing.
+
+        The retry is for the seam between the two. _ready and _generation are
+        set separately, so a request can pass the first and find a generation
+        that has just been retired; that raises, and going round again either
+        finds the replacement or runs out of patience honestly.
+        """
+        request = Request(code, kwargs, internal, want_reply)
+        deadline = time.monotonic() + RESTART_WAIT
+        while True:
+            # A shutdown is not a restart. Nothing is coming back, so waiting
+            # out the grace period would turn "there is no kernel" into ninety
+            # seconds of a lane held by a request that was refused all along.
+            if self._retired.is_set():
+                raise KernelUnavailable("the kernel has been shut down")
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise KernelUnavailable("there is no kernel to send to")
+            if not self._ready.wait(timeout=min(READY_POLL, remaining)):
+                continue
+            generation = self._generation
+            if generation is not None:
+                try:
+                    return generation.shell.submit(request)
+                except KernelUnavailable:
+                    pass
+            # Retired between the two reads. Give the replacement a moment to
+            # be installed rather than spinning on the attribute.
+            time.sleep(0.01)
+
+    def _send_execute(self, code, internal=False, **kwargs):
+        """Send, and wait only for it to have gone. Returns the msg_id.
+
+        The wait is over as soon as the shell thread has put the request on the
+        socket, so this is bounded by the outbox rather than by the kernel -
+        which matters because warm_up() is called from the iopub pump.
+        """
+        request = self._submit(code, internal=internal, **kwargs)
+        return request.sent.result(timeout=SEND_TIMEOUT)
 
     def kernel_environment(self):
         """Environment for the kernel process.
@@ -253,14 +505,22 @@ class Kernel:
         self.client.wait_for_ready(timeout=60)
 
         self._death_reported = False
+        shell = ShellChannel(self.client, self._execute_and_record)
         generation = Generation(
-            manager=self.manager, client=self.client, stop=threading.Event()
+            manager=self.manager,
+            client=self.client,
+            stop=threading.Event(),
+            shell=shell,
         )
         self._generation = generation
+        shell.start()
         self._iopub_thread = threading.Thread(
             target=self._pump_iopub, args=(generation,), name="iopub", daemon=True
         )
         self._iopub_thread.start()
+        # Last, so that nothing is admitted to a generation that is still being
+        # assembled. Everything waiting in _submit wakes up here.
+        self._ready.set()
 
         log(f"Kernel started, connection file {self.connection_file}")
         # warm_up() is deliberately not called here. See Sidecar.warm_kernel.
@@ -397,11 +657,10 @@ class Kernel:
     def execute(self, code, silent=False, store_history=True, user_expressions=None):
         """Run code in the kernel. Returns the request's msg_id.
 
-        The reply is not awaited, and nothing here reads the shell channel:
-        _evaluate is its only consumer, and it drops replies that are not its
-        own. Anything that ever needs *its* execute_reply has to take that up
-        with _evaluate first, or the two will steal from each other depending on
-        timing - see the discard count logged there.
+        The reply is not awaited. It comes back on the shell channel, is matched
+        against nothing, and the shell thread counts it as unclaimed - which is
+        correct and ordinary. Nobody has to coordinate with anybody about it any
+        more: a request that wants its reply asks for one, and gets that one.
         """
         return self._send_execute(
             code,
@@ -418,81 +677,76 @@ class Kernel:
         iopub: nothing is echoed into the console, the In[n] counter does not
         move, and the user's Out history is untouched. That is what lets the
         variable explorer refresh after every execution without being visible.
+
+        Concurrent calls are safe and no longer serialised. This used to hold an
+        _evaluate_lock because two readers of one socket would steal each other's
+        replies; the shell thread routes each reply to the future that asked for
+        it, so an inspection the user asked for and the refresh that follows an
+        idle can now overlap instead of queueing.
         """
-        with self._evaluate_lock:
-            return self._evaluate(expression, EVALUATE_TIMEOUT if timeout is None else timeout)
+        return self._evaluate(expression, EVALUATE_TIMEOUT if timeout is None else timeout)
 
     def _evaluate(self, expression, timeout):
-        msg_id = self._send_execute(
-            "",
-            internal=True,
-            silent=True,
-            store_history=False,
-            user_expressions={"value": expression},
-        )
+        try:
+            request = self._submit(
+                "",
+                internal=True,
+                want_reply=True,
+                silent=True,
+                store_history=False,
+                user_expressions={"value": expression},
+            )
+        except KernelUnavailable as exc:
+            log(f"Inspection not sent: {exc}")
+            return None
 
-        deadline = time.monotonic() + timeout
-        discarded = 0
-        while True:
-            # The clock is read once and the value that comes out of it is both
-            # tested and used. This used to be `while time.monotonic() <
-            # deadline:` with a second reading taken inside the loop, and the
-            # gap between those two readings is a permanent hang.
-            #
-            # Any pause between them lets the deadline pass, and `remaining`
-            # comes out negative: the GIL's 5 ms switch interval is an order of
-            # magnitude more than is needed. jupyter_client then computes
-            # int(remaining * 1000) milliseconds and hands it to zmq's poller,
-            # which reads *any* negative timeout as "wait for ever"
-            # (zmq/sugar/poll.py: `if timeout is None or timeout < 0: timeout =
-            # -1`). Measured on the pinned pyzmq: poll(0.25) returns after
-            # 0.251 s, poll(-0.005) never returns at all.
-            #
-            # It never returned while holding _shell_lock, so every later Run
-            # blocked in _send_execute on the sidecar's receive thread; the
-            # webview's frames stopped being consumed; and twenty seconds after
-            # that websockets' keepalive tore the connection down - "Sidecar
-            # socket closed: 1011 keepalive ping timeout". The whole session
-            # died, unrecoverably, from one missed millisecond.
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                break
-            # Polled in slices rather than waiting for the whole timeout in one
-            # call, because the shell socket is shared: holding the lock for the
-            # full fifteen seconds would stall every Run behind an inspection
-            # the user never asked for. A slice bounds that to SHELL_POLL.
-            try:
-                with self._shell_lock:
-                    reply = self.client.get_shell_msg(timeout=min(SHELL_POLL, remaining))
-            except queue.Empty:
-                continue
-            if reply["parent_header"].get("msg_id") != msg_id:
-                # Replies to other requests legitimately land here - a Run's
-                # execute_reply, which nobody awaits - so dropping them is
-                # correct and far too common to log one by one. Counted instead,
-                # and reported only if this call then fails to find its own
-                # reply, which is the case where "who ate it?" is the question.
-                discarded += 1
-                continue
+        try:
+            # The send first, and separately, so the timeout below is the
+            # kernel's time to answer rather than time spent queued behind
+            # another request. Fifteen seconds means fifteen seconds of kernel.
+            request.sent.result(timeout=SEND_TIMEOUT)
+            reply = request.reply.result(timeout=timeout)
+        except concurrent.futures.TimeoutError:
+            unclaimed = self._unclaimed_replies()
+            log(
+                f"Inspection timed out after {timeout}s"
+                + (f", with {unclaimed} unclaimed shell replies seen" if unclaimed > 0 else "")
+            )
+            return None
+        except KernelUnavailable as exc:
+            # The kernel was replaced while this was outstanding. Answering None
+            # promptly is the point: the row that asked is showing "loading",
+            # and waiting out the full timeout for an answer that cannot arrive
+            # would hold the inspect lane for all of it.
+            log(f"Inspection abandoned: {exc}")
+            return None
+        except Exception as exc:  # noqa: BLE001 - a failed send is not a crash
+            log(f"Inspection failed to send: {exc}")
+            return None
+        finally:
+            self._forget(request)
 
-            result = reply["content"].get("user_expressions", {}).get("value")
-            if result is None:
-                return None
-            if result.get("status") == "error":
-                log(f"Inspection failed: {result.get('ename')}: {result.get('evalue')}")
-                return None
-            text = result.get("data", {}).get("text/plain")
-            if text is None:
-                return None
-            # user_expressions return a repr, so a JSON string arrives quoted
-            # and escaped exactly as Python would print it.
-            return ast.literal_eval(text)
+        result = reply["content"].get("user_expressions", {}).get("value")
+        if result is None:
+            return None
+        if result.get("status") == "error":
+            log(f"Inspection failed: {result.get('ename')}: {result.get('evalue')}")
+            return None
+        text = result.get("data", {}).get("text/plain")
+        if text is None:
+            return None
+        # user_expressions return a repr, so a JSON string arrives quoted and
+        # escaped exactly as Python would print it.
+        return ast.literal_eval(text)
 
-        log(
-            f"Inspection timed out after {timeout}s"
-            + (f", having discarded {discarded} unrelated shell replies" if discarded else "")
-        )
-        return None
+    def _unclaimed_replies(self):
+        generation = self._generation
+        return 0 if generation is None else generation.shell.unclaimed
+
+    def _forget(self, request):
+        generation = self._generation
+        if generation is not None:
+            generation.shell.forget(request)
 
     def set_working_dir(self, path):
         """Point the kernel at a directory, now and across future restarts.
@@ -527,13 +781,14 @@ class Kernel:
     def _retire_pump(self):
         """Tell the current pump to stop, and wait a while for it to.
 
-        Done *before* _shell_lock is taken, and that ordering is the fix rather
-        than an accident of layout. The pump can be inside warm_kernel, which
-        takes _shell_lock - so retiring it while holding that lock would be the
-        restart waiting for a thread that is waiting for the restart. It cannot
-        happen today only because _warmed is still set when a restart begins,
-        which is a property of a different file and would not survive somebody
-        rearranging on_restart.
+        Done before the shell thread is retired, and that ordering still
+        matters. The pump can be inside warm_kernel, which submits a request and
+        waits for it to be sent; stopping the sender first would leave the pump
+        waiting on a future nothing will ever resolve. Retiring the pump first
+        means it is gone before its counterpart can strand it. (The stranding
+        would in fact be answered now - ShellChannel.stop fails everything
+        outstanding rather than letting it time out - but relying on that would
+        be relying on an error path where an ordering will do.)
 
         The timeout is deliberate and no longer load-bearing. A pump that has
         not exited holds a generation whose client is about to be closed and
@@ -553,8 +808,27 @@ class Kernel:
             log(f"iopub pump still running after {PUMP_JOIN_TIMEOUT}s; leaving it to its "
                 "own kernel, which is closed")
 
+    def _retire_shell(self, reason):
+        """Retire the current shell thread and answer everything it still owes.
+
+        Done before the client is closed, which is what makes the close safe:
+        the shell thread is the only sender, so once it has stopped there is
+        nobody left to be part-way through a send. That is the guarantee
+        _shell_lock used to give by being held across the whole restart, now
+        held by there being exactly one thread rather than by every caller
+        remembering a rule.
+        """
+        generation = self._generation
+        if generation is None:
+            return
+        generation.shell.stop(reason)
+
     def restart(self):
+        # Nothing is admitted from here until start() sets it again. A Run that
+        # arrives in between waits in _submit and runs on the replacement.
+        self._ready.clear()
         self._retire_pump()
+        self._retire_shell("the kernel was restarting when this was sent")
 
         # Stop completely and start again, rather than KernelManager.restart_kernel.
         #
@@ -572,47 +846,46 @@ class Kernel:
         # startup, so anything start() sets up - the inspector binding the
         # variable explorer needs, among others - is set up again rather than
         # being quietly absent afterwards.
-        # Held across the swap, and this is new with the lanes. Restart used to
-        # run on the receive thread, which is also where an execute came from,
-        # so the two could not overlap. It runs on its own lane now, so without
-        # this it could be tearing down and rebuilding self.client at the exact
-        # moment a Run or an inspection was using it - which is the same class
-        # of fault as two threads sharing the socket, one level up.
         #
-        # Everywhere else the lock is held for a single send or one short
-        # receive poll, so this waits at most SHELL_POLL to take it, and holds
-        # it for the restart. Anything wanting the shell in the meantime waits,
-        # which is correct: for those seconds there is no kernel to talk to.
-        with self._shell_lock:
-            self._shutdown(now=True)
-            self.start()
+        # Nothing is locked here any more, and nothing needs to be. The swap
+        # used to be wrapped in _shell_lock because a Run on the execute lane
+        # could otherwise be inside client.execute() while this rebuilt it.
+        # There is now exactly one thread that ever sends, and _retire_shell
+        # above has already stopped it and waited for it, so by this line there
+        # is no sender left to race. Everything that arrives meanwhile is
+        # waiting on _ready, which is the same "for these seconds there is no
+        # kernel to talk to" the lock expressed - said once, in one place,
+        # instead of by every caller taking a lock it had to know about.
+        self._shutdown(now=True)
+        self.start()
         log("Kernel restarted")
 
     def shutdown(self, now=False):
-        """Stop the kernel, taking the shell lock first.
+        """Stop the kernel, retiring its threads before closing anything.
 
-        The lock is the point. This is called from Sidecar.stop() on the way out
-        of the process, where an inspection on the inspect lane or a Run on the
-        execute lane can still be part-way through a send - and stop_channels()
-        closing the socket underneath one of them is the same fault as two
-        threads sharing it, at the least convenient moment. Benign in practice
-        because os._exit(0) follows, but "benign because of what happens next"
-        is not a property to leave lying around in threaded code.
+        Called from Sidecar.stop() on the way out of the process, where an
+        inspection on the inspect lane or a Run on the execute lane can still be
+        part-way through a send - and stop_channels() closing the socket
+        underneath one of them is the same fault as two threads sharing it, at
+        the least convenient moment. Benign in practice because os._exit(0)
+        follows, but "benign because of what happens next" is not a property to
+        leave lying around in threaded code.
 
-        restart() already holds the lock and calls _shutdown directly; a
-        threading.Lock is not reentrant, so the two entry points cannot be one.
+        The order is the guarantee, and it is the same one restart() uses:
+        retire the sender, then close what it was sending on.
         """
+        self._retired.set()
+        self._ready.clear()
         self._retire_pump()
-        with self._shell_lock:
-            self._shutdown(now=now)
+        self._retire_shell("the sidecar is shutting down")
+        self._shutdown(now=now)
 
     def _shutdown(self, now=False):
-        """Stop the kernel. Caller holds _shell_lock and has retired the pump.
+        """Stop the kernel. Caller has retired the pump and the shell thread.
 
-        Both preconditions, and the second is the one worth stating: retiring
-        the pump means joining it, the pump can be waiting for _shell_lock, and
-        doing that from inside the lock is a wait on a thread that is waiting on
-        the waiter.
+        Both preconditions, and the second is what makes the close safe: the
+        shell thread is the only thing that ever sends, so once it has stopped
+        there is nobody who can be inside client.execute() when the channels go.
 
         now=True kills rather than asking politely, which is what a restart
         wants: restart is what a user reaches for precisely when the kernel is

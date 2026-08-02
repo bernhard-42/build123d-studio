@@ -102,11 +102,21 @@ Done, released as v0.2.0. What was wrong and why it mattered, grouped by what a 
 - one owning thread per zmq socket, with request/reply futures instead of a shared socket under a lock
 - Make the log append-only. Pulled forward from the instance model in Phase 4 because it is what everything else is diagnosed from: two instances currently read and rewrite it at startup and truncate each other, so the file misrepresents what happened exactly when something went wrong. Each line should also carry which instance wrote it, or two interleaved runs cannot be told apart
 
+Done. What changed, and why it was worth doing.
+
+**Three fixes stopped being arguments.** M3, §3.3.7 and the internal-request record were fixed in Phase 2 by reading the code and reasoning about it, and nothing distinguished a race that had been cured from one that had merely stopped showing up. They are now reproduced. The technique is race widening - hold a thread exactly where the unlucky one would have been, then do the thing the race needs - and it turns a window a few instructions wide into an instruction. Running the code more often does not work and this project has the evidence: the pre-fix code passed three times out of three against a 46 MB assembly. Measured instead: 100 internal requests misread as user activity out of 100, against none.
+
+**The rule about the shell socket became a property of the design.** "Only one thread at a time may touch this" was a lock that four separate callers had to remember - the channel thread for a Run, the iopub pump for the refresh after an idle, the pty reader and a fallback timer for the warm-up - and getting it wrong interleaves the frames of two messages on the wire, which the kernel reports as "Invalid Signature". One thread owns the socket now and the only way to reach it is to put a request in an outbox, so a caller who has never heard of the rule cannot break it.
+
+**Replies go to whoever asked for them.** Serialising the reads was never enough, because whoever held the lock took whatever reply arrived: an inspection polled in slices, discarded what was not its own, and relied on the real consumer coming back for it - which worked only because exactly one caller ever awaited a reply. That is a coordination requirement between parts of the application that have no other reason to know about each other. Futures keyed by request id remove it, and two consequences follow for free: inspections can overlap instead of queueing, and one caught by a restart is answered at once instead of holding the inspect lane for fifteen seconds waiting for a kernel that has gone.
+
+**And the log stopped losing the evidence.** Of fifteen launches on one machine, four looked broken in the log and only one was; the rest were lines another instance had truncated.
+
 ## Phase 4 "Feature release"
 
 ### 1. Usability (quick wins)
 
-- Add an OS menu to get Cmd-C/Cmd-V/Cmd-X. Would also deliver Cmd-Q, ... (a prerequisite for code completion in group 5: without it macOS never binds the standard shortcuts, so Ctrl-Space is swallowed by the system's input-source shortcut)
+- Add an OS menu to get Cmd-C/Cmd-V/Cmd-X. Would also deliver Cmd-Q, ... (a prerequisite for code completion in group 5: without it macOS never binds the standard shortcuts, so Ctrl-Space is swallowed by the system's input-source shortcut). Same for Windows and Linux including typical short-cuts on these OS.
 - Logically, idle/busy indicator belongs to kernel button group. move it before the interrupt button
 - Add all log paths to the info box
 - Fix the Application icon on MacOS (logo.svg should now be compliant with Apple rules for Tahoe)
