@@ -167,6 +167,29 @@ Done. What changed, and why it was worth doing.
 
 Before the instance model, but not because it replaces it - see group 3, the two are orthogonal. It comes first because it is the smaller and safer piece: it is self-contained, every project needs it whether or not a second window is ever opened, and it touches none of the shared state the instance work has to make safe.
 
+**Size.** The largest group so far and laborious rather than risky - unlike Phase 3, where the danger was a race nobody could see, the danger here is forgetting a case. Two things make it smaller than it looks. The single-buffer assumption is concentrated rather than spread: nineteen call sites in `editor/files.js`, fourteen in `editor/monaco.js`, four in `toolbar.js`, and nowhere else. And nothing needs inventing - Monaco holds many models natively (`createModel` and `setModel` against one editor), `filesystem` has `readDirectory` and `createWatcher`, and `os.showFolderDialog` is the Open Folder dialog.
+
+**The pieces, in the order they want building.** Each is a commit; the first is a prerequisite for everything after it.
+
+1. **Many buffers, one editor.** A buffer is a path, a Monaco model, a saved version id and a view state. Today each of those is a single module-level value, and *that* is the work - the multiplicity itself is a Map. Ships with one tab's worth of behaviour and no visible tabs, so it can be verified before any UI depends on it.
+2. **The tab strip.** Label is the filename, the full path on hover. Fiddly rather than deep: overflow, close targets, a dirty mark, and two files of the same name in different folders needing a disambiguating hint.
+3. **The sidebar.** The most genuinely new code - a lazily expanded tree, sorted, with `__pycache__` and `.git` filtered out, behind a new splitter whose width persists like the others.
+4. **Save All, Close, Close All, and quitting.** The menu already carries these disabled; this enables them. `confirmDiscardChanges` reasons about exactly one buffer today and has to ask *once* for many rather than once per file.
+5. **The workspace, restored.** `lastFile`/`lastPosition`/`lastScrollTop` become a folder, a set of open tabs, which one is active, and a caret for each - with a migration, because an existing installation has the old keys.
+
+**Where this can actually hurt.** Closing a tab must dispose its Monaco model; nothing in the application disposes anything today because nothing has ever needed to, and the leak is invisible until someone has opened forty files. `confirmDiscardChanges` is load-bearing - Phase 2 exists partly because work could be lost silently - and rewriting it for many buffers is the one change here that can lose somebody's edits. A CAD project full of STEP exports is large, so the tree has to expand lazily or Open Folder hangs on it. And `createWatcher` is undocumented enough that live updates should wait: ship a refresh, then add watching once a build has said how it behaves.
+
+Plenty of it is pure and testable in the way the rest of the frontend now is: tab labels and their disambiguation, tree sorting and filtering, workspace serialisation, whether anything is dirty.
+
+**Open, and each one changes the design rather than the code.**
+
+- **The kernel's working directory when a folder is open** - the project root, or the active file's directory as it is today? The most consequential of these: relative paths in user scripts resolve against it, and Phase 1 chose per-file deliberately so that `export_step(part, "bracket.step")` lands beside `bracket.py`. A project root is the other reasonable answer and would change that promise
+- **What the sidebar shows** - every file, as VS Code does, or Python only
+- **Closing the last tab** - an empty buffer, or an editor with no tab at all
+- **Restoring tabs on restart** - the previous session's open files, or just the folder
+- **Tab overflow** - scrolling the strip, or a dropdown of what does not fit
+- **Preview tabs**, VS Code's single-click italic tab that the next file replaces - recommended against, as an extra concept for little gain
+
 ### 3. Instance Model (decided: multi-instance)
 
 Multi-instance, deliberately, and it is not an alternative to multi-file above - the two are orthogonal. Multi-file is one project with many files; multi-instance is several projects open at once. A build123d project is normally a hierarchy of files under one root, and the workflow that matters is a large assembly open beside the self-contained components it is built from. Tabs do not serve that, and neither does one window.
