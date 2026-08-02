@@ -24,6 +24,7 @@ import { initTheme } from "./theme.js";
 import { initStore } from "./store.js";
 import { hideBusy, resetBusy, showBusy } from "./busy.js";
 import * as log from "./log.js";
+import { guardAgainstReload } from "./reload.js";
 
 init();
 log.installGlobalHandlers();
@@ -83,16 +84,24 @@ events.on("windowClose", () => {
 
 // Cmd-Q / Ctrl-Q.
 //
-// Neutralino creates no native menu bar, so macOS never wires the standard
-// Quit shortcut to anything and the app simply ignores it. Handling the key in
-// the webview is the only place it can be caught. Ctrl-Q is included for Linux
-// and Windows, where it is the common equivalent.
+// There is no native menu bar yet, so macOS never wires the standard Quit
+// shortcut to anything and the app simply ignores it. Handling the key in the
+// webview is the only place it can be caught. Ctrl-Q is included for Linux and
+// Windows, where it is the common equivalent. This goes when the menu lands and
+// carries a real Quit item.
 window.addEventListener("keydown", (event) => {
   if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "q") {
     event.preventDefault();
     shutdown();
   }
 });
+
+// Reload keys, which this application has no use for and a great deal to lose
+// to: a reload throws away the editor buffer and everything unsaved in it. See
+// reload.js - the guard cancels the browser's reaction without consuming the
+// key, so Ctrl-R still reaches the console's readline and F5 still reaches Run
+// File.
+guardAgainstReload();
 
 /**
  * Offer a way back when the Python backend dies during a session.
