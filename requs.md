@@ -194,6 +194,14 @@ Its own group rather than a usability quick win, because it is the first place f
 
 - show_clear, show_object, push_object, show_objects, show_all, set_defaults, get_defaults, set_default, workspace_cofig, combined_config, status, ... need to work (Note in a separate project ocp_vscode needs to be restructured to better work with jupyter-cadquery and build123d studio)
 
-## Phase 5 "Add feature tests"
+### 7. Inspecting while the kernel is busy
+
+Last, and deliberately so - it is a real defect but not a pressing one, and it wants the rest of this phase settled first.
+
+Expanding a variable while a cell is running shows "Loading..." until the cell finishes. The kernel serves shell requests serially and the variable explorer inspects with a silent execute_request, so the inspection waits in the *kernel's* queue. Measured on a ten second loop: 13.32 s before Phase 3c and 13.43 s after, so it is not the sidecar's doing and 3c neither caused nor could fix it. Past EVALUATE_TIMEOUT it is worse than slow - the row reports "could not be read in time", which is untrue: the value was readable and the kernel was busy.
+
+ipykernel 7 subshells (JEP 91) are the answer, and they work: a `create_subshell_request` on the control channel returns an id, a request carrying that id in its header is served by a separate thread with the same namespace, and a probe against the pinned ipykernel 7.3.0 answered in **0.01 s** while the main shell was six seconds from finishing. Route inspections there and leave Run, the chdir and the warm-up on the main shell - the chdir in particular must stay ordered with respect to Runs.
+
+Two things already known about the shape of it. Building the message by hand (`session.msg` plus `shell_channel.send`) is needed because jupyter_client's `execute()` cannot set a subshell id, and that incidentally closes the internal-request window for good rather than locking it, since the msg_id is known before the send. And the inspector already snapshots with `list(namespace.items())`, so inspecting a namespace that running code is mutating does not iterate a dict as it changes. It must degrade to the main shell when the kernel has no subshell support, or the application stops working against anything but ipykernel 7.
 
 - Write comprehensive feature test suite: the panes, the editor, the viewer and the workflows, as distinct from Phase 3's ipc, communication and threading
