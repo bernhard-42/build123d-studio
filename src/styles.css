@@ -219,6 +219,15 @@ body {
   gap: 6px;
   color: var(--fg-dim);
   font-size: 12px;
+  /* A fixed box, not a min-width on the word inside it, so the label does not
+     jump about as the kernel goes from "starting" to "busy" to "idle" - the dot
+     would move with it, which is the part the eye follows. Sized for the longest
+     state plus the dot and its gap, with room to spare: a little too wide costs
+     nothing and too narrow brings the jiggle back. */
+  flex: 0 0 auto;
+  width: 7em;
+  white-space: nowrap;
+  overflow: hidden;
 }
 
 .kernel-status .dot {
@@ -529,6 +538,23 @@ body {
 
 .settings-package:last-of-type {
   border-bottom: none;
+}
+
+/* The New File template. Monospace because it is Python and will be read back
+   as code, and resizable vertically because how long a preamble someone wants
+   is not something to decide for them. */
+.settings-template {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.4;
+  resize: vertical;
 }
 
 .settings-package-name {

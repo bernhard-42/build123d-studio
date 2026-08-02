@@ -1,4 +1,4 @@
-import { clipboard } from "@neutralinojs/lib";
+import { clipboard, filesystem } from "@neutralinojs/lib";
 import { version as threeCadViewerVersion } from "three-cad-viewer";
 
 import { appVersion, monacoVersion, xtermVersion } from "./versions.js";
@@ -17,6 +17,34 @@ import * as log from "./log.js";
 // it costs nothing until asked for.
 
 let uvVersionCache = null;
+
+/**
+ * The log files, current and rotated, and what else writes into them.
+ *
+ * The rotated one is only named when it is actually there. A path to a file
+ * that does not exist reads as "here is your other log" and sends someone
+ * looking for something that was never written.
+ */
+async function logRows() {
+  const current = log.logPath();
+  if (current === null) {
+    return [row("Log", "not started")];
+  }
+
+  const rows = [row("Log", current)];
+  const previous = `${current}.1`;
+  try {
+    await filesystem.getStats(previous);
+    rows.push(row("Previous log", previous));
+  } catch {
+    // Never rotated, which is the common case.
+  }
+  rows.push(row(
+    "Sidecar and kernel output",
+    "timestamped into the log above; there is no separate file",
+  ));
+  return rows;
+}
 
 async function uvVersion() {
   if (uvVersionCache !== null) {
@@ -93,10 +121,16 @@ async function gather() {
       row("Location", envRoot),
       row("Python", info?.info ? `${info.info.python} (${info.info.implementation})` : "starting…"),
       row("Kernel connection file", info?.info?.connectionFile ?? "starting…"),
-      // Beside the environment rather than inside it, so it survives the clean
+      // Beside the environment rather than inside it, so they survive the clean
       // rebuild the note above describes - the log of the run that went wrong is
       // exactly what is wanted after deleting the environment.
-      row("Log", log.logPath() ?? "not started"),
+      //
+      // Both of them, because a bug report usually wants the one from *before*
+      // the restart that made the problem obvious, and until now the dialog
+      // named only the current file. The sidecar and the kernel do not have
+      // logs of their own: their stderr is timestamped into this same file,
+      // which is said out loud so nobody goes looking for a third one.
+      ...(await logRows()),
     ],
   });
 

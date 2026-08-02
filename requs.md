@@ -120,35 +120,36 @@ Done. What changed, and why it was worth doing.
 
   `Neutralino.window.setMainMenu` is the API and it exists in the pinned 6.9.0 - checked in the JS client and in all three native binaries. The comment in `src/main.js` claiming "Neutralino creates no native menu bar" is stale, and the hand-rolled Cmd-Q keydown handler underneath it exists because of that belief; both go when the menu lands.
 
-  | menu | items |
-  |---|---|
+  | menu | items                                                                                |
+  | ---- | ------------------------------------------------------------------------------------ |
   | File | New, Open File…, Open Folder…, Save, Save As…, Save All, Close, Close All, Close Tab |
-  | Edit | Cut, Copy, Paste |
-  | Run | Run Cell, Run Cell (Keep Cursor), Run Selection or Line, Run File |
+  | Edit | Cut, Copy, Paste                                                                     |
+  | Run  | Run Cell, Run Cell (Keep Cursor), Run Selection or Line, Run File                    |
 
   The File items that need tabs - Save All, Close All, Close Tab, and Open Folder itself - are built now and disabled (`isDisabled`) until group 2 enables them. The structure is what is expensive to retrofit; the items are not.
 
   Four Run items rather than five bindings, because run-selection and run-line share one chord and differ only by whether there is a selection. A menu cannot show the same shortcut twice, so the item is "Run Selection or Line" and the distinction stays where the user actually experiences it.
 
-  Two things to establish on the first build rather than assume. Clicks come back as a `mainMenuItemClicked` event carrying the item id, so **every item's behaviour is ours to implement** - and `WindowMenuItem` has an `action` field which may be a native role, except that no role vocabulary (`copy`, `paste`, `cut`) appears in any of the three binaries. If roles work, Edit is trivial; if not, Cut/Copy/Paste needs a focus-aware dispatcher, because Monaco has its own clipboard actions, xterm.js needs the selection written out and pasted text pushed to the pty, and dialog inputs are a third case. Either way the menu solves the problem it was added for, which is getting the keystroke *delivered* rather than swallowed.
+  Two things to establish on the first build rather than assume. Clicks come back as a `mainMenuItemClicked` event carrying the item id, so **every item's behaviour is ours to implement** - and `WindowMenuItem` has an `action` field which may be a native role, except that no role vocabulary (`copy`, `paste`, `cut`) appears in any of the three binaries. If roles work, Edit is trivial; if not, Cut/Copy/Paste needs a focus-aware dispatcher, because Monaco has its own clipboard actions, xterm.js needs the selection written out and pasted text pushed to the pty, and dialog inputs are a third case. Either way the menu solves the problem it was added for, which is getting the keystroke _delivered_ rather than swallowed.
 
   Menu behaviour also differs by platform - a system bar on macOS, inside the window elsewhere, which may shift the pane layout and make stored splitter positions mean something slightly different across an upgrade. Worth a real build on each early rather than at the end of the group.
 
   The menu is a pure function of state - which items are enabled, and what each one's shortcut currently is - so it is rebuilt rather than mutated, and that function is unit-testable without a window.
+
 - **The application must never reload.** There is no guard today: the only global key handler is Cmd/Ctrl-Q, so an accidental F5 (Windows, Linux) or Cmd-R (macOS) discards the editor buffer and re-runs the whole bootstrap. Same family as the Phase 2 work on losing edits silently, and a prerequisite for binding F5 to anything.
-- Logically, idle/busy indicator belongs to kernel button group. move it before the interrupt button
+- Logically, idle/busy indicator belongs to kernel button group. Tried in front of the buttons first, as originally written here, and it read as a *label for* them rather than as the kernel's state - a word followed by two icons is taken as a caption. So the group is Restart, Interrupt, indicator, and the indicator needs a fixed-width box or the dot slides about as the word changes between "starting", "busy" and "idle"
 - Add all log paths to the info box
 - Fix the Application icon on MacOS (logo.svg should now be compliant with Apple rules for Tahoe)
 - Config should get a multiline field where I can add code that should be used during "New File"
 - Five run actions, of which two are bound today and one is implemented but unreachable - `runCell` and `runSelectionOrLine` both take an `advance` flag that nothing ever passes as false.
 
-  | shortcut | action | cursor |
-  |---|---|---|
-  | Shift-Enter | run cell | next cell |
-  | Ctrl-Enter, and Cmd-Enter on macOS | run cell | stays |
-  | Ctrl-Shift-Enter, and Cmd-Shift-Enter on macOS, *with a selection* | run selection | end of the selection |
-  | the same, *with no selection* | run line | next line |
-  | F5 | run whole file | - |
+  | shortcut                                                           | action         | cursor               |
+  | ------------------------------------------------------------------ | -------------- | -------------------- |
+  | Shift-Enter                                                        | run cell       | next cell            |
+  | Ctrl-Enter, and Cmd-Enter on macOS                                 | run cell       | stays                |
+  | Ctrl-Shift-Enter, and Cmd-Shift-Enter on macOS, _with a selection_ | run selection  | end of the selection |
+  | the same, _with no selection_                                      | run line       | next line            |
+  | F5                                                                 | run whole file | -                    |
 
   Ctrl and Shift throughout, which is Jupyter's own pair for the two cell actions - Shift-Enter to advance, Ctrl-Enter to stay - so the muscle memory that matters most for this audience carries over exactly. macOS additionally accepts Cmd, as Jupyter does there.
 
@@ -232,7 +233,7 @@ Its own group rather than a usability quick win, because it is the first place f
 
 Last, and deliberately so - it is a real defect but not a pressing one, and it wants the rest of this phase settled first.
 
-Expanding a variable while a cell is running shows "Loading..." until the cell finishes. The kernel serves shell requests serially and the variable explorer inspects with a silent execute_request, so the inspection waits in the _kernel's_ queue. Measured on a ten second loop: 13.32 s before Phase 3c and 13.43 s after, so it is not the sidecar's doing and 3c neither caused nor could fix it. Past EVALUATE_TIMEOUT it is worse than slow - the row reports "could not be read in time", which is untrue: the value was readable and the kernel was busy.
+Expanding a variable while a cell is running shows "Loading..." until the cell finishes. The kernel serves shell requests serially and the variable explorer inspects with a silent execute*request, so the inspection waits in the \_kernel's* queue. Measured on a ten second loop: 13.32 s before Phase 3c and 13.43 s after, so it is not the sidecar's doing and 3c neither caused nor could fix it. Past EVALUATE_TIMEOUT it is worse than slow - the row reports "could not be read in time", which is untrue: the value was readable and the kernel was busy.
 
 ipykernel 7 subshells (JEP 91) are the answer, and they work: a `create_subshell_request` on the control channel returns an id, a request carrying that id in its header is served by a separate thread with the same namespace, and a probe against the pinned ipykernel 7.3.0 answered in **0.01 s** while the main shell was six seconds from finishing. Route inspections there and leave Run, the chdir and the warm-up on the main shell - the chdir in particular must stay ordered with respect to Runs.
 

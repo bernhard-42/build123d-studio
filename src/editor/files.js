@@ -62,6 +62,7 @@ const LAST_POSITION_KEY = "lastPosition";
 const LAST_SCROLL_KEY = "lastScrollTop";
 const LAST_FOLDER_KEY = "lastFolder";
 const SAMPLE_SHOWN_KEY = "sampleShown";
+export const NEW_FILE_TEMPLATE_KEY = "newFileTemplate";
 
 /**
  * Where Open and Save should start.
@@ -189,11 +190,28 @@ export async function confirmDiscardChanges() {
  *
  * @returns {Promise<boolean>} false if the user cancelled
  */
+/**
+ * What a new buffer starts with.
+ *
+ * Empty unless the user has put something in Settings. Almost every build123d
+ * file opens with the same two imports, and typing them again is the sort of
+ * small tax that is paid several times a day - so it is worth a field, and
+ * worth being *their* two imports rather than ones chosen here.
+ *
+ * Deliberately not the sample: that is a one-off introduction for someone who
+ * has never seen the application, and it appears once. This is a preference and
+ * applies to every New File from now on.
+ */
+export function newFileTemplate() {
+  const template = getSetting(NEW_FILE_TEMPLATE_KEY, "");
+  return typeof template === "string" ? template : "";
+}
+
 export async function newFile() {
   if (!(await confirmDiscardChanges())) {
     return false;
   }
-  setValue("", null);
+  setValue(newFileTemplate(), null);
   await setSetting(LAST_FILE_KEY, null);
   await setSetting(LAST_POSITION_KEY, null);
   await setSetting(LAST_SCROLL_KEY, null);

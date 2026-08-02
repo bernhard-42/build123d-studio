@@ -94,12 +94,20 @@
                 <span class="icon icon-run-sel"></span>
               </button>
               <span class="toolbar-sep"></span>
-              <button class="btn" id="btn-interrupt" title="Interrupt">
-                <span class="icon icon-interrupt"></span>
-              </button>
+              <!-- Restart, Interrupt, then what the kernel is doing. The
+                   indicator belongs with these two - they are what you press
+                   about it - but in front of them it read as a label for the
+                   buttons rather than as the kernel's state, so it reads the
+                   group and does not interrupt it. -->
               <button class="btn" id="btn-restart" title="Restart kernel">
                 <span class="icon icon-restart"></span>
               </button>
+              <button class="btn" id="btn-interrupt" title="Interrupt">
+                <span class="icon icon-interrupt"></span>
+              </button>
+              <span class="kernel-status" id="kernel-status" title="Kernel state">
+                <span class="dot" id="kernel-dot"></span><span id="kernel-label">starting</span>
+              </span>
               <span class="toolbar-spacer"></span>
               <button class="btn" id="btn-settings" title="Packages">
                 <span class="icon icon-settings"></span>
@@ -110,9 +118,6 @@
               <button class="btn" id="btn-theme" title="Theme">
                 <span class="icon" id="icon-theme"></span>
               </button>
-              <span class="kernel-status" id="kernel-status" title="Kernel state">
-                <span class="dot" id="kernel-dot"></span><span id="kernel-label">starting</span>
-              </span>
             </div>
             <div class="editor-host" id="editor-host"></div>
           </div>

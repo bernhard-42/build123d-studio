@@ -15,6 +15,8 @@ import {
   setStatus,
   showSplash,
 } from "./bootstrap/splash.js";
+import { NEW_FILE_TEMPLATE_KEY, newFileTemplate } from "./editor/files.js";
+import { setSetting } from "./store.js";
 import * as ipc from "./ipc.js";
 import * as log from "./log.js";
 import { escapeHtml } from "./escape.js";
@@ -195,6 +197,16 @@ export async function showSettings() {
         </p>
         <button class="settings-btn" id="settings-upgrade">Upgrade packages</button>
 
+        <h2 class="info-heading">New file</h2>
+        <p class="info-note">
+          What a new file starts with. Left empty, New File opens an empty
+          buffer.
+        </p>
+        <textarea class="settings-template" id="settings-new-template" rows="6"
+                  spellcheck="false"
+                  placeholder="from build123d import *&#10;from build123d_studio import show"
+        >${escapeHtml(newFileTemplate())}</textarea>
+
         <div class="settings-actions">
           <button class="settings-btn" id="settings-cancel">Cancel</button>
           <button class="settings-btn settings-btn-primary" id="settings-apply">Apply</button>
@@ -213,7 +225,16 @@ export async function showSettings() {
   document.getElementById("settings-cancel").addEventListener("click", close);
   document.addEventListener("keydown", onKeyDown);
 
-  document.getElementById("settings-apply").addEventListener("click", () => {
+  document.getElementById("settings-apply").addEventListener("click", async () => {
+    // Saved whether or not the package sources changed, and before the branch
+    // below: the two settings share a dialog but nothing else, and rebuilding
+    // the environment must not be the price of editing a template - nor may
+    // closing without a rebuild silently drop it.
+    const template = document.getElementById("settings-new-template").value;
+    if (template !== newFileTemplate()) {
+      await setSetting(NEW_FILE_TEMPLATE_KEY, template);
+    }
+
     const chosen = {};
     for (const p of PACKAGES) {
       const picked = overlay.querySelector(`input[name="src-${p.name}"]:checked`);
