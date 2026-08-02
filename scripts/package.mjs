@@ -140,11 +140,13 @@ function buildIcns(destination) {
   rmSync(iconset, { recursive: true, force: true });
   mkdirSync(iconset, { recursive: true });
 
-  // macOS expects the artwork inset on Apple's icon grid - an 824x824 body
-  // centred on a 1024x1024 canvas - otherwise the icon sits visibly larger than
-  // every neighbour in the Dock and Finder. appIconMac.png is that inset render
-  // of logo.svg; appIcon.png stays full-bleed, which is what the window icon and
-  // the Linux .desktop icon want. Both are regenerated from logo.svg together.
+  // macOS expects the artwork inset on Apple's icon grid, otherwise the icon
+  // sits visibly larger than every neighbour in the Dock and Finder. That inset
+  // is drawn into logo.svg itself - a 1024 canvas with a 102 px margin - so
+  // appIconMac.png is a straight render of it and nothing here insets anything.
+  // Regenerate both with `yarn build-icons` after changing the logo; that script
+  // is what makes this comment true, having previously described a step nobody
+  // performed.
   const source = join(ROOT, "public", "icons", "appIconMac.png");
   for (const size of [16, 32, 64, 128, 256, 512]) {
     run("sips", ["-z", String(size), String(size), source, "--out", join(iconset, `icon_${size}x${size}.png`)],

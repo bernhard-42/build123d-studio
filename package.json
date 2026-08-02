@@ -7,6 +7,7 @@
   "private": true,
   "scripts": {
     "fetch-icons": "node scripts/fetch-icons.mjs",
+    "build-icons": "node scripts/build-icons.mjs",
     "ensure-neutralino": "node scripts/ensure-neutralino.mjs",
     "lint": "yarn lint:js && yarn lint:py",
     "lint:js": "eslint .",
