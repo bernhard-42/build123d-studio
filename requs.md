@@ -214,7 +214,7 @@ Done, in five commits. What changed, and what it cost to find out.
 
 - Add Python code completion
   - There is none today, and there never was: monaco-editor ships language services for TypeScript, JSON, CSS and HTML only, and the editor deliberately registers just the Python grammar - tokenisation and colouring - to avoid pulling in some nine megabytes of services it cannot use. What is left is Monaco's word-based suggestion, which offers words already present in the buffer, so "time.sl" was never going to complete
-  - The kernel is the better source than a language server. It already speaks Jupyter's complete_request, which is what gives IPython its Tab completion, and it completes against the live namespace: it knows time.sleep, and it also knows the methods of the "part" the user built two cells ago, which no static analysis of the file can. A Monaco registerCompletionItemProvider routed through the sidecar to complete_request reuses transport that already exists
+  - Two sources, merged in the sidecar, because neither is enough alone. The kernel speaks Jupyter's complete_request, which is what gives IPython its Tab completion, and it completes against the live namespace: it knows the methods of the "part" the user built two cells ago, and a variable made in the console, neither of which any reading of the file can. What it cannot do is know anything before the code has been *run* - and an editor is where people write a whole file first. A language server reads the buffer and infers without executing, which is exactly the other half. This bullet said "the kernel is the better source than a language server" until it was tried; see the write-up below for what changed it
 - Debugging Python in Monaco should work
   - having the usual step buttons
   - Using the variable explorer (if possible)
@@ -242,11 +242,31 @@ Done, in five commits. What changed, and what it cost to find out.
 
     # %%
 
-    b = Box(1,2,3)
+    b = Box(1, 2, 3)
 
     show(b)
     # %%
   ```
+
+Landed so far: the uv pin, the New File template, and the whole of the language support - completion, signatures, diagnostics and hover. Debugging and the variable explorer are what remain.
+
+**There was no completion of any kind before this, and not for the reason above.** `registerCompletionItemProvider` is part of `editor.api.js`; the widget that displays what a provider returns is a separate contribution and was never imported, so a provider would have been registered and never asked - not even the word-based suggestions the editor worker has always computed could appear. Three more contributions have been imported since for the same reason, one per feature: the suggestion widget, the parameter hints popup and the hover tooltip. Assume it again for anything added later - go-to-definition and rename each need their own. Together they cost 104 kB gzipped and Monaco's 141 kB codicon font.
+
+**The kernel alone was not enough, and that reversed the decision this group was planned on.** On a cold kernel a freshly typed file beginning `from build123d import *` offered nothing for `b = Bo`, because nothing had bound `Box` anywhere. In a notebook that is the accepted bargain; in an editor it is most of the time. jedi was tried first, since IPython already depends on it and it needed nothing new to ship, and it fails on build123d's central idiom: for `with BuildPart() as bd:` it infers `bd` as `Builder` rather than `BuildPart`, so `bd.part` - the property the whole builder pattern exists to produce - is not offered at all. build123d annotates `__enter__ -> Self` correctly; jedi binds `Self` to the class that *defines* the method rather than the one it was reached through. basedpyright resolves it. That is the argument in one line: build123d is a large API leaning on overloads, `Self` and typed builder context managers, and the difference between a parser that mostly works and a type checker that follows the annotations shows up on it immediately.
+
+**basedpyright ships as a pinned dependency rather than a downloaded runtime**, which is the only reason a Node program is admissible here at all. It is Pyright with Node bundled as a Python wheel, so it locks in `uv.lock` like everything else and has wheels for all seven platform targets - macOS arm64 and x86_64, Linux glibc and musl on both arches, Windows amd64 and arm64. 271 MB, in the per-user environment that already holds the interpreters and uv's cache, not in the 4 MB bundle. The PyPI `pyright` package was rejected for the opposite property: it fetches Node on first use, which is exactly the floating, machine-dependent version that `pins.json` exists to prevent.
+
+**The kernel half stays and is worth its keep.** It is the only source that knows a variable built in the console or an object whose type nothing annotates. It is skipped outright while the kernel is busy rather than asked with a short timeout: the kernel serves shell requests serially, so during a cell the live answer is not late, it is unavailable, and waiting to discover that would delay the static half, which is sitting ready and needs no kernel at all. That also means completion keeps working while a long tessellation runs - which the kernel path cannot do, and which group 7's subshells would fix for it.
+
+**IPython's own completer was returning nothing for the objects this application is about.** It is jedi-backed by default, and with a `Box` in the namespace `part.` gives 0 matches through jedi and 126 through `dir()`, including the `center` and `volume` someone would actually reach for. Builders complete either way; shapes did not. The warm-up now sets `Completer.use_jedi = False`, and the console shares the setting.
+
+**Diagnostics were mostly a question of what not to report.** On an ordinary build123d file - a builder block, two shapes and two deliberate mistakes - the defaults produce nine problems, seven of them wrong about idioms this application ships in its own New File template. Two real ones among seven false is how somebody learns to ignore a gutter. `extraPaths` removes five on its own and is not a preference: `build123d_studio` is the kernel-side package the application puts on `PYTHONPATH` when it launches the kernel, so nothing outside that process can resolve it, and the template's second line was an unresolved import. The three overrides are each correct build123d: the wildcard import, a `Box` called inside a builder for its effect, and a bare expression on its own line. What is left is exactly the two mistakes.
+
+**Configuring it failed silently, which is the part worth remembering.** Four different settings produced four identical sets of diagnostics, because the reply to `workspace/configuration` was one flat object and the server asks for one section at a time - `python`, then `basedpyright.analysis`, then `basedpyright`. An answer of the wrong shape is accepted without complaint and changes nothing.
+
+**One thing is not reported and is not a fault.** `bd.<typo>` is not flagged, because `Builder` defines `__getattr__` and a class with one may legitimately answer to any attribute; `Box` has none, so `c.part` is flagged. The irony is that `Builder.__getattr__` exists only to raise a friendlier `AttributeError`, and that message is what suppresses the static one. Guarding it with `if not TYPE_CHECKING:` upstream restores the check and keeps the runtime message - one line, in build123d, and measured rather than assumed. No workaround was added here: the only ones available would guess at which classes to distrust, and a checker that invents errors is worse than one that misses some.
+
+**And the kernel indicator stopped flickering.** Every shell request publishes busy and idle, not only the ones that execute something, and the console asks several as a matter of course - an `is_complete_request` per line at its prompt, a `complete_request` per Tab, `history_request` at startup. One session's log had 41 pairs against 3 Runs, every one of them one to four milliseconds. The indicator answers "is the kernel running my code", so status now forwards only for an `execute_request` - the gate the variable explorer's refresh has always used - and the log line names the request it was answering, because "Kernel busy" alone could not be accounted for afterwards.
 
 ### 4. Instance Model (decided: multi-instance)
 
