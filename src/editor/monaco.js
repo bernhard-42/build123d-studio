@@ -16,12 +16,27 @@ import "monaco-editor/languages/definitions/python/register.js";
 // the selection the user had made, and offers a Reload that discards the buffer.
 import "monaco-editor/editor/contrib/contextmenu/browser/contextmenu.js";
 import "monaco-editor/editor/contrib/clipboard/browser/clipboard.js";
+// The suggestion widget, and the Ctrl-Space that opens it.
+//
+// registerCompletionItemProvider is part of editor.api.js and registering one
+// without this succeeds silently - the provider is simply never asked, because
+// nothing is asking. That is worth stating plainly: before this import the
+// editor had no completion of any kind, not even the word-based suggestions the
+// worker has always computed, because the only thing that displays them was
+// never bundled. Same trap as the context menu, which is why that one is here.
+import "monaco-editor/editor/contrib/suggest/browser/suggestController.js";
+// The parameter hints popup, which is a separate contribution again -
+// registerSignatureHelpProvider is in the API and the widget that shows what it
+// returns is not.
+import "monaco-editor/editor/contrib/parameterHints/browser/parameterHints.js";
 // Not the "monaco-editor/esm/vs/editor/editor.worker" path that most guides
 // still show: as of 0.56 the exports map is {"./*": "./esm/vs/*.js"}, so the
 // esm/vs prefix is added for us and spelling it out resolves to esm/vs/esm/vs.
 import EditorWorker from "monaco-editor/editor/editor.worker.js?worker";
 
 import { cellAt, findCells, nextCell } from "./cells.js";
+import { completionItems, completionQuery, isIncomplete } from "./completion.js";
+import { signatureHelp } from "./signature.js";
 import * as buffers from "./buffers.js";
 import { COMMANDS } from "../keys.js";
 import { bindingsFor } from "../keybindings.js";
@@ -514,7 +529,82 @@ export function initEditor() {
   });
 
   registerRunActions(editor);
+  registerLanguageFeatures();
   return editor;
+}
+
+// How long the frontend waits for an answer. Longer than anything the sidecar
+// will take, so this is a backstop against a reply that never comes at all
+// rather than a second opinion about how long is too long - that judgement is
+// made once, where the work happens.
+const LANGUAGE_TIMEOUT = 6000;
+
+/**
+ * Route Monaco's completion and signature requests to the sidecar.
+ *
+ * Registered against the language rather than the editor, so both cover every
+ * buffer - each model is created as Python - and need no re-registration when
+ * tabs change.
+ *
+ * The whole buffer is sent, and its path when it has one. jedi needs the
+ * imports and the assignments above the cursor to infer anything; the sidecar
+ * takes the single line out of it for the kernel. Sending the file is what this
+ * costs, and it is a local socket - a 400-line file measured the same as a
+ * six-line one end to end.
+ *
+ * The cancellation token is honoured on the way back rather than on the way
+ * out. The request has gone by then and the sidecar answers it either way; what
+ * this avoids is handing Monaco a list for a cursor position it has already
+ * left behind.
+ */
+function registerLanguageFeatures() {
+  monaco.languages.registerCompletionItemProvider("python", {
+    // Monaco asks on word characters by itself; the dot is the case that has to
+    // be declared, because "part." is not a word and without it the most useful
+    // completion in this application needs Ctrl-Space every time.
+    triggerCharacters: ["."],
+    provideCompletionItems: async (model, position, _context, token) => {
+      const reply = await ipc.request(
+        "editor.complete",
+        completionQuery(model.getValue(), position, bufferPath(buffers.activeKeyOf())),
+        { timeout: LANGUAGE_TIMEOUT },
+      );
+      if (token.isCancellationRequested) {
+        return { suggestions: [] };
+      }
+      // The word under the cursor is carried along as the fallback span, for an
+      // entry that arrives without one. Monaco is the only thing that can say
+      // where it begins, and it can only be asked here.
+      const word = model.getWordUntilPosition(position);
+      const where = { ...position, wordStartColumn: word.startColumn };
+      return {
+        suggestions: completionItems(reply, where, monaco.languages.CompletionItemKind),
+        incomplete: isIncomplete(reply),
+      };
+    },
+  });
+
+  monaco.languages.registerSignatureHelpProvider("python", {
+    // "(" opens the popup and "," moves it on to the next parameter. Both are
+    // retriggers rather than one, because Monaco asks again on the comma only
+    // if it is listed.
+    signatureHelpTriggerCharacters: ["(", ","],
+    signatureHelpRetriggerCharacters: [")"],
+    provideSignatureHelp: async (model, position, token) => {
+      const reply = await ipc.request(
+        "editor.signature",
+        completionQuery(model.getValue(), position, bufferPath(buffers.activeKeyOf())),
+        { timeout: LANGUAGE_TIMEOUT },
+      );
+      const help = token.isCancellationRequested ? null : signatureHelp(reply);
+      if (help === null) {
+        return null;
+      }
+      // Monaco disposes the help when the popup closes, and a provider that
+      // returns none is a leak in its bookkeeping rather than in ours.
+      return { value: help, dispose: () => {} };
+    },
+  });
 }
 
 /**

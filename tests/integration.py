@@ -264,6 +264,18 @@ def main():
     check("the warm-up completes", warm_done is not None,
           warm_done if warm_done is not None else "no completion line")
 
+    # --- the indicator says nothing before anything has run ---
+    #
+    # Startup is where this shows: the console asks the kernel for kernel_info
+    # and then for history, and every shell request publishes busy and idle
+    # whether or not it executes anything. Both used to reach the toolbar, so
+    # the indicator flickered twice before the user had done a thing - one to
+    # four milliseconds each, which reads as a glitch rather than as state.
+    flickers = [f for _, f in side.frames if f["type"] == "kernel.status"]
+    check("nothing reports the kernel busy before the first Run",
+          len(flickers) == 0, f"{len(flickers)} status frames: "
+          f"{[f['state'] for f in flickers][:6]}")
+
     # --- a Run reaches the kernel ---
 
     before = len(side.frames)
@@ -286,6 +298,92 @@ def main():
     names = [] if variables is None else [row.get("name") for row in variables["variables"]]
     check("the variable explorer answers", "integration_marker" in names,
           f"{len(names)} variables" if variables is not None else "no vars.data")
+
+    # --- code completion ---
+    #
+    # Two sources, and the two halves are checked separately because each covers
+    # what the other cannot.
+
+    # The live half: "integration_marker" exists because the cell above ran it,
+    # and no reading of a file could know that.
+    before = len(side.frames)
+    side.send("editor.complete", id="complete-1",
+              source="integration_mar", line=1, column=15, path=None)
+    _, reply = side.wait_frame("editor.complete", ACTION_TIMEOUT, since=before)
+    matches = [] if reply is None else reply.get("matches", [])
+    check("completion answers from the live namespace",
+          "integration_marker" in matches,
+          f"{len(matches)} matches" if reply is not None else "no reply")
+    check("the completion reply carries its request id",
+          reply is not None and reply.get("id") == "complete-1",
+          "no reply" if reply is None else str(reply.get("id")))
+    # The span the match replaces, which is what decides whether accepting it
+    # writes "integration_marker" or "integration_marintegration_marker".
+    entry = None if reply is None else next(
+        (e for e in reply.get("types") or [] if e.get("text") == "integration_marker"), None)
+    check("the completion says which text it replaces",
+          entry is not None and entry.get("start") == 0 and entry.get("end") == 15,
+          "no entry" if entry is None else f"{entry.get('start')}..{entry.get('end')}")
+
+    # The property the internal-request record exists for, asked of a real
+    # kernel: a complete_request publishes busy and idle on iopub exactly as a
+    # Run does, so without the record the toolbar would flicker on every
+    # keystroke that opened the suggestion list.
+    statuses = [f for _, f in side.frames[before:] if f["type"] == "kernel.status"]
+    check("a completion does not report the kernel busy",
+          len(statuses) == 0, f"{len(statuses)} status frames")
+
+    # The static half, and the case that made it necessary: nothing has bound
+    # Box in this kernel - the warm-up imports build123d into sys.modules
+    # without binding names - so every match here is read from the buffer.
+    unrun = "from build123d import *\nb = Bo"
+    before = len(side.frames)
+    side.send("editor.complete", id="complete-2", source=unrun, line=2, column=6, path=None)
+    _, reply = side.wait_frame("editor.complete", ACTION_TIMEOUT, since=before)
+    matches = [] if reply is None else reply.get("matches", [])
+    check("completion reads a file that has never been run",
+          "Box" in matches, f"{len(matches)} matches: {matches[:4]}")
+
+    # The builder pattern, which is why the static half is a language server and
+    # not jedi: `part` is reached through `Self` on Builder.__enter__.
+    builder = "from build123d import *\nwith BuildPart() as bd:\n    Box(1, 2, 34)\nbd.pa"
+    before = len(side.frames)
+    side.send("editor.complete", id="complete-3", source=builder, line=4, column=5, path=None)
+    _, reply = side.wait_frame("editor.complete", ACTION_TIMEOUT, since=before)
+    matches = [] if reply is None else reply.get("matches", [])
+    check("the builder's part is offered on an unrun file",
+          "part" in matches, f"{len(matches)} matches: {matches[:4]}")
+
+    # And what accepting it writes, which is the number that silently corrupts a
+    # buffer when it is wrong: the span must cover "pa" and not "d.pa".
+    entry = None if reply is None else next(
+        (e for e in reply.get("types") or [] if e.get("text") == "part"), None)
+    line_text = builder.split("\n")[3]
+    check("accepting it writes bd.part",
+          entry is not None
+          and line_text[:entry["start"]] + "part" + line_text[entry["end"]:] == "bd.part",
+          "not offered" if entry is None
+          else line_text[:entry["start"]] + "part" + line_text[entry["end"]:])
+
+    # --- signatures ---
+
+    before = len(side.frames)
+    side.send("editor.signature", id="sig-1",
+              source="from build123d import *\nc = Box(10, 10, ", line=2, column=16, path=None)
+    _, reply = side.wait_frame("editor.signature", ACTION_TIMEOUT, since=before)
+    signature = None if reply is None else reply.get("signature")
+    # The label is the parameter list, without the callable's name - which is
+    # what the server sends, and it reads correctly because the popup opens
+    # against the bracket that was just typed, with the name immediately left of
+    # it.
+    check("the signature of the call being typed is answered",
+          signature is not None
+          and signature["signatures"][0]["parameters"][:3]
+          == ["length: float", "width: float", "height: float"],
+          "no signature" if signature is None else str(signature["signatures"][0]["parameters"][:3]))
+    check("the argument being typed is reported",
+          signature is not None and signature.get("activeParameter") == 2,
+          "no signature" if signature is None else str(signature.get("activeParameter")))
 
     # --- show() delivers a model ---
 

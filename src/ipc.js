@@ -221,6 +221,75 @@ export function awaitOutcome(success, failures, options = {}) {
   return expectOutcome(success, failures, options).promise;
 }
 
+// Outstanding request/reply exchanges, keyed by the id sent with the request.
+// One router per frame type is subscribed lazily and never removed - see
+// request() for why a listener per request would be the wrong shape.
+const awaiting = new Map();
+const routed = new Set();
+let nextRequestId = 1;
+
+/**
+ * Send a request and wait for the reply that carries its id back.
+ *
+ * The protocol is otherwise a stream of announcements, and once() is enough for
+ * anything that can only be outstanding once - the About dialog asks for
+ * app.info and there is exactly one answer to want. Completion is the first
+ * exchange where several can be in flight, because Monaco asks again on every
+ * keystroke, and "the next frame of this type" is then the wrong answer to the
+ * wrong question.
+ *
+ * The router is registered per *type* rather than per request, so a reply that
+ * arrives after its caller gave up is dropped where it can be recognised. A
+ * listener per request would either be removed on timeout - and the late reply
+ * would then reach no handler at all and be logged as an unhandled frame, once
+ * per abandoned keystroke - or left behind for the life of the session.
+ *
+ * Resolves null rather than rejecting when the sidecar is gone or the timeout
+ * expires: every caller so far wants "no answer" as a value, and a rejected
+ * promise inside a Monaco provider is an error dialog nobody can act on.
+ *
+ * @returns {Promise<object|null>} the reply frame, or null
+ */
+export function request(type, payload = {}, { timeout = 5000 } = {}) {
+  if (!routed.has(type)) {
+    routed.add(type);
+    on(type, (frame) => {
+      const settle = awaiting.get(frame.id);
+      if (settle === undefined) {
+        // Abandoned by its caller, or an announcement of the same type that
+        // carries no id. Neither is a problem; both would be noise.
+        return;
+      }
+      awaiting.delete(frame.id);
+      settle(frame);
+    });
+  }
+
+  const id = `${type}#${nextRequestId}`;
+  nextRequestId += 1;
+
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      awaiting.delete(id);
+      resolve(null);
+    }, timeout);
+
+    awaiting.set(id, (frame) => {
+      clearTimeout(timer);
+      resolve(frame);
+    });
+
+    try {
+      send(type, { ...payload, id });
+    } catch (error) {
+      clearTimeout(timer);
+      awaiting.delete(id);
+      log.warn(`Could not send ${type}:`, error);
+      resolve(null);
+    }
+  });
+}
+
 export function send(type, payload = {}) {
   if (socket === null || socket.readyState !== WebSocket.OPEN) {
     throw new Error("Sidecar is not connected");

@@ -35,6 +35,14 @@ dependencies = [
     "orjson==3.11.9",
     "websockets==16.1.1",
     "pywinpty==3.0.5; sys_platform == 'win32'",
+    # The editor's static analysis: completion, signatures, and what the file
+    # means before any of it has been run. Frozen with the rest because it is
+    # the application's own tool rather than the user's, and because it brings
+    # Node with it - basedpyright is Pyright with a JavaScript runtime shipped
+    # as a wheel, which is what lets it pin like everything else here instead of
+    # downloading a runtime on first use. 271 MB installed, all of it in this
+    # per-user environment and none of it in the application bundle.
+    "basedpyright==1.39.9",
 
     # --- floating: upgradable, and switchable to a GitHub branch ---
     "build123d==0.11.1",

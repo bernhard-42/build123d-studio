@@ -23,6 +23,7 @@ import threading
 # already on sys.path for these imports.
 import appinfo
 from channel import KIND_CONSOLE, KIND_MODEL, Channel, log
+from completer import Completer
 from kernel import Kernel
 from measure_service import MeasurementService
 from modelsock import ModelSocket
@@ -48,6 +49,19 @@ CONTROL = "control"
 # console keystrokes, the variable explorer and Restart Kernel all went with it,
 # and none of them had anything to do with the kernel being stuck.
 EXECUTE = "execute"
+
+# Completion gets a lane of its own, and the reason is the same one that split
+# CONTROL off: a suggestion list is worth nothing late. On the inspect lane it
+# would queue behind an expansion that can legitimately take fifteen seconds,
+# and on the execute lane behind a Run.
+COMPLETE = "complete"
+
+# The most suggestions one reply carries. `import ` alone offers 394 on this
+# machine, and every one of them crosses the socket on a keystroke. Two hundred
+# is far more than a person reads before typing another character, and the
+# frontend marks a truncated list incomplete so Monaco asks again as the word
+# grows - which is how a suggestion list is meant to narrow anyway.
+MAX_MATCHES = 200
 
 # The refresh that follows an idle is answered by a kernel that has just gone
 # idle, so its reply is immediate or it is not coming. Fifteen seconds is right
@@ -108,6 +122,23 @@ class Sidecar:
         # that lane, then waits behind all of them.
         self._pending_details = set()
         self._details_lock = threading.Lock()
+        # Whether a completion is already on its way to the kernel. One at a
+        # time, and a request that arrives meanwhile is answered empty rather
+        # than queued - see on_complete.
+        self._completing = threading.Event()
+
+        # Static completion, read from the buffer. The other half of the answer
+        # and the half that works on a kernel that has never run anything.
+        self.completer = Completer(env_root)
+
+        # Whether the kernel is part-way through something. Completion asks the
+        # kernel only when it is not: it serves shell requests serially, so a
+        # request sent during a cell waits for the cell, and a suggestion list
+        # that arrives thirty seconds late is worse than one built from the file
+        # alone. Known exactly rather than guessed at - the same busy and idle
+        # this class already forwards to the toolbar.
+        self._kernel_busy = threading.Event()
+
         # The fallback timer that warms the kernel if the console never speaks.
         # Held so it can be cancelled: see console_start.
         self._warm_timer = None
@@ -153,6 +184,21 @@ class Sidecar:
         # inspection that is stuck.
         self.channel.on("kernel.restart", self.on_restart, lane=CONTROL)
 
+        # Inline, like vars.detail and for the same reason: the claim has to
+        # happen where the frame arrives, not where the work runs. See
+        # on_complete for what is being claimed. The lane it submits to has no
+        # handler registered against it, so it is opened here - every lane is
+        # opened from __init__, before anything else in this process has started
+        # a thread, and _lane refuses to create one later.
+        self.channel.on("editor.complete", self.on_complete)
+        self.channel.open_lane(COMPLETE)
+
+        # Signatures share the lane rather than taking one of their own: both
+        # are jedi reading the same buffer, one is asked while the other is not,
+        # and two lanes would only let them analyse the same source twice at
+        # once.
+        self.channel.on("editor.signature", self.on_signature, lane=COMPLETE)
+
         # Keystrokes arrive as raw bytes - no base64, no JSON escaping, on what
         # is the hottest path in the UI.
         self.channel.on_binary(KIND_CONSOLE, self.on_console_input)
@@ -196,6 +242,13 @@ class Sidecar:
 
         info = self.kernel_start()
         self.console_start()
+
+        # jedi's first call builds its view of the environment and costs half a
+        # second. On the lane, so it is paid while the splash is still up rather
+        # than by whoever types the first character - the same argument the
+        # kernel warm-up makes, and unlike that one it blocks nothing, because
+        # this lane exists only for completion.
+        self.channel.submit(COMPLETE, self.completer.warm)
 
         self.channel.send(
             "ready",
@@ -364,23 +417,47 @@ class Sidecar:
 
         if msg_type == "status":
             state = content.get("execution_state")
-            # Logged, because the frontend's timestamps then say exactly when
-            # the kernel *started* the user's code as opposed to when the Run
-            # was sent. The gap between the two is queueing behind something
-            # else, and without these two lines a Run waiting its turn and a
-            # Run running slowly look identical from the outside.
-            log(f"Kernel {state}")
-            self.channel.send("kernel.status", state=state)
-            # Only code can have changed the namespace.
+            # Only code running counts as the kernel being busy.
             #
-            # This used to refresh after *any* request went idle, which is most
-            # visible at startup: the console's kernel_info_request and
-            # history_request each bought an inspection, and the first landed
-            # behind the warm-up import on the kernel's serial shell channel and
-            # died at its five-second budget - "Inspection timed out after 5s,
-            # having discarded 1 unrelated shell replies" on every cold start,
-            # for a namespace that was empty and had not changed. A console
-            # tab-completion's complete_request bought one too.
+            # Every shell request publishes busy and idle, not only the ones
+            # that execute something, and the others are answered in about a
+            # millisecond. The console asks several as a matter of course - an
+            # is_complete_request per line typed at its prompt, a
+            # complete_request per Tab, history_request at startup - and each
+            # one used to put a busy and an idle through the toolbar a
+            # millisecond apart. Measured in one session's log: 41 pairs against
+            # 3 Runs, every one of them 1 to 4 ms, which is the flicker somebody
+            # sees out of the corner of their eye and cannot account for.
+            #
+            # The indicator answers "is the kernel running my code", so a
+            # question the kernel was asked is not what it is about. The
+            # variable explorer's refresh below has always been gated this way,
+            # for the neighbouring reason - and the two agreeing is worth
+            # something in itself.
+            #
+            # Our own silent execute_requests do not reach here: is_internal has
+            # already turned them away, which is what that record is for.
+            if parent_type != "execute_request":
+                return
+
+            # Read by completion, which asks the kernel only when it is idle.
+            # Set from the same messages the toolbar is driven by, so what
+            # completion believes and what the user is looking at cannot differ.
+            if state == "busy":
+                self._kernel_busy.set()
+            elif state == "idle":
+                self._kernel_busy.clear()
+            # Logged with what the kernel was answering, because "Kernel busy"
+            # on its own cannot be accounted for afterwards - which is exactly
+            # how the flicker above went unexplained until somebody counted the
+            # pairs by hand.
+            log(f"Kernel {state} ({parent_type})")
+            self.channel.send("kernel.status", state=state)
+            # Only code can have changed the namespace, which is the same gate
+            # as the one above and now enforced by it: nothing else reaches
+            # here. Kept as a condition rather than assumed, because it says
+            # what the refresh depends on rather than leaving a reader to notice
+            # that something twenty lines earlier happens to guarantee it.
             if state == "idle" and parent_type == "execute_request":
                 # Namespace may have changed - whoever executed it, editor or
                 # console. Pushed rather than polled, so an idle session costs
@@ -546,11 +623,152 @@ class Sidecar:
         # importing OCP, and for all of it the application claimed to be doing
         # nothing. The request has been accepted by the time we get here, so
         # busy is simply true; the kernel's own idle ends it exactly as before.
+        #
+        # Recorded as well as announced, for the same reason and at the same
+        # moment: between this frame and the kernel's own busy, a completion
+        # would otherwise still ask a kernel that has a Run waiting in line.
+        self._kernel_busy.set()
         self.channel.send("kernel.status", state="busy")
         log(f"Execute: {len(code)} chars, msg_id {msg_id}")
 
     def on_interrupt(self, _message):
         self.kernel.interrupt()
+
+    # --- code completion ---
+
+    def on_complete(self, message):
+        """Claim the one completion slot here, do the reading on the lane.
+
+        Runs on the receive thread and does nothing that can block: a flag, and
+        either a submission or an empty answer.
+
+        One outstanding completion at a time, and refusing rather than queueing
+        is the point. Monaco asks again on every keystroke, so anything that
+        makes one completion slow - a kernel part-way through a cell, a large
+        file being analysed - would otherwise collect one queued request per
+        character typed, to answer all of them in a burst describing a cursor
+        position that moved on long ago. Refused, exactly one is in flight and
+        the rest are answered at once with nothing, which is what the editor
+        does with a late suggestion list anyway.
+
+        Every request is answered, including the refused ones. The frontend is
+        holding a promise per request and a silent drop would leak it.
+        """
+        request_id = message.get("id")
+        if self._completing.is_set():
+            self.channel.send("editor.complete", id=request_id, matches=[], dropped=True)
+            return
+        self._completing.set()
+        self.channel.submit(COMPLETE, lambda: self._send_completion(message, request_id))
+
+    def _send_completion(self, message, request_id):
+        try:
+            self._read_completion(message, request_id)
+        finally:
+            self._completing.clear()
+
+    def _read_completion(self, message, request_id):
+        """Both sources, merged, with the live one first.
+
+        jedi before the kernel, deliberately. It is the half that always answers
+        - it reads the buffer and needs nothing to have run - so asking it first
+        means a kernel that never replies costs the kernel's share of the list
+        and not the whole of it.
+        """
+        source = message.get("source", "")
+        line = int(message.get("line", 1))
+        column = int(message.get("column", 0))
+        path = message.get("path")
+
+        static = self.completer.complete(source, line, column, path)
+        live = self._live_completions(source, line, column)
+
+        # The kernel's first, because it is the one that knows. A name it
+        # offers exists; a name jedi offers is one the file implies. Where both
+        # have it, the kernel's entry wins - it carries the signature IPython
+        # worked out - and jedi's duplicate is dropped.
+        seen = set()
+        entries = []
+        for entry in list(live) + list(static):
+            key = entry["text"].lstrip(".")
+            if key in seen:
+                continue
+            seen.add(key)
+            entries.append(entry)
+
+        truncated = len(entries) > MAX_MATCHES
+        entries = entries[:MAX_MATCHES]
+        self.channel.send(
+            "editor.complete",
+            id=request_id,
+            matches=[entry["text"] for entry in entries],
+            types=entries,
+            truncated=truncated,
+        )
+
+    def _live_completions(self, source, line, column):
+        """What the kernel knows, or nothing when it is in no position to say.
+
+        Skipped outright while the kernel is busy rather than asked with a short
+        timeout. The kernel serves shell requests serially, so during a cell the
+        answer is not late, it is unavailable - and waiting to discover that
+        would delay the static half, which is sitting ready.
+
+        The kernel is asked about the line rather than the file: it completes
+        against a namespace, not a syntax tree, and IPython completes a line at
+        its own prompt. It also bounds what a keystroke costs on a path where
+        the file does not.
+        """
+        if self.kernel is None or self._kernel_busy.is_set():
+            return []
+
+        lines = source.split("\n")
+        text = lines[line - 1] if 0 < line <= len(lines) else ""
+        content = self.kernel.complete(text, min(column, len(text)))
+        if content is None:
+            return []
+
+        matches = content.get("matches", [])
+        # The span the matches replace. Required by the messaging spec and
+        # always there in practice; defaulted to the cursor rather than left
+        # None so that every entry leaving here carries integers, and the
+        # frontend has no case where it does not know where to put a match.
+        start = content.get("cursor_start")
+        end = content.get("cursor_end")
+        start = start if isinstance(start, int) else column
+        end = end if isinstance(end, int) else column
+        # ipykernel's experimental type list, paired by index and by text where
+        # it is there at all. Nothing depends on it: without it every live match
+        # still arrives, with the span the reply carries and no icon of its own.
+        types = content.get("metadata", {}).get("_jupyter_types_experimental")
+        entries = []
+        for index, match in enumerate(matches):
+            described = types[index] if isinstance(types, list) and index < len(types) else None
+            if described is None or described.get("text") != match:
+                described = {}
+            entries.append({
+                "text": match,
+                "type": described.get("type", "instance"),
+                "signature": described.get("signature", ""),
+                "start": described.get("start", start),
+                "end": described.get("end", end),
+            })
+        return entries
+
+    def on_signature(self, message):
+        """The call the cursor is inside, for the parameter hints popup.
+
+        jedi only. The kernel's inspect_request answers with formatted text,
+        and the popup highlights the parameter being typed - which needs the
+        parameters as a list and an index, not a paragraph.
+        """
+        signature = self.completer.signatures(
+            message.get("source", ""),
+            int(message.get("line", 1)),
+            int(message.get("column", 0)),
+            message.get("path"),
+        )
+        self.channel.send("editor.signature", id=message.get("id"), signature=signature)
 
     def on_cwd(self, message):
         """Follow the editor: run the kernel in the open file's directory."""
@@ -570,6 +788,10 @@ class Sidecar:
         nothing else about it is visible.
         """
         self.channel.send("kernel.restarting")
+        # Whatever the old kernel was in the middle of went with it. Left set,
+        # completion would ask the replacement nothing for the rest of the
+        # session, and the live half would quietly stop contributing.
+        self._kernel_busy.clear()
         try:
             if self.console is not None:
                 self.console.stop()
@@ -604,6 +826,8 @@ class Sidecar:
     def stop(self):
         if self._warm_timer is not None:
             self._warm_timer.cancel()
+        if self.completer is not None:
+            self.completer.stop()
         if self.console is not None:
             self.console.stop()
         if self.kernel is not None:

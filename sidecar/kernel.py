@@ -60,6 +60,21 @@ SEND_TIMEOUT = 30
 # pass something shorter - see IDLE_REFRESH_TIMEOUT.
 EVALUATE_TIMEOUT = 15
 
+# How long a completion waits. Short on purpose: a suggestion list is only
+# useful while the user is still typing the word it belongs to, and one that
+# arrives five seconds later describes a cursor position that has moved on. An
+# idle kernel answers a complete_request in single-digit milliseconds - measured
+# against ipykernel 7.3.0 - so anything approaching this means the kernel is
+# busy with something else, and the honest answer then is no suggestions rather
+# than late ones.
+COMPLETE_TIMEOUT = 5
+
+# The two kinds of shell request this application sends. A kind rather than two
+# outboxes: the ordering guarantee is per socket, not per message type, and one
+# owning thread is the whole design - see ShellChannel.
+KIND_EXECUTE = "execute"
+KIND_COMPLETE = "complete"
+
 
 class KernelUnavailable(RuntimeError):
     """Raised when there is no kernel to send to, and waiting will not help."""
@@ -78,11 +93,18 @@ class Request:
     fifteen seconds is the kernel's time to answer, not time spent queued behind
     another request, and measuring it from the send is what makes the number
     mean what its name says.
+
+    ``kind`` says which message type this is. Everything here used to be an
+    execute_request, and code completion is the first thing that is not: it is a
+    complete_request, on the same socket, answered on the same channel and
+    routed by the same msg_id. The kind is carried rather than inferred because
+    the only place that may act on it is the owning thread.
     """
 
-    __slots__ = ("code", "kwargs", "internal", "msg_id", "sent", "reply")
+    __slots__ = ("kind", "code", "kwargs", "internal", "msg_id", "sent", "reply")
 
-    def __init__(self, code, kwargs, internal, want_reply):
+    def __init__(self, code, kwargs, internal, want_reply, kind=KIND_EXECUTE):
+        self.kind = kind
         self.code = code
         self.kwargs = kwargs
         self.internal = internal
@@ -336,8 +358,8 @@ class Kernel:
         self._warm_msg_id = None
         self._warm_started = None
 
-    def _execute_and_record(self, client, request):
-        """Put one execute_request on the shell socket, and claim it if it is ours.
+    def _send_and_record(self, client, request):
+        """Put one request on the shell socket, and claim it if it is ours.
 
         Called only by the shell thread, which is the only thread that touches
         the socket at all - see ShellChannel. The client comes in as an argument
@@ -353,14 +375,24 @@ class Kernel:
         another, and the toolbar flickers a busy and an idle a millisecond
         apart. Reproduced in tests/sidecar/test_kernel_restart.py, which
         measured 100 misreadings in 100 attempts without this.
+
+        Completions are internal for exactly that reason, and it is not a
+        formality: the kernel publishes busy and idle for a complete_request the
+        same as for anything else, so without the record every keystroke that
+        opened the suggestion list would flash the toolbar. main.py has the
+        matching note - the refresh it used to trigger is already gone, because
+        that now waits for an idle whose parent was an execute_request.
         """
         with self._internal_lock:
-            msg_id = client.execute(request.code, **request.kwargs)
+            if request.kind == KIND_COMPLETE:
+                msg_id = client.complete(request.code, **request.kwargs)
+            else:
+                msg_id = client.execute(request.code, **request.kwargs)
             if request.internal:
                 self._internal_requests.append(msg_id)
         return msg_id
 
-    def _submit(self, code, internal=False, want_reply=False, **kwargs):
+    def _submit(self, code, internal=False, want_reply=False, kind=KIND_EXECUTE, **kwargs):
         """Hand one execute_request to the current shell thread, or say there is none.
 
         Refused rather than held, and that is a deliberate simplification. An
@@ -388,7 +420,7 @@ class Kernel:
         generation = self._generation
         if generation is None:
             raise KernelUnavailable("there is no kernel")
-        return generation.shell.submit(Request(code, kwargs, internal, want_reply))
+        return generation.shell.submit(Request(code, kwargs, internal, want_reply, kind=kind))
 
     def _send_execute(self, code, internal=False, **kwargs):
         """Send, and wait only for it to have gone. Returns the msg_id.
@@ -475,7 +507,7 @@ class Kernel:
         self.client.wait_for_ready(timeout=60)
 
         self._death_reported = False
-        shell = ShellChannel(self.client, self._execute_and_record)
+        shell = ShellChannel(self.client, self._send_and_record)
         generation = Generation(
             manager=self.manager,
             client=self.client,
@@ -521,6 +553,21 @@ class Kernel:
                     '__import__("importlib").import_module("build123d")',
                     '__import__("importlib").import_module("build123d_studio")',
                     '__import__("importlib").import_module("build123d_studio.inspector")',
+                    # Complete from the live object rather than from jedi's
+                    # static inference, which is the whole reason to ask a
+                    # kernel at all - and which IPython does not do by default.
+                    #
+                    # Measured against the pinned environment, with a Box in the
+                    # namespace: "part." returns 0 matches through jedi and 126
+                    # through dir(), including the center and volume this
+                    # application exists to help someone reach. jedi cannot
+                    # infer a build123d object and answers with nothing rather
+                    # than saying so, so the flagship case - the methods of the
+                    # part you built two cells ago - was silently empty.
+                    #
+                    # It is also faster, and the console shares the setting, so
+                    # tab completion down there gains the same thing.
+                    "get_ipython().Completer.use_jedi = False",
                 ]
             ),
             internal=True,
@@ -705,6 +752,66 @@ class Kernel:
         # user_expressions return a repr, so a JSON string arrives quoted and
         # escaped exactly as Python would print it.
         return ast.literal_eval(text)
+
+    def complete(self, code, cursor_pos, timeout=COMPLETE_TIMEOUT):
+        """Ask the kernel what could follow the cursor. Returns the reply content.
+
+        This is the same completion IPython gives at its own prompt, and using
+        it is the whole argument for routing completion through the kernel
+        rather than a language server: it completes against the *live
+        namespace*. It knows the methods of the part the user built two cells
+        ago, and a static reading of the file cannot, because the object does
+        not exist there - it exists in a kernel that has run the code.
+
+        Silent by construction. A complete_request executes nothing, advances no
+        In[n] and produces no output; the only trace it leaves is the busy/idle
+        pair on iopub, which is why it is submitted as internal.
+
+        None rather than an empty reply when there is no answer, so the caller
+        can tell "the kernel had nothing to suggest" from "there was no kernel"
+        or "it was busy". They look the same in a suggestion list and not in a
+        log.
+        """
+        try:
+            request = self._submit(
+                code,
+                internal=True,
+                want_reply=True,
+                kind=KIND_COMPLETE,
+                cursor_pos=cursor_pos,
+            )
+        except KernelUnavailable as exc:
+            log(f"Completion not sent: {exc}")
+            return None
+
+        try:
+            # Split the same way an inspection is: the timeout below is the
+            # kernel's time to answer rather than time spent queued.
+            request.sent.result(timeout=SEND_TIMEOUT)
+            reply = request.reply.result(timeout=timeout)
+        except concurrent.futures.TimeoutError:
+            # Not an error, and deliberately not logged as one. The ordinary way
+            # here is a kernel part-way through a cell: it serves shell requests
+            # serially, so a completion asked while code is running waits for the
+            # code. That is the defect group 7 is about, and subshells are the
+            # answer to it; until then the suggestion list stays empty rather
+            # than arriving after the moment it was for.
+            log(f"Completion timed out after {timeout}s; the kernel is busy")
+            return None
+        except KernelUnavailable as exc:
+            log(f"Completion abandoned: {exc}")
+            return None
+        except Exception as exc:  # noqa: BLE001 - a failed send is not a crash
+            log(f"Completion failed to send: {exc}")
+            return None
+        finally:
+            self._forget(request)
+
+        content = reply.get("content", {})
+        if content.get("status") != "ok":
+            log(f"Completion refused by the kernel: {content.get('status')}")
+            return None
+        return content
 
     def _unclaimed_replies(self):
         generation = self._generation

@@ -38,6 +38,12 @@ class FakeClient:
         self.senders = set()
         self.executes = []
         self.executed_after_stop = []
+        # Completion requests, as (code, cursor_pos, msg_id). A separate list
+        # because the question these tests ask about them is a different one:
+        # not "did two threads send" but "did this go out as a complete_request
+        # rather than as code the kernel would run". The msg_id is kept because
+        # it is what the internal-request record is keyed by.
+        self.completions = []
         # Whether the kernel this stands in for bothers to answer. Off is how a
         # test arranges a request that is still outstanding when something else
         # happens to it.
@@ -89,6 +95,33 @@ class FakeClient:
             self._on_execute(msg_id)
         if self.answers:
             self._shell.put(self._reply_to(msg_id, kwargs))
+        return msg_id
+
+    def complete(self, code, cursor_pos=None):
+        """The completion half of the client's surface.
+
+        Same shape as execute: record who sent, hand back a msg_id, and answer
+        on the shell queue if this client is one that answers. The reply is a
+        complete_reply rather than an execute_reply, and echoing the code back
+        as the single match is what lets a test tell one completion's answer
+        from another's.
+        """
+        current = threading.current_thread()
+        with self._lock:
+            self.senders.add((current.ident, current.name))
+            msg_id = f"{self.name}-{next(self._counter)}"
+            self.completions.append((code, cursor_pos, msg_id))
+        if self.answers:
+            self._shell.put({
+                "parent_header": {"msg_id": msg_id},
+                "content": {
+                    "status": "ok",
+                    "matches": [code],
+                    "cursor_start": 0,
+                    "cursor_end": cursor_pos,
+                    "metadata": {},
+                },
+            })
         return msg_id
 
     # --- what a test drives it with ---
