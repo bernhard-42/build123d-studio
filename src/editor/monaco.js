@@ -359,6 +359,38 @@ function notifyDirtyChanged() {
   }
 }
 
+// Whether a deferred check is already booked, so a burst of typing costs one.
+let dirtyCheckPending = false;
+
+/**
+ * Ask again on the next tick whether the buffer differs from disk.
+ *
+ * Deferred, and that is the whole point. Asked from inside the content-change
+ * event, an undo that lands exactly back on the saved version still reported
+ * itself dirty: the alternative version id the answer depends on had not
+ * settled while the event was being delivered, so the transition from dirty to
+ * clean was never seen and both the tab's dot and the title's bullet stayed on
+ * a buffer that matched disk. Closing it then asked nothing, which is what
+ * proved the id itself was right and the timing was not.
+ *
+ * Waiting a tick rather than reading Monaco's internals to find out exactly
+ * when it is assigned: the id is certainly settled by the time anything else
+ * runs, and that is all this needs to be true.
+ *
+ * Coalesced, so holding a key down schedules one check rather than one per
+ * character - which is cheaper than what it replaces, not merely as cheap.
+ */
+function scheduleDirtyCheck() {
+  if (dirtyCheckPending) {
+    return;
+  }
+  dirtyCheckPending = true;
+  setTimeout(() => {
+    dirtyCheckPending = false;
+    notifyDirtyChanged();
+  }, 0);
+}
+
 /** Be told when the buffer starts or stops differing from disk. */
 export function onDirtyChange(listener) {
   dirtyListeners.add(listener);
@@ -502,7 +534,7 @@ export function initEditor() {
   // is on screen and survives every switch between them.
   editor.onDidChangeModelContent(() => {
     refreshCellDecorations();
-    notifyDirtyChanged();
+    scheduleDirtyCheck();
   });
 
   registerRunActions(editor);
