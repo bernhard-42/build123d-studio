@@ -13,7 +13,7 @@
     "To move the pin, run scripts/pin-uv.mjs - it re-derives every checksum and",
     "verifies provenance before rewriting this file. Do not edit the digests by hand.",
     "",
-    "Provenance of the values below, verified 2026-08-01 by scripts/pin-uv.mjs:",
+    "Provenance of the values below, verified 2026-08-03 by scripts/pin-uv.mjs:",
     "  gh attestation verify <artifact> --repo astral-sh/uv",
     "    uv-aarch64-apple-darwin.tar.gz: 1 attestation(s), https://github.com/astral-sh/uv/.github/workflows/release.yml@refs/heads/main",
     "    uv-x86_64-apple-darwin.tar.gz: 1 attestation(s), https://github.com/astral-sh/uv/.github/workflows/release.yml@refs/heads/main",
@@ -27,14 +27,14 @@
   "python": "3.14.6",
 
   "uv": {
-    "version": "0.12.0",
-    "recorded": "2026-08-01",
+    "version": "0.12.1",
+    "recorded": "2026-08-03",
     "artifacts": {
-      "aarch64-apple-darwin": "2b9e582af54f84fa50c115427451a6c13e80f43b52f8282b8af5791077317bbf",
-      "x86_64-apple-darwin": "d41593beaefc54bab7d062af0ef6ca093bfb81d001d58ebbef39e44423f9c496",
-      "aarch64-unknown-linux-gnu": "2c5d6e3092cc5223b10ff403880cc75121bf64e84644e7a0c69f643b0d89ac95",
-      "x86_64-unknown-linux-gnu": "eaf842262aa1c418d8ecc5605f02ee1ebfd369124fa48548e85f9481a47831a9",
-      "x86_64-pc-windows-msvc": "68200e25de594df92387186bbfb9d9df606ec1d87efaa0ae0c7f690970e53db6"
+      "aarch64-apple-darwin": "77d2906988e8074fd43f2f329ec452ebbf9b0c257ba1c66451c71de70a6baf42",
+      "x86_64-apple-darwin": "69d9f9a00337f25a50dcb13882052da08b8469bac11091c98c5694c3c6721467",
+      "aarch64-unknown-linux-gnu": "769d373e146692c639b5fbaae33b331c297a32e03d30448772051902df52bbf4",
+      "x86_64-unknown-linux-gnu": "90b2f223fb69d19db49e117da601f64978593417988530aa733d456141b4bcbb",
+      "x86_64-pc-windows-msvc": "8fcb0cb46e1229065e344758980924e569bef5882ef45f46fada8fb24e06b74a"
     }
   }
 }
