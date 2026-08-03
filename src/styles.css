@@ -47,6 +47,21 @@
   box-sizing: border-box;
 }
 
+/* Except inside the viewer, which is somebody else's stylesheet written against
+   the browser's default box model.
+ *
+ * three-cad-viewer sizes its tree rows as `height: 16px; padding: 2px 0`, which
+ * is 20px under content-box and 16px under border-box - so the blanket reset
+ * above took four pixels off every row of the navigation tree and squeezed the
+ * 24px icons into a 12px content box. Measured against the library's own dev
+ * page, which is the reference: this restores it exactly.
+ *
+ * The pane itself keeps border-box, because that one is ours and the grid lays
+ * it out; only what the viewer draws inside it is handed back its own rules. */
+.pane-viewer * {
+  box-sizing: content-box;
+}
+
 html,
 body {
   margin: 0;
