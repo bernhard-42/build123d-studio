@@ -70,17 +70,29 @@ const at = (lineNumber, column, wordStartColumn = column) => ({
 
 test("the whole buffer is sent, with a zero-based column", () => {
   const source = "import time\ntime.sl";
-  assert.deepEqual(completionQuery(source, { lineNumber: 2, column: 8 }, "/tmp/a.py"), {
+  assert.deepEqual(completionQuery(source, { lineNumber: 2, column: 8 }, "/tmp/a.py", "b1"), {
     source,
     line: 2,
     column: 7,
     path: "/tmp/a.py",
+    key: "b1",
   });
 });
 
 test("an unsaved buffer has no path rather than an empty one", () => {
   assert.equal(completionQuery("x", { lineNumber: 1, column: 1 }, null).path, null);
   assert.equal(completionQuery("x", { lineNumber: 1, column: 1 }, undefined).path, null);
+});
+
+test("the buffer key travels, because the path does not identify a buffer", () => {
+  // File > New twice gives two buffers with no path at all. Without the key
+  // they are one document to the language server, and each one's squiggles are
+  // published against the other.
+  const first = completionQuery("x", { lineNumber: 1, column: 1 }, null, "buffer-1");
+  const second = completionQuery("y", { lineNumber: 1, column: 1 }, null, "buffer-2");
+  assert.equal(first.path, second.path);
+  assert.notEqual(first.key, second.key);
+  assert.equal(completionQuery("x", { lineNumber: 1, column: 1 }, null).key, null);
 });
 
 test("the column never goes negative", () => {

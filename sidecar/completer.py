@@ -71,6 +71,11 @@ REQUEST_TIMEOUT = 10
 # is the one call that legitimately takes seconds.
 INITIALIZE_TIMEOUT = 60
 
+# The buffer the warm-up pretends to be. Named rather than left as None so it
+# cannot collide with a real unsaved buffer, and so a diagnostic arriving from
+# it is recognisable.
+WARM_UP_KEY = "warm-up"
+
 # LSP CompletionItemKind, which is a number on the wire, against the vocabulary
 # the frontend maps to Monaco kinds - IPython's, because the kernel got there
 # first and both sources have to arrive in one list speaking one language.
@@ -92,6 +97,63 @@ KINDS = {
 }
 
 
+def analysis_settings(kernel_dir):
+    """How strict to be, and where else to look for modules.
+
+    Squiggles are only worth drawing if they are almost always right. Measured
+    on an ordinary build123d file - a builder block, a couple of shapes, and two
+    deliberate mistakes - the defaults produce nine diagnostics, seven of them
+    wrong about this application's own idioms. The two real ones are then
+    indistinguishable from the noise, which is how people learn to ignore the
+    whole gutter.
+
+    ``extraPaths`` alone removes five of the seven. `build123d_studio` is the
+    kernel-side package this application puts on PYTHONPATH when it launches the
+    kernel, so nothing outside that process can resolve it: `from
+    build123d_studio import show` - the second line of the New File template -
+    was an unresolved-import error, and `show` being untyped then produced three
+    more. Telling the server where that package lives is not a preference, it is
+    the truth about how the code runs.
+
+    The overrides are each about a build123d idiom that is correct code:
+
+      reportWildcardImportFromLibrary  `from build123d import *` is how
+                                       build123d is used, and it is line one of
+                                       the template this application ships
+      reportUnusedCallResult           `Box(10, 10, 10)` inside a builder block
+                                       is called for its effect on the builder;
+                                       its result is *meant* to be unused
+      reportUnusedExpression           a bare expression on its own line is how
+                                       a script shows a value, which is the
+                                       whole shape of an interactive CAD file
+
+    The rest are basedpyright's strictness beyond Pyright's own default -
+    reportAny and the reportUnknown* family - which on a dynamically typed
+    geometry library means underlining most of the file. typeCheckingMode
+    "standard" is Pyright's default rather than basedpyright's "recommended",
+    for the same reason.
+
+    None of this is a judgement about type checking in general. It is a
+    judgement about a scratch file for building a bracket.
+    """
+    return {
+        "typeCheckingMode": "standard",
+        "extraPaths": [kernel_dir],
+        "diagnosticSeverityOverrides": {
+            "reportWildcardImportFromLibrary": "none",
+            "reportUnusedCallResult": "none",
+            "reportUnusedExpression": "none",
+            "reportMissingTypeStubs": "none",
+            "reportUnknownMemberType": "none",
+            "reportUnknownVariableType": "none",
+            "reportUnknownArgumentType": "none",
+            "reportUnknownParameterType": "none",
+            "reportAny": "none",
+            "reportExplicitAny": "none",
+        },
+    }
+
+
 class LanguageServer:
     """One basedpyright process, and the JSON-RPC conversation with it.
 
@@ -101,8 +163,10 @@ class LanguageServer:
     suggestions, not the frame that carried it.
     """
 
-    def __init__(self, python_path):
+    def __init__(self, python_path, analysis=None, on_diagnostics=None):
         self._python_path = python_path
+        self._analysis = analysis or {}
+        self._on_diagnostics = on_diagnostics
         self._process = None
         self._replies = {}
         self._arrived = threading.Condition()
@@ -238,9 +302,7 @@ class LanguageServer:
                              "result": self._answer(message)})
                 continue
             if "method" in message:
-                # A notification: diagnostics, progress, log messages. Nothing
-                # reads them yet - showing diagnostics in the editor is its own
-                # piece of work - and they are dropped rather than queued.
+                self._notified(message)
                 continue
             with self._arrived:
                 self._replies[message.get("id")] = message
@@ -249,19 +311,59 @@ class LanguageServer:
         if process is self._process:
             log("basedpyright exited; it will be restarted on the next request")
 
+    def _notified(self, message):
+        """A notification: diagnostics, progress, log lines.
+
+        Only the first is wanted. Progress and log notifications are the
+        server's own business and there are a great many of them; forwarding
+        them anywhere would be noise in a log this application's users are
+        invited to send in.
+        """
+        if message.get("method") != "textDocument/publishDiagnostics":
+            return
+        if self._on_diagnostics is None:
+            return
+        params = message.get("params") or {}
+        uri = params.get("uri")
+        diagnostics = params.get("diagnostics")
+        if not isinstance(uri, str) or not isinstance(diagnostics, list):
+            return
+        try:
+            self._on_diagnostics(uri, diagnostics)
+        except Exception as exc:  # noqa: BLE001 - this runs on the reader thread
+            log(f"Diagnostics handler failed: {exc}")
+
     def _answer(self, message):
         """What the server asks the client for, in the one case it matters.
 
         `workspace/configuration` is how it learns which Python to analyse
         against, and getting it wrong means every build123d import is unresolved
-        and every completion empty. The answer is this process's own
-        interpreter: the sidecar runs inside the application's environment, so
-        sys.executable is by definition the one the user's code will run in.
+        and every completion empty. The interpreter is this process's own: the
+        sidecar runs inside the application's environment, so sys.executable is
+        by definition the one the user's code will run in.
+
+        The same answer carries how strict to be, and *which section is being
+        asked for decides the shape*. That is not a detail: an answer of the
+        wrong shape is accepted silently and changes nothing, which is exactly
+        what happened first - four different configurations produced four
+        identical sets of diagnostics until this stopped returning one flat
+        object to every request. The server asks for one section at a time -
+        observed: "python", then "basedpyright.analysis", then "basedpyright" -
+        and each wants what it is named for.
         """
         if message.get("method") != "workspace/configuration":
             return None
         items = message.get("params", {}).get("items", [])
-        return [{"pythonPath": self._python_path} for _ in items]
+        return [self._section(item.get("section")) for item in items]
+
+    def _section(self, section):
+        if section == "python":
+            return {"pythonPath": self._python_path}
+        if section in ("basedpyright.analysis", "python.analysis"):
+            return dict(self._analysis)
+        if section in ("basedpyright", "pyright"):
+            return {"analysis": dict(self._analysis)}
+        return {}
 
 
 class Completer:
@@ -274,14 +376,28 @@ class Completer:
     above it has to know that a language server is involved at all.
     """
 
-    def __init__(self, env_root, python_path=None):
-        self._server = LanguageServer(python_path or sys.executable)
+    def __init__(self, env_root, app_dir, python_path=None, on_diagnostics=None):
+        self._on_diagnostics = on_diagnostics
+        self._server = LanguageServer(
+            python_path or sys.executable,
+            analysis=analysis_settings(os.path.join(app_dir, "kernel")),
+            on_diagnostics=self._diagnostics,
+        )
         # Where an unsaved buffer pretends to live. A real path when there is
         # one, because that is what lets the server resolve `import helpers`
         # against the file beside it.
-        self._untitled = os.path.join(env_root, "untitled.py")
+        #
+        # One pseudo-file per buffer rather than one for all of them: the
+        # application opens as many unsaved buffers as somebody presses New, and
+        # a shared name would give them one document between them - so the
+        # diagnostics for each would be published against the others.
+        self._untitled = os.path.join(env_root, "untitled")
         self._versions = {}
         self._sources = {}
+        # uri -> what the frontend called it, so a diagnostic can be sent back
+        # to the buffer it belongs to rather than to a path it has never heard
+        # of.
+        self._owners = {}
         self._lock = threading.Lock()
 
     def warm(self):
@@ -295,13 +411,19 @@ class Completer:
         if not self._server.start():
             return
         started = time.monotonic()
-        self.complete("from build123d import *\nb = Bo", 2, 6, None)
+        # Under a key of its own, and closed afterwards. The analysis of
+        # build123d it pays for is cached in the server and survives; what does
+        # not survive is a document nothing is showing, which would otherwise go
+        # on publishing diagnostics against a buffer the editor has never heard
+        # of for the rest of the session.
+        self.complete("from build123d import *\nb = Bo", 2, 6, None, WARM_UP_KEY)
+        self.forget(None, WARM_UP_KEY)
         log(f"Completion warm-up finished in {time.monotonic() - started:.1f}s")
 
     def stop(self):
         self._server.stop()
 
-    def complete(self, source, line, column, path=None):
+    def complete(self, source, line, column, path=None, key=None):
         """Completions at a position, as entries the sidecar can merge.
 
         ``line`` is 1-based and ``column`` is 0-based - Monaco's line and one
@@ -312,7 +434,7 @@ class Completer:
         "ce" and not "part.ce", and getting it wrong is silent until somebody
         accepts a suggestion and finds "part.cecenter" in their file.
         """
-        uri = self._sync(source, path)
+        uri = self._sync(source, path, key)
         if uri is None:
             return []
         result = self._server.request("textDocument/completion", {
@@ -347,7 +469,7 @@ class Completer:
             })
         return entries
 
-    def signatures(self, source, line, column, path=None):
+    def signatures(self, source, line, column, path=None, key=None):
         """The call the cursor is inside, for the parameter hints popup.
 
         Structured rather than a docstring: Monaco highlights the parameter
@@ -357,7 +479,7 @@ class Completer:
         Returns None when the cursor is not inside a call, which is most of the
         time and is not a failure.
         """
-        uri = self._sync(source, path)
+        uri = self._sync(source, path, key)
         if uri is None:
             return None
         result = self._server.request("textDocument/signatureHelp", {
@@ -394,7 +516,85 @@ class Completer:
             "activeParameter": active if isinstance(active, int) else -1,
         }
 
-    def _sync(self, source, path):
+    def hover(self, source, line, column, path=None, key=None):
+        """What the name under the pointer is. None when it is nothing.
+
+        The cheapest of the three, because the process, the document and the
+        transport all exist for completion already. It answers the question a
+        CAD script raises constantly - what does this name actually hold -
+        which on this API is rarely obvious: build123d's operations return
+        Part, Sketch, Curve and Compound, and which one decides what the next
+        line is allowed to do.
+
+        The contents come back as one string. LSP allows three shapes for them
+        and a server may pick any, so flattening happens here rather than in the
+        frontend, which has no business knowing the protocol.
+        """
+        uri = self._sync(source, path, key)
+        if uri is None:
+            return None
+        result = self._server.request("textDocument/hover", {
+            "textDocument": {"uri": uri},
+            "position": {"line": line - 1, "character": column},
+        })
+        if not isinstance(result, dict):
+            return None
+        value = _hover_text(result.get("contents"))
+        if value == "":
+            return None
+        return {"value": value, "range": result.get("range")}
+
+    def sync(self, source, path=None, key=None):
+        """Tell the server the buffer changed, without asking it anything.
+
+        The editor calls this on a timer after an edit. Completion and the rest
+        sync as a side effect of asking, but diagnostics are *pushed* - the
+        server publishes them when it has analysed a document it was told about
+        - so without this the squiggles would only refresh when somebody
+        happened to open the suggestion list.
+        """
+        self._sync(source, path, key)
+
+    def forget(self, path=None, key=None):
+        """Close a document, when its tab closes.
+
+        Otherwise the server holds an analysis of every file opened this
+        session, and goes on publishing diagnostics for buffers that are no
+        longer on screen.
+        """
+        uri = self._uri_for(path, key)
+        with self._lock:
+            known = self._sources.pop(uri, None)
+            self._versions.pop(uri, None)
+            self._owners.pop(uri, None)
+        if known is not None:
+            self._server.notify("textDocument/didClose", {"textDocument": {"uri": uri}})
+
+    def _uri_for(self, path, key):
+        if isinstance(path, str) and path != "":
+            return pathlib.Path(path).as_uri()
+        # A buffer that has never been saved. Named after the key the frontend
+        # gave it, which is stable for as long as the tab is.
+        name = "".join(c if c.isalnum() else "-" for c in str(key or "buffer"))
+        return pathlib.Path(os.path.join(self._untitled, f"{name}.py")).as_uri()
+
+    def _diagnostics(self, uri, diagnostics):
+        """Hand diagnostics back to whoever owns that document.
+
+        The server publishes against a uri, including for files it read on its
+        own account while following an import - somebody else's library, which
+        no tab is showing. Those are dropped here: an owner is a buffer this
+        class was told about.
+        """
+        if self._on_diagnostics is None:
+            return
+        with self._lock:
+            owner = self._owners.get(uri)
+        if owner is None:
+            return
+        self._on_diagnostics(owner["path"], owner["key"], diagnostics)
+
+    def _sync(self, source, path, key):
         """Tell the server what the buffer says now. Returns its uri, or None.
 
         Full text every time rather than incremental edits. The frontend sends
@@ -405,13 +605,19 @@ class Completer:
         if not self._server.alive() and not self._server.start():
             return None
 
-        target = path if isinstance(path, str) and path != "" else self._untitled
-        uri = pathlib.Path(target).as_uri()
+        uri = self._uri_for(path, key)
         with self._lock:
             known = self._sources.get(uri)
             version = self._versions.get(uri, 0) + 1
             self._versions[uri] = version
             self._sources[uri] = source
+            # The warm-up deliberately gets no owner. Its diagnostics are then
+            # dropped by the same path that drops a library file the server read
+            # on its own account: an owner is a buffer somebody is looking at,
+            # and closing the document afterwards is too late - the publish has
+            # already happened by then.
+            if key != WARM_UP_KEY:
+                self._owners[uri] = {"path": path, "key": key}
 
         if known is None:
             self._server.notify("textDocument/didOpen", {"textDocument": {
@@ -547,6 +753,32 @@ def _replacement(item, line_text, column):
             if isinstance(start, int) and isinstance(end, int):
                 return start, end
     return _word_start(line_text, column), column
+
+
+def _hover_text(contents):
+    """Flatten LSP's three shapes for hover contents into one string.
+
+    MarkupContent ({kind, value}), a marked string (plain, or {language, value}
+    which is a code block), or a list of either. A server may answer with any of
+    them and this one has been seen to change shape between requests, so all
+    three are handled rather than the one that turned up first.
+    """
+    if isinstance(contents, list):
+        parts = [_hover_text(item) for item in contents]
+        return "\n\n".join(part for part in parts if part != "")
+    if isinstance(contents, str):
+        return contents.strip()
+    if isinstance(contents, dict):
+        value = contents.get("value")
+        if not isinstance(value, str):
+            return ""
+        language = contents.get("language")
+        if isinstance(language, str) and language != "":
+            # A {language, value} pair is code, and arrives without the fence
+            # that would make Monaco render it as code.
+            return f"```{language}\n{value.strip()}\n```"
+        return value.strip()
+    return ""
 
 
 def _summary(documentation):

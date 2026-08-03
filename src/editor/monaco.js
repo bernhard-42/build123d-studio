@@ -29,6 +29,9 @@ import "monaco-editor/editor/contrib/suggest/browser/suggestController.js";
 // registerSignatureHelpProvider is in the API and the widget that shows what it
 // returns is not.
 import "monaco-editor/editor/contrib/parameterHints/browser/parameterHints.js";
+// The hover tooltip. Same rule again: registerHoverProvider is in the API and
+// the thing that draws what it returns is not.
+import "monaco-editor/editor/contrib/hover/browser/hoverContribution.js";
 // Not the "monaco-editor/esm/vs/editor/editor.worker" path that most guides
 // still show: as of 0.56 the exports map is {"./*": "./esm/vs/*.js"}, so the
 // esm/vs prefix is added for us and spelling it out resolves to esm/vs/esm/vs.
@@ -36,6 +39,8 @@ import EditorWorker from "monaco-editor/editor/editor.worker.js?worker";
 
 import { cellAt, findCells, nextCell } from "./cells.js";
 import { completionItems, completionQuery, isIncomplete } from "./completion.js";
+import { markersFor } from "./diagnostics.js";
+import { hoverContents } from "./hover.js";
 import { signatureHelp } from "./signature.js";
 import * as buffers from "./buffers.js";
 import { COMMANDS } from "../keys.js";
@@ -273,6 +278,9 @@ export function showNoBuffer() {
 
 /** Close a buffer. The caller must show another one first, or none. */
 export function closeBuffer(key) {
+  // Before the model goes, because the path is read off the buffer and there is
+  // nothing left to read it from afterwards.
+  forgetBuffer(key, bufferPath(key));
   return buffers.close(key);
 }
 
@@ -526,7 +534,14 @@ export function initEditor() {
   editor.onDidChangeModelContent(() => {
     refreshCellDecorations();
     scheduleDirtyCheck();
+    scheduleSync();
   });
+
+  // A buffer that has just been shown is analysed too, and this is the only
+  // hook that fires for it: switching tabs changes no content, so the change
+  // handler above never runs, and a file opened and never edited would have no
+  // squiggles at all.
+  editor.onDidChangeModel(() => scheduleSync());
 
   registerRunActions(editor);
   registerLanguageFeatures();
@@ -557,6 +572,12 @@ const LANGUAGE_TIMEOUT = 6000;
  * this avoids is handing Monaco a list for a cursor position it has already
  * left behind.
  */
+/** What to ask about, for a position in whichever buffer is on screen. */
+function queryFor(model, position) {
+  const key = buffers.activeKeyOf();
+  return completionQuery(model.getValue(), position, bufferPath(key), key);
+}
+
 function registerLanguageFeatures() {
   monaco.languages.registerCompletionItemProvider("python", {
     // Monaco asks on word characters by itself; the dot is the case that has to
@@ -566,7 +587,7 @@ function registerLanguageFeatures() {
     provideCompletionItems: async (model, position, _context, token) => {
       const reply = await ipc.request(
         "editor.complete",
-        completionQuery(model.getValue(), position, bufferPath(buffers.activeKeyOf())),
+        queryFor(model, position),
         { timeout: LANGUAGE_TIMEOUT },
       );
       if (token.isCancellationRequested) {
@@ -593,7 +614,7 @@ function registerLanguageFeatures() {
     provideSignatureHelp: async (model, position, token) => {
       const reply = await ipc.request(
         "editor.signature",
-        completionQuery(model.getValue(), position, bufferPath(buffers.activeKeyOf())),
+        queryFor(model, position),
         { timeout: LANGUAGE_TIMEOUT },
       );
       const help = token.isCancellationRequested ? null : signatureHelp(reply);
@@ -605,6 +626,96 @@ function registerLanguageFeatures() {
       return { value: help, dispose: () => {} };
     },
   });
+
+  monaco.languages.registerHoverProvider("python", {
+    provideHover: async (model, position, token) => {
+      const reply = await ipc.request("editor.hover", queryFor(model, position), {
+        timeout: LANGUAGE_TIMEOUT,
+      });
+      return token.isCancellationRequested ? null : hoverContents(reply);
+    },
+  });
+
+  // Diagnostics are pushed, so this is a subscription rather than a provider.
+  //
+  // Markers belong to a model, and the frame names which buffer it is about -
+  // by key, because two unsaved buffers have the same path, which is none. A
+  // diagnostic for a buffer that has since been closed is dropped: its model is
+  // disposed and setModelMarkers on a disposed model throws.
+  ipc.on("editor.diagnostics", (frame) => {
+    const buffer = buffers.get(frame.key);
+    if (buffer === null) {
+      return;
+    }
+    monaco.editor.setModelMarkers(
+      buffer.model,
+      // The owner string is what lets these be replaced wholesale on the next
+      // publish without touching anyone else's marks - there are none today,
+      // and there will be when a linter or the debugger adds theirs.
+      "basedpyright",
+      markersFor(frame, monaco.MarkerSeverity),
+    );
+  });
+}
+
+// How long to wait after the last keystroke before telling the server the
+// buffer changed. Long enough that a burst of typing is one analysis rather
+// than thirty, short enough that a squiggle appears while the mistake is still
+// what the eye is on. The suggestion list does not wait for this - a completion
+// request syncs the document itself, because a suggestion is asked for and a
+// diagnostic is not.
+const SYNC_DELAY = 400;
+
+let syncTimer = null;
+
+/**
+ * Tell the server the buffer changed, once the typing stops.
+ *
+ * Nothing is asked for and nothing comes back directly: the server publishes
+ * diagnostics when it has analysed what it was told about, and those arrive on
+ * the subscription above. Without this the squiggles would only ever refresh
+ * when somebody happened to open the suggestion list, which is precisely when
+ * they are not looking at them.
+ */
+function scheduleSync() {
+  if (syncTimer !== null) {
+    clearTimeout(syncTimer);
+  }
+  syncTimer = setTimeout(() => {
+    syncTimer = null;
+    const model = currentModel();
+    const key = buffers.activeKeyOf();
+    if (model === null || key === null || !ipc.isConnected()) {
+      return;
+    }
+    try {
+      ipc.send("editor.sync", {
+        source: model.getValue(),
+        path: bufferPath(key),
+        key,
+      });
+    } catch (error) {
+      log.warn("Could not send the buffer for analysis:", error);
+    }
+  }, SYNC_DELAY);
+}
+
+/**
+ * Tell the server a document is gone, and take its squiggles with it.
+ *
+ * Called when a tab closes. Without it the server holds an analysis of every
+ * file opened this session and goes on publishing diagnostics for buffers
+ * nothing is showing.
+ */
+export function forgetBuffer(key, path) {
+  if (!ipc.isConnected()) {
+    return;
+  }
+  try {
+    ipc.send("editor.close", { path: path ?? null, key });
+  } catch (error) {
+    log.warn("Could not close the analysed document:", error);
+  }
 }
 
 /**

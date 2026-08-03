@@ -129,7 +129,7 @@ class Sidecar:
 
         # Static completion, read from the buffer. The other half of the answer
         # and the half that works on a kernel that has never run anything.
-        self.completer = Completer(env_root)
+        self.completer = Completer(env_root, app_dir, on_diagnostics=self.on_diagnostics)
 
         # Whether the kernel is part-way through something. Completion asks the
         # kernel only when it is not: it serves shell requests serially, so a
@@ -198,6 +198,14 @@ class Sidecar:
         # and two lanes would only let them analyse the same source twice at
         # once.
         self.channel.on("editor.signature", self.on_signature, lane=COMPLETE)
+        self.channel.on("editor.hover", self.on_hover, lane=COMPLETE)
+
+        # Telling the server the buffer changed, with nothing asked in return.
+        # Diagnostics are *pushed* - it publishes them when it has analysed a
+        # document it was told about - so without this the squiggles would only
+        # refresh when somebody happened to open the suggestion list.
+        self.channel.on("editor.sync", self.on_sync, lane=COMPLETE)
+        self.channel.on("editor.close", self.on_close, lane=COMPLETE)
 
         # Keystrokes arrive as raw bytes - no base64, no JSON escaping, on what
         # is the hottest path in the UI.
@@ -680,7 +688,8 @@ class Sidecar:
         column = int(message.get("column", 0))
         path = message.get("path")
 
-        static = self.completer.complete(source, line, column, path)
+        key = message.get("key")
+        static = self.completer.complete(source, line, column, path, key)
         live = self._live_completions(source, line, column)
 
         # The kernel's first, because it is the one that knows. A name it
@@ -755,6 +764,38 @@ class Sidecar:
             })
         return entries
 
+    def on_sync(self, message):
+        """The buffer changed. Nothing is asked; diagnostics come back on their own."""
+        self.completer.sync(
+            message.get("source", ""), message.get("path"), message.get("key")
+        )
+
+    def on_close(self, message):
+        """A tab closed, so the server can stop holding that document."""
+        self.completer.forget(message.get("path"), message.get("key"))
+
+    def on_diagnostics(self, path, key, diagnostics):
+        """Push what the server found to the buffer it belongs to.
+
+        Called on the language server's reader thread, so it does the least
+        possible: one frame, no locks, nothing that can wait. The frontend
+        decides what to draw.
+        """
+        self.channel.send("editor.diagnostics", path=path, key=key, diagnostics=diagnostics)
+
+    def on_hover(self, message):
+        self.channel.send(
+            "editor.hover",
+            id=message.get("id"),
+            hover=self.completer.hover(
+                message.get("source", ""),
+                int(message.get("line", 1)),
+                int(message.get("column", 0)),
+                message.get("path"),
+                message.get("key"),
+            ),
+        )
+
     def on_signature(self, message):
         """The call the cursor is inside, for the parameter hints popup.
 
@@ -767,6 +808,7 @@ class Sidecar:
             int(message.get("line", 1)),
             int(message.get("column", 0)),
             message.get("path"),
+            message.get("key"),
         )
         self.channel.send("editor.signature", id=message.get("id"), signature=signature)
 

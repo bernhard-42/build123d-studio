@@ -43,16 +43,23 @@
  * which is the whole of the conversion and exactly the sort of thing that is
  * wrong by one for a week before anybody notices. Lines are 1-based in both.
  *
+ * The buffer key travels with it because the path does not identify a buffer:
+ * File > New twice gives two unsaved buffers with no path at all, and the
+ * language server needs a distinct document for each or the diagnostics for one
+ * are published against the other.
+ *
  * @param {string} source the whole buffer
  * @param {{lineNumber: number, column: number}} position Monaco's cursor
  * @param {string|null} path the file on disk, or null for an unsaved buffer
+ * @param {string|null} key which buffer this is
  */
-export function completionQuery(source, position, path) {
+export function completionQuery(source, position, path, key) {
   return {
     source,
     line: position.lineNumber,
     column: Math.max(0, position.column - 1),
     path: path ?? null,
+    key: key ?? null,
   };
 }
 

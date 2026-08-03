@@ -151,6 +151,21 @@ class Sidecar:
             time.sleep(0.02)
         return None, None
 
+    def wait_frame_where(self, message_type, predicate, timeout, since=0):
+        """The first frame of a type that also satisfies ``predicate``.
+
+        Diagnostics are pushed, one frame per document, and several documents
+        are open by the time these run - so "the next diagnostics frame" is not
+        the same question as "the diagnostics for this buffer".
+        """
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            for at, frame in self.frames[since:]:
+                if frame["type"] == message_type and predicate(frame):
+                    return at, frame
+            time.sleep(0.02)
+        return None, None
+
     def wait_binary(self, kind, timeout, since=0):
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
@@ -307,8 +322,8 @@ def main():
     # The live half: "integration_marker" exists because the cell above ran it,
     # and no reading of a file could know that.
     before = len(side.frames)
-    side.send("editor.complete", id="complete-1",
-              source="integration_mar", line=1, column=15, path=None)
+    side.send("editor.complete", id="complete-1", source="integration_mar",
+              line=1, column=15, path=None, key="buffer-live")
     _, reply = side.wait_frame("editor.complete", ACTION_TIMEOUT, since=before)
     matches = [] if reply is None else reply.get("matches", [])
     check("completion answers from the live namespace",
@@ -338,7 +353,8 @@ def main():
     # without binding names - so every match here is read from the buffer.
     unrun = "from build123d import *\nb = Bo"
     before = len(side.frames)
-    side.send("editor.complete", id="complete-2", source=unrun, line=2, column=6, path=None)
+    side.send("editor.complete", id="complete-2", source=unrun, line=2, column=6,
+              path=None, key="buffer-unrun")
     _, reply = side.wait_frame("editor.complete", ACTION_TIMEOUT, since=before)
     matches = [] if reply is None else reply.get("matches", [])
     check("completion reads a file that has never been run",
@@ -348,7 +364,8 @@ def main():
     # not jedi: `part` is reached through `Self` on Builder.__enter__.
     builder = "from build123d import *\nwith BuildPart() as bd:\n    Box(1, 2, 34)\nbd.pa"
     before = len(side.frames)
-    side.send("editor.complete", id="complete-3", source=builder, line=4, column=5, path=None)
+    side.send("editor.complete", id="complete-3", source=builder, line=4, column=5,
+              path=None, key="buffer-builder")
     _, reply = side.wait_frame("editor.complete", ACTION_TIMEOUT, since=before)
     matches = [] if reply is None else reply.get("matches", [])
     check("the builder's part is offered on an unrun file",
@@ -368,8 +385,8 @@ def main():
     # --- signatures ---
 
     before = len(side.frames)
-    side.send("editor.signature", id="sig-1",
-              source="from build123d import *\nc = Box(10, 10, ", line=2, column=16, path=None)
+    side.send("editor.signature", id="sig-1", line=2, column=16, path=None, key="buffer-sig",
+              source="from build123d import *\nc = Box(10, 10, ")
     _, reply = side.wait_frame("editor.signature", ACTION_TIMEOUT, since=before)
     signature = None if reply is None else reply.get("signature")
     # The label is the parameter list, without the callable's name - which is
@@ -384,6 +401,58 @@ def main():
     check("the argument being typed is reported",
           signature is not None and signature.get("activeParameter") == 2,
           "no signature" if signature is None else str(signature.get("activeParameter")))
+
+    # --- hover ---
+
+    before = len(side.frames)
+    side.send("editor.hover", id="hover-1", source=builder, line=2, column=20,
+              path=None, key="buffer-builder")
+    _, reply = side.wait_frame("editor.hover", ACTION_TIMEOUT, since=before)
+    hover = None if reply is None else reply.get("hover")
+    check("hover says what a name holds",
+          hover is not None and "BuildPart" in hover.get("value", ""),
+          "nothing" if hover is None else hover.get("value", "")[:60])
+
+    # --- diagnostics ---
+    #
+    # Pushed rather than asked for, so this sends a buffer and waits. The file
+    # has one real mistake in it and several things that are perfectly good
+    # build123d and were reported as problems until the analysis was configured:
+    # the wildcard import, a Box called for its effect inside a builder, and the
+    # kernel-side package that only exists on the kernel's PYTHONPATH.
+    dirty = (
+        "from build123d import *\n"
+        "from build123d_studio import show\n"
+        "\n"
+        "with BuildPart() as bd:\n"
+        "    Box(10, 10, 10)\n"
+        "\n"
+        "show(bd.part)\n"
+        "undefined_name + 1\n"
+    )
+    before = len(side.frames)
+    side.send("editor.sync", source=dirty, path=None, key="buffer-diag")
+    _, reply = side.wait_frame_where(
+        "editor.diagnostics", lambda f: f.get("key") == "buffer-diag", 30, since=before)
+    reported = [] if reply is None else reply.get("diagnostics", [])
+    rules = sorted(str(d.get("code")) for d in reported)
+    check("the real mistake is reported", rules == ["reportUndefinedVariable"],
+          "no diagnostics frame" if reply is None else str(rules))
+    check("the diagnostics name the buffer they belong to",
+          reply is not None and reply.get("key") == "buffer-diag",
+          "no frame" if reply is None else str(reply.get("key")))
+
+    before = len(side.frames)
+    side.send("editor.sync", source="from build123d import *\nb = Box(1, 2, 3)\n",
+              path=None, key="buffer-diag")
+    _, reply = side.wait_frame_where(
+        "editor.diagnostics", lambda f: f.get("key") == "buffer-diag", 30, since=before)
+    # The empty list is the mechanism that takes the previous squiggles away:
+    # the server republishes everything it knows each time, and silence would
+    # leave the old marks up for ever.
+    check("a fixed file publishes an empty list rather than going quiet",
+          reply is not None and reply.get("diagnostics") == [],
+          "no frame" if reply is None else str(reply.get("diagnostics"))[:60])
 
     # --- show() delivers a model ---
 
