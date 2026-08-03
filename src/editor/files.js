@@ -21,6 +21,7 @@ import {
 } from "./monaco.js";
 import { refreshTabs } from "./tabstrip.js";
 import { chooseActive, readWorkspace } from "./workspace.js";
+import { hideFolder, revealInTree, showFolder } from "./sidebar.js";
 import { askThreeWay, notifyFailure } from "../confirm.js";
 import { writeFileSafely } from "./safewrite.js";
 import { getSetting, setSetting } from "../store.js";
@@ -50,22 +51,107 @@ function directoryOf(path) {
   return cut === 0 ? path.slice(0, 1) : path.slice(0, cut);
 }
 
+// The one open folder, or null. A folder is the project, and a project is the
+// whole session - see requs.md. Held here because this module already owns the
+// tabs and the kernel's working directory, which are the two things a folder
+// changes.
+let folder = null;
+
+/** The open folder, for anything that needs to know there is a project. */
+export function currentFolder() {
+  return folder;
+}
+
 /**
- * Run the kernel where the open file lives.
+ * Run the kernel where the project is, or where the file is when there is no
+ * project.
  *
- * So that export_step(part, "bracket.step") writes next to bracket.py, the way
+ * With a folder open the working directory is its root and stays there, however
+ * deep the file being edited sits and whether or not it is inside the folder at
+ * all. A hierarchy is one project and a project has one place its relative
+ * paths resolve against; a cwd that followed the active tab would make
+ * export_step(part, "out.step") land somewhere different for every file in the
+ * same project.
+ *
+ * With no folder it is the active file's directory, which is what Phase 1 chose
+ * so that export_step(part, "bracket.step") writes next to bracket.py the way
  * it would if the script had been run from a terminal. An unsaved buffer has no
  * directory to speak of, and the sidecar falls back to home.
  *
- * Sent on every change of file rather than only at kernel start, because the
- * kernel outlives the file: opening a second part must not leave exports going
- * to the first one's folder.
+ * Sent on every change rather than only at kernel start, because the kernel
+ * outlives both: opening a second project must not leave exports going to the
+ * first one's folder.
  */
 export function syncKernelDirectory() {
   if (!ipc.isConnected()) {
     return;
   }
-  ipc.send("kernel.cwd", { path: directoryOf(getCurrentFile()) });
+  ipc.send("kernel.cwd", { path: folder ?? directoryOf(getCurrentFile()) });
+}
+
+/**
+ * Close every tab, asking about the dirty ones. False if the user cancelled.
+ *
+ * The shared half of both folder commands: opening a folder is a context reset
+ * and closing one is a context close, and each is "all of them" rather than
+ * "the ones that happen to live under the old root". Which tabs survive would
+ * otherwise depend on where each file sits, and that is a rule someone has to
+ * hold in their head to predict what a menu item does.
+ */
+async function closeEveryTab() {
+  if (!(await confirmDiscardAll())) {
+    return false;
+  }
+  showNoBuffer();
+  for (const key of bufferKeys()) {
+    closeBuffer(key);
+  }
+  refreshTabs();
+  return true;
+}
+
+/**
+ * Open a folder as the project, replacing whatever was open before it.
+ *
+ * @returns {Promise<boolean>} false if cancelled, at the chooser or at a prompt
+ */
+export async function openFolder() {
+  const chosen = await os.showFolderDialog("Open a project folder", {
+    defaultPath: folder ?? (await startingFolder()),
+  });
+  if (typeof chosen !== "string" || chosen === "") {
+    return false;
+  }
+  // Asked after the chooser rather than before it, unlike the old Open File.
+  // Picking a folder is the point at which this becomes destructive, and being
+  // asked about unsaved work before knowing whether the user will even choose
+  // one is a prompt for nothing.
+  if (!(await closeEveryTab())) {
+    return false;
+  }
+  folder = chosen;
+  await showFolder(chosen);
+  syncKernelDirectory();
+  await setSetting(LAST_FOLDER_KEY, chosen);
+  await saveWorkspace();
+  log.info("Opened folder", chosen);
+  return true;
+}
+
+/** Close the project: the tree, the tabs and the working directory with it. */
+export async function closeFolder() {
+  if (folder === null) {
+    return true;
+  }
+  if (!(await closeEveryTab())) {
+    return false;
+  }
+  log.info("Closed folder", folder);
+  folder = null;
+  hideFolder();
+  syncKernelDirectory();
+  await saveWorkspace();
+  return true;
 }
 
 /**
@@ -85,6 +171,10 @@ function showInTab({ path = null, text = "" }) {
     showBuffer(open);
   }
   refreshTabs();
+  // Not awaited: nothing downstream depends on the tree having caught up, and
+  // making every open wait on a directory read would put the filesystem in
+  // front of the editor showing the file.
+  revealInTree(path).catch((error) => log.warn("Could not reveal in the tree:", error));
   return key;
 }
 
@@ -98,6 +188,7 @@ function showInTab({ path = null, text = "" }) {
 export async function selectTab(key) {
   showBuffer(key);
   refreshTabs();
+  await revealInTree(getCurrentFile());
   syncKernelDirectory();
   await saveWorkspace();
 }
@@ -138,6 +229,7 @@ export async function closeTab(key) {
   closeBuffer(key);
 
   refreshTabs();
+  await revealInTree(getCurrentFile());
   syncKernelDirectory();
   await saveWorkspace();
   log.info(`Closed a tab; ${bufferKeys().length} open`);
@@ -248,6 +340,7 @@ export async function saveWorkspace() {
     }
   }
   await setSetting(WORKSPACE_KEY, {
+    folder,
     tabs,
     active: active === null ? null : bufferPath(active),
   });
@@ -383,6 +476,20 @@ export async function restoreWorkspace() {
   });
   const opened = new Map();
 
+  // The folder first, so the tree is populated before the tabs appear and the
+  // kernel is told about the project rather than about a file inside it.
+  if (saved !== null && saved.folder !== null) {
+    try {
+      const stats = await filesystem.getStats(saved.folder);
+      if (stats.isDirectory) {
+        folder = saved.folder;
+        await showFolder(saved.folder);
+      }
+    } catch {
+      log.info(`Not reopening a folder that is no longer there: ${saved.folder}`);
+    }
+  }
+
   for (const tab of saved === null ? [] : saved.tabs) {
     try {
       const content = await filesystem.readFile(tab.path);
@@ -400,6 +507,9 @@ export async function restoreWorkspace() {
   const active = opened.get(chooseActive([...opened.keys()], saved.active));
   showBuffer(active);
   refreshTabs();
+  // Opens the way down to it: a restored session used to come back with the
+  // right file showing and a collapsed tree beside it.
+  await revealInTree(bufferPath(active));
   log.info(`Reopened ${opened.size} tab(s)`);
 
   // Written back at once, which is what retires the pre-tabs keys after a
@@ -419,8 +529,26 @@ export async function openFile() {
   if (entries.length !== 1) {
     return null;
   }
-  const path = entries[0];
-  const content = await filesystem.readFile(path);
+  return openPath(entries[0]);
+}
+
+/**
+ * Open one known path, which is what the tree's rows do.
+ *
+ * The failure is reported rather than logged, because the tree can be showing a
+ * listing that is a few seconds out of date - the file was there when the
+ * directory was read and is not there now - and a row that does nothing when
+ * clicked is a worse answer than a sentence saying why.
+ */
+export async function openPath(path) {
+  let content;
+  try {
+    content = await filesystem.readFile(path);
+  } catch (error) {
+    log.warn(`Could not open ${path}:`, error);
+    await notifyFailure("Could not open", `${path}\n\n${describe(error)}`);
+    return null;
+  }
   showInTab({ path, text: content });
   await rememberFolder(path);
   syncKernelDirectory();

@@ -73,7 +73,7 @@ test("on macOS the application menu comes first, so File survives as a menu", ()
   // This assertion is that bug.
   assert.deepEqual(
     menu("Darwin").map((entry) => entry.text),
-    ["build123d Studio", "File", "Edit", "Run"],
+    ["build123d Studio", "File", "View", "Edit", "Run"],
   );
 });
 
@@ -81,7 +81,7 @@ test("elsewhere there is no application menu, so About and Settings go to Help",
   for (const platform of ["Windows", "Linux"]) {
     assert.deepEqual(
       menu(platform).map((entry) => entry.text),
-      ["File", "Edit", "Run", "Help"],
+      ["File", "View", "Edit", "Run", "Help"],
       `${platform} should lead with File`,
     );
   }
@@ -99,10 +99,24 @@ test("File carries the items tabs will need, separated into groups", () => {
   const file = submenu(menu("Darwin"), "menu.file");
   assert.deepEqual(
     file.map((entry) => entry.text),
-    ["New", "Open File…", "Open Folder…", "-",
+    ["New", "Open File…", "Open Folder…", "Close Folder", "-",
       "Save", "Save As…", "Save All", "-",
       "Close", "Close All", "Close Tab"],
   );
+});
+
+test("View carries the sidebar toggle", () => {
+  const view = submenu(menu("Darwin"), "menu.view");
+  assert.deepEqual(view.map((entry) => entry.text), ["Toggle Sidebar"]);
+  assert.equal(view[0].id, MENU.TOGGLE_SIDEBAR);
+});
+
+test("Close Folder sits with Open Folder rather than with the tab items", () => {
+  // Both are project-scale commands - each closes every tab - so they belong
+  // together and above the separator that starts the saving group.
+  const file = submenu(menu("Linux"), "menu.file").map((entry) => entry.text);
+  assert.equal(file.indexOf("Close Folder"), file.indexOf("Open Folder…") + 1);
+  assert.ok(file.indexOf("Close Folder") < file.indexOf("Save"));
 });
 
 test("Run is built from the keymap, so the two cannot drift", () => {

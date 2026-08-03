@@ -26,12 +26,16 @@ import { copy, copyText, cut, initClipboard, paste, pasteInto } from "./editing.
 import { attachContextMenu } from "./contextmenu.js";
 import { confineSelection, textWithin } from "./selection.js";
 import { MENU } from "./menu.js";
-import { initMenu } from "./menubar.js";
+import { initMenu, refreshMenu, watchFolder } from "./menubar.js";
 import {
+  closeFolder,
   closeTab,
+  currentFolder,
   confirmDiscardAll,
   newFile,
   openFile,
+  openFolder,
+  openPath,
   restoreWorkspace,
   saveFile,
   saveWorkspace,
@@ -39,6 +43,7 @@ import {
   syncKernelDirectory,
 } from "./editor/files.js";
 import { initTabStrip } from "./editor/tabstrip.js";
+import { initSidebar, toggleSidebar } from "./editor/sidebar.js";
 import { initViewer, showLogo } from "./viewer/viewer.js";
 import { initVariables } from "./vars/explorer.js";
 import { awaitKernelRestart, showSettings } from "./settings.js";
@@ -145,6 +150,22 @@ function withTitle(action) {
     .then(action)
     .then(() => updateTitle())
     .catch((error) => log.error("Tab action failed:", error));
+}
+
+/**
+ * Run a folder command and rebuild the menu after it.
+ *
+ * Opening or closing a project is the only thing that changes which items are
+ * enabled, so it is also the only thing that has to rebuild the menu - there is
+ * no documented way to change one item, so the whole menu is rebuilt.
+ */
+async function withMenu(action) {
+  try {
+    await action();
+  } finally {
+    await refreshMenu();
+    await updateTitle();
+  }
 }
 
 /**
@@ -278,6 +299,9 @@ async function main() {
     onSelect: (key) => withTitle(() => selectTab(key)),
     onClose: (key) => withTitle(() => closeTab(key)),
   });
+  // Clicking a file in the tree opens it exactly as Open File does, tab and
+  // all - the tree is a way of finding files, not a second kind of buffer.
+  initSidebar({ onOpenFile: (path) => withTitle(() => openPath(path)) });
   initViewer();
   initVariables();
   initToolbar();
@@ -346,6 +370,10 @@ async function main() {
     },
   });
 
+  // Close Folder and Toggle Sidebar are greyed until there is a project, and
+  // the menu is rebuilt whenever that changes - see menubar.refreshMenu.
+  watchFolder(() => currentFolder() !== null);
+
   await initMenu({
     [MENU.ABOUT]: showInfo,
     [MENU.SETTINGS]: showSettings,
@@ -355,6 +383,9 @@ async function main() {
     [MENU.PASTE]: paste,
     [MENU.NEW]: newFile,
     [MENU.OPEN]: openFile,
+    [MENU.OPEN_FOLDER]: () => withMenu(openFolder),
+    [MENU.CLOSE_FOLDER]: () => withMenu(closeFolder),
+    [MENU.TOGGLE_SIDEBAR]: toggleSidebar,
     [MENU.SAVE]: () => saveFile(),
     [MENU.SAVE_AS]: () => saveFile({ saveAs: true }),
     "run.cell": () => runCell(),
@@ -367,6 +398,9 @@ async function main() {
   // files rather than the sample being replaced a moment later. Files that have
   // gone are left closed - see restoreWorkspace.
   await restoreWorkspace();
+  // A restored folder enables Close Folder and Toggle Sidebar, and the menu was
+  // built before the workspace was read.
+  await refreshMenu();
   await updateTitle();
 
   ipc.on("error", (frame) => log.error("sidecar error:", frame.context, frame.message));

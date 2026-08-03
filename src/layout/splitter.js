@@ -13,7 +13,11 @@ const SPLITTER_PX = 5;
 
 const listeners = new Set();
 
-const DEFAULTS = { rows: 0.62, columnsTop: 0.45, columnsBottom: 0.45 };
+// tree is a fraction of the whole window rather than a pixel width, like every
+// other boundary here, so a restored layout still makes sense on a different
+// display. 0.16 of a 1600-wide window is about 250px, which is a sensible
+// starting width for a file tree.
+const DEFAULTS = { rows: 0.62, columnsTop: 0.45, columnsBottom: 0.45, tree: 0.16 };
 
 let fractions = { ...DEFAULTS };
 let dragging = null;
@@ -23,6 +27,11 @@ function clamp(value) {
 }
 
 function apply() {
+  // The tree first: everything below measures containers whose width depends on
+  // how much of the window it is taking.
+  const workspace = document.getElementById("workspace");
+  workspace.style.setProperty("--col-tree", `${workspace.clientWidth * fractions.tree}px`);
+
   const app = document.getElementById("app");
   const height = app.clientHeight - SPLITTER_PX;
   app.style.setProperty("--row-top", `${height * fractions.rows}px`);
@@ -68,6 +77,7 @@ function startDragging(target) {
     dragging = target;
     event.target.classList.add("dragging");
     document.getElementById("app").classList.add("dragging");
+    document.getElementById("workspace").classList.add("dragging");
     event.preventDefault();
   };
 }
@@ -80,6 +90,9 @@ function onPointerMove(event) {
   if (dragging === "rows") {
     const rect = document.getElementById("app").getBoundingClientRect();
     fractions.rows = clamp((event.clientY - rect.top) / rect.height);
+  } else if (dragging === "tree") {
+    const rect = document.getElementById("workspace").getBoundingClientRect();
+    fractions.tree = clamp((event.clientX - rect.left) / rect.width);
   } else {
     const row = document.getElementById(dragging === "columnsTop" ? "row-top" : "row-bottom");
     const rect = row.getBoundingClientRect();
@@ -94,12 +107,22 @@ function onPointerUp() {
   }
   dragging = null;
   document.getElementById("app").classList.remove("dragging");
+  document.getElementById("workspace").classList.remove("dragging");
   for (const element of document.querySelectorAll(".splitter")) {
     element.classList.remove("dragging");
   }
   // Monaco relayouts itself; the viewer and the terminal need to be told.
   notifyResize();
   persist();
+}
+
+/**
+ * Re-measure and re-fit, for a change that alters how much room the panes have
+ * without anybody dragging anything - showing or hiding the file tree.
+ */
+export function refreshLayout() {
+  apply();
+  notifyResize();
 }
 
 /**
@@ -116,6 +139,7 @@ export async function initSplitters() {
   apply();
 
   const bindings = [
+    ["splitter-tree", "tree"],
     ["splitter-h", "rows"],
     ["splitter-v-top", "columnsTop"],
     ["splitter-v-bottom", "columnsBottom"],

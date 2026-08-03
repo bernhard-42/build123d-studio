@@ -181,6 +181,16 @@ Before the instance model, but not because it replaces it - see group 3, the two
 
 Plenty of it is pure and testable in the way the rest of the frontend now is: tab labels and their disambiguation, tree sorting and filtering, workspace serialisation, whether anything is dirty.
 
+**Open Folder, decided.** One folder at a time, which is VS Code's model without multi-root workspaces - and it is what makes "the project root" a well-defined thing for the kernel's working directory to be.
+
+**A folder is the project, and the project is the whole session.** That is the sentence the rest follows from. Both folder commands take everything with them rather than editing part of it: Open Folder is a context reset and Close Folder is a context close, so the answer to "what happens to my tabs" is always all of them, never some. The alternative - keeping the tabs that happened to live outside the old folder - was considered and dropped, because "which tabs survive this" then depends on where each file sits, which is a rule the user has to hold in their head to predict what a menu item will do.
+
+- **Exactly one folder is open at a time**, or none. Files from anywhere else can still be opened alongside it and are ordinary tabs; what is singular is the folder, not where the files come from
+- **Open Folder closes every tab first**, asking about any that are dirty, then opens the new root with nothing showing. It is a reset: the previous project leaves nothing behind
+- **Close Folder closes every tab too** and returns to the no-folder state, where the working directory follows the active file again as Phase 1 chose. Without it there is no way back to that behaviour once any folder has been opened
+- **The working directory is the folder root and stays there**, however deep the file being edited sits inside it, and whether or not the active tab is inside the folder at all. A hierarchy is one project, and a project has one place its relative paths resolve against. This is the whole reason one folder had to be singular
+- Cancelling the save prompt for any dirty tab cancels the whole command, folder and all, exactly as it cancels a quit
+
 **Decided.** Six questions that changed the design rather than the code, answered before any of it was written.
 
 - **The kernel's working directory follows the folder when there is one, and the file when there is not.** No folder open: the active file's directory, exactly as Phase 1 chose, so `export_step(part, "bracket.step")` still lands beside `bracket.py` - and $HOME until the buffer has been saved anywhere, which is already what an unsaved buffer does today. Folder open: the project root, and it stays there rather than moving as tabs are switched. Both halves are what VS Code does - a workspace root when there is a workspace, the file's own directory when there is not - so the two readings of "like VS Code" agree, and the Phase 1 promise is kept in precisely the case it was made for, a single script opened on its own
@@ -249,6 +259,28 @@ Its own group rather than a usability quick win, because it is the first place f
 - the columns of the variable explorer need to be resizable. currently type uses way too much space
 - Show the repr in an expanded variable explorer row. Removing bounding box, volume and area is done - they cost 19 s, 2.8 s and 2.2 s on a real assembly and hung the pane
 - Update to uv 0.12.1
+- Add this as default coed for new files:
+
+  ```
+    # Default code for new files. It can be adapted in settings
+    #
+    # Note: lines starting with "# %%" are cell boundaries for "Run cell"
+    #
+    # Ctrl/Cmd+Enter runs the cell at the cursor, Shift+Enter the selection or
+    # current line, Ctrl/Cmd+Shift+Enter the whole file. Output appears in the
+    # console below as In [n]:, and the kernel is shared with it - so you can
+    # poke at "part" down there straight after running this.
+
+    from build123d import *
+    from build123d_studio import show
+
+    # %%
+
+    b = Box(1,2,3)
+
+    show(b)
+    # %%
+  ```
 
 ### 6. OCP VS Code integration
 

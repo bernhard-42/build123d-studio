@@ -35,11 +35,13 @@ import { MENU, buildMenu } from "./menu.js";
 import { chordsFor } from "./keybindings.js";
 import * as log from "./log.js";
 
-// Items that need multi-file support. Built now so the menu's shape is settled,
-// disabled until group 2 gives them something to do - a greyed-out Close Tab
-// says "not yet" where a missing one says nothing at all.
+// Items that still need multi-file support. Built when the menu's shape was
+// settled and disabled until group 2 gives them something to do - a greyed-out
+// Close Tab says "not yet" where a missing one says nothing at all.
+//
+// Open Folder, Close Folder and Toggle Sidebar have left this set: piece 3 is
+// what they were waiting for. Save All, Close and Close All are piece 4.
 const NEEDS_TABS = new Set([
-  MENU.OPEN_FOLDER,
   MENU.SAVE_ALL,
   MENU.CLOSE,
   MENU.CLOSE_ALL,
@@ -55,6 +57,7 @@ const FILE_CHORDS = {
   [MENU.NEW]: "mod+n",
   [MENU.OPEN]: "mod+o",
   [MENU.SAVE]: "mod+s",
+  [MENU.TOGGLE_SIDEBAR]: "mod+b",
   [MENU.CUT]: "mod+x",
   [MENU.COPY]: "mod+c",
   [MENU.PASTE]: "mod+v",
@@ -62,6 +65,10 @@ const FILE_CHORDS = {
 
 let handlers = {};
 let clipboardIsNative = false;
+// Asked at rebuild time rather than stored, so the menu cannot disagree with
+// the application about whether a folder is open. Injected to keep this file
+// from importing the editor.
+let hasFolder = () => false;
 
 /**
  * Whether the platform's own clipboard roles are used.
@@ -124,6 +131,10 @@ function onMenuItemClicked(event) {
  * @param {object} commands handlers by menu id; the clipboard ones are ignored
  *   where the platform's own roles are used instead
  */
+export function watchFolder(predicate) {
+  hasFolder = predicate;
+}
+
 export async function initMenu(commands) {
   clipboardIsNative = useNativeClipboard(NL_OS);
   handlers = { ...commands };
@@ -149,7 +160,16 @@ export async function refreshMenu() {
   const menu = buildMenu({
     platform: NL_OS,
     chordFor,
-    isEnabled: (id) => !NEEDS_TABS.has(id),
+    isEnabled: (id) => {
+      if (NEEDS_TABS.has(id)) {
+        return false;
+      }
+      // Both need a project to act on. Rebuilt by whoever opens or closes one.
+      if (id === MENU.CLOSE_FOLDER || id === MENU.TOGGLE_SIDEBAR) {
+        return hasFolder();
+      }
+      return true;
+    },
     nativeClipboard: clipboardIsNative,
     runCommands: COMMANDS,
   });

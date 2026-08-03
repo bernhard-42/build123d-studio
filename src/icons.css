@@ -67,6 +67,21 @@
   content: "\f053";
 }
 
+/* refresh */
+.icon-refresh::before {
+  content: "\e5d5";
+}
+
+/* chevron_right */
+.icon-chevron::before {
+  content: "\e5cc";
+}
+
+/* left_panel_open */
+.icon-sidebar::before {
+  content: "\f716";
+}
+
 /* deployed_code_update */
 .icon-upgrade::before {
   content: "\f5f4";

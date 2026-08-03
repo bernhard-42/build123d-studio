@@ -1,6 +1,7 @@
 import { window as neuWindow } from "@neutralinojs/lib";
 
 import { newFile, openFile, saveFile } from "./editor/files.js";
+import { toggleSidebar } from "./editor/sidebar.js";
 import {
   focusAt,
   getCurrentFile,
@@ -85,6 +86,7 @@ export function initToolbar() {
       await saveFile();
       await updateTitle();
     }),
+    "btn-sidebar": () => withErrorReporting("Toggle sidebar", toggleSidebar),
     "btn-run-file": runFile,
     "btn-run-cell": () => runCell(),
     "btn-run-sel": () => runSelectionOrLine(),
@@ -139,7 +141,12 @@ export function initToolbar() {
     if (event.shiftKey || event.altKey) {
       return;
     }
-    if (event.key === "n") {
+    if (event.key === "b") {
+      // Cmd-B / Ctrl-B, as VS Code binds it. Global rather than a Monaco
+      // action, because showing the tree is worth doing from the console too.
+      event.preventDefault();
+      actions["btn-sidebar"]();
+    } else if (event.key === "n") {
       event.preventDefault();
       actions["btn-new"]();
     } else if (event.key === "o") {

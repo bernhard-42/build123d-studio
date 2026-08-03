@@ -318,6 +318,135 @@ html body {
   -webkit-user-select: none !important;
 }
 
+/* The folder tree, and the row that holds it beside the pane grid.
+
+   Flex rather than grid: the tree and its splitter are hidden outright when no
+   folder is open or the tree is toggled away, and a hidden flex child simply
+   stops taking part, where a grid would leave its column behind. */
+
+.workspace {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.pane-tree {
+  display: flex;
+  flex: 0 0 var(--col-tree, 250px);
+  flex-direction: column;
+  min-width: 0;
+  border-right: 1px solid var(--border);
+  background: var(--bg-pane);
+}
+
+.pane-tree[hidden] {
+  display: none;
+}
+
+/* #app has to be allowed to shrink, or the tree pushes the panes off the
+   right-hand edge instead of taking room from them. min-width: 0 is what lets
+   a flex item go below its content's intrinsic width. */
+.workspace > .app {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.tree-header {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 4px 4px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.tree-root {
+  flex: 1 1 auto;
+  overflow: hidden;
+  color: var(--fg-dim);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.tree-body {
+  flex: 1 1 auto;
+  padding: 4px 0;
+  overflow: auto;
+  scrollbar-width: thin;
+}
+
+.tree-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding-top: 2px;
+  padding-bottom: 2px;
+  padding-right: 8px;
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+}
+
+.tree-row:hover {
+  background: var(--hover);
+}
+
+/* The file the editor is showing. Matches the active tab so the two read as
+   one selection rather than two independent highlights. */
+.tree-row.tree-active {
+  background: var(--bg);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.tree-row.tree-active > .tree-label {
+  color: var(--fg);
+}
+
+/* Fixed width whether or not there is a glyph in it, so filenames line up down
+   the column instead of stepping in and out with the folders beside them. */
+.tree-twisty {
+  display: flex;
+  flex: 0 0 16px;
+  align-items: center;
+  justify-content: center;
+  color: var(--fg-dim);
+}
+
+.tree-twisty .icon {
+  width: 16px;
+  height: 16px;
+  transition: transform 0.1s ease;
+}
+
+.tree-twisty .icon::before {
+  font-size: 16px;
+}
+
+/* One glyph, turned: a chevron pointing right when the folder is closed and
+   down when it is open, which is the same shape every file tree uses. */
+.tree-twisty .tree-open {
+  transform: rotate(90deg);
+}
+
+.tree-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tree-dir > .tree-label {
+  color: var(--fg);
+}
+
+.tree-file > .tree-label {
+  color: var(--fg-dim);
+}
+
 /* The tab strip above the editor.
 
    Overflow scrolls rather than wrapping or collapsing into a dropdown - a
@@ -640,6 +769,23 @@ html body {
 .splitter-v {
   grid-column: 2;
   cursor: col-resize;
+}
+
+/* The tree's splitter lives in a flex row rather than in one of the pane grids,
+   where grid-column means nothing - so it had no width at all and there was
+   five pixels of nothing to grab. Its size has to be stated here instead. */
+#splitter-tree {
+  flex: 0 0 var(--splitter);
+}
+
+#splitter-tree[hidden] {
+  display: none;
+}
+
+/* Mid-drag the tree must stop swallowing mousemove, exactly as the panes do. */
+.workspace.dragging .pane-tree {
+  pointer-events: none;
+  user-select: none;
 }
 
 .splitter-h {

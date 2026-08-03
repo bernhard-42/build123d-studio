@@ -62,6 +62,21 @@
          xterm size themselves from their containers, so those containers must
          have real dimensions before either is created. -->
     <div id="shell" class="shell">
+      <!-- The folder tree sits beside the whole pane grid rather than inside
+           the editor pane, so it is as tall as the window the way VS Code's is,
+           and so the console and the viewer are not squeezed by it. It is
+           absent entirely until a folder is opened. -->
+      <div id="workspace" class="workspace">
+        <aside class="pane-tree" id="pane-tree" hidden>
+          <div class="tree-header">
+            <span class="tree-root" id="tree-root"></span>
+            <button class="btn" id="tree-refresh" title="Refresh the tree">
+              <span class="icon icon-refresh"></span>
+            </button>
+          </div>
+          <div class="tree-body" id="tree-body"></div>
+        </aside>
+        <div class="splitter splitter-v" id="splitter-tree" hidden></div>
       <!-- Two independent rows rather than one 2x2 grid: a grid shares its
            columns down the whole table, so a single vertical splitter would
            force the console/variables split to match the editor/viewer one.
@@ -74,6 +89,10 @@
                  icons.css rather than by the usual ligature text, because subsetting
                  to a handful of glyphs drops the ligature tables that make names work. -->
             <div class="toolbar">
+              <button class="btn" id="btn-sidebar" title="Toggle the file tree">
+                <span class="icon icon-sidebar"></span>
+              </button>
+              <span class="toolbar-sep"></span>
               <button class="btn" id="btn-new" title="New File">
                 <span class="icon icon-new"></span>
               </button>
@@ -133,6 +152,7 @@
           <div class="splitter splitter-v" id="splitter-v-bottom"></div>
           <div class="pane pane-vars" id="pane-vars"></div>
         </div>
+      </div>
       </div>
     </div>
 
