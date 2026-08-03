@@ -231,10 +231,11 @@ Done, in five commits. What changed, and what it cost to find out.
     #
     # Note: lines starting with "# %%" are cell boundaries for "Run cell"
     #
-    # Ctrl/Cmd+Enter runs the cell at the cursor, Shift+Enter the selection or
-    # current line, Ctrl/Cmd+Shift+Enter the whole file. Output appears in the
-    # console below as In [n]:, and the kernel is shared with it - so you can
-    # poke at "part" down there straight after running this.
+    # Shift+Enter runs the cell at the cursor and moves on, Ctrl/Cmd+Enter runs
+    # it and stays, Ctrl/Cmd+Shift+Enter runs the selection or the current line,
+    # and F5 runs the whole file. Output appears in the console below as In [n]:,
+    # and the kernel is shared with it - so you can poke at "b" down there
+    # straight after running this.
 
     from build123d import *
     from build123d_studio import show
