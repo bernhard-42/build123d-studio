@@ -13,7 +13,7 @@ import {
   sendText,
 } from "./console/terminal.js";
 import {
-  focusAt,
+  focus as focusEditor,
   hasTextFocus,
   initEditor,
   replaceSelection,
@@ -28,15 +28,17 @@ import { confineSelection, textWithin } from "./selection.js";
 import { MENU } from "./menu.js";
 import { initMenu } from "./menubar.js";
 import {
-  confirmDiscardChanges,
-  lastViewState,
+  closeTab,
+  confirmDiscardAll,
   newFile,
   openFile,
-  rememberPosition,
-  restoreLastFile,
+  restoreWorkspace,
   saveFile,
+  saveWorkspace,
+  selectTab,
   syncKernelDirectory,
 } from "./editor/files.js";
+import { initTabStrip } from "./editor/tabstrip.js";
 import { initViewer, showLogo } from "./viewer/viewer.js";
 import { initVariables } from "./vars/explorer.js";
 import { awaitKernelRestart, showSettings } from "./settings.js";
@@ -74,7 +76,7 @@ async function shutdown() {
   }
   asking = true;
   try {
-    if (!(await confirmDiscardChanges())) {
+    if (!(await confirmDiscardAll())) {
       log.info("Quit cancelled: unsaved changes");
       return;
     }
@@ -88,9 +90,9 @@ async function shutdown() {
 
   shuttingDown = true;
   try {
-    await rememberPosition();
+    await saveWorkspace();
   } catch (error) {
-    log.warn("Could not remember the caret position:", error);
+    log.warn("Could not remember the open tabs:", error);
   }
   try {
     await ipc.stopSidecar();
@@ -129,6 +131,21 @@ guardAgainstReload();
 // And the context menu that carries a Reload item of its own. Same reason, a
 // different route in - see reload.js.
 suppressNativeContextMenu();
+
+/**
+ * Run a tab action and let the window title follow it.
+ *
+ * The title carries the open file and whether it is saved, so selecting or
+ * closing a tab changes it - and neither goes through the toolbar buttons that
+ * already update it. Nothing awaits a click, so the failure has to be caught
+ * here or it becomes an unhandled rejection nobody sees.
+ */
+function withTitle(action) {
+  Promise.resolve()
+    .then(action)
+    .then(() => updateTitle())
+    .catch((error) => log.error("Tab action failed:", error));
+}
 
 /**
  * Offer a way back when the Python backend dies during a session.
@@ -257,6 +274,10 @@ async function main() {
   await initSplitters();
 
   initEditor();
+  initTabStrip({
+    onSelect: (key) => withTitle(() => selectTab(key)),
+    onClose: (key) => withTitle(() => closeTab(key)),
+  });
   initViewer();
   initVariables();
   initToolbar();
@@ -342,10 +363,10 @@ async function main() {
     "run.file": runFile,
   });
 
-  // Before the splash lifts, so the window is revealed already showing the file
-  // rather than the sample being replaced a moment later. A missing file falls
-  // back to the sample and is forgotten - see restoreLastFile.
-  const reopened = await restoreLastFile();
+  // Before the splash lifts, so the window is revealed already showing the
+  // files rather than the sample being replaced a moment later. Files that have
+  // gone are left closed - see restoreWorkspace.
+  await restoreWorkspace();
   await updateTitle();
 
   ipc.on("error", (frame) => log.error("sidecar error:", frame.context, frame.message));
@@ -406,8 +427,9 @@ async function main() {
   // deciding the UI, not a decision: the sidecar becomes ready seconds after
   // the window appears, so anything typed in between went to the editor and
   // then the caret jumped away mid-sentence.
-  // Only restore a position when the file it described actually came back.
-  focusAt(reopened === null ? null : lastViewState());
+  // Focus only: restoreWorkspace has already put each tab's caret back where it
+  // was left, and focusAt with no state would send this one to line 1.
+  focusEditor();
 
   try {
     const ready = await ipc.startSidecar({

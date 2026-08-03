@@ -2,16 +2,25 @@ import { filesystem, os } from "@neutralinojs/lib";
 
 import {
   SAMPLE_SOURCE,
+  activeBufferKey,
+  bufferCaret,
+  bufferForPath,
   bufferKeys,
+  bufferPath,
+  captureActiveCaret,
   closeBuffer,
   getCurrentFile,
   getValue,
-  getViewState,
+  isBufferDirty,
   isDirty,
   markSaved,
   openBuffer,
   setCurrentFile,
+  showBuffer,
+  showNoBuffer,
 } from "./monaco.js";
+import { refreshTabs } from "./tabstrip.js";
+import { chooseActive, readWorkspace } from "./workspace.js";
 import { askThreeWay, notifyFailure } from "../confirm.js";
 import { writeFileSafely } from "./safewrite.js";
 import { getSetting, setSetting } from "../store.js";
@@ -60,28 +69,108 @@ export function syncKernelDirectory() {
 }
 
 /**
- * Show text as a buffer of its own, and close whatever was open before it.
+ * Open text as a tab and show it, or focus the tab it is already in.
  *
- * One buffer at a time is all the UI can express today: there is no tab strip
- * yet, so a second one would be open with no way to reach it - and unreachable
- * is exactly how a buffer with unsaved changes in it gets lost. Every caller
- * here has already offered to save through confirmDiscardChanges.
+ * This replaces the previous version, which closed every other buffer because
+ * there was no way to reach a second one. There is now.
  *
- * The order matters and is the reason this is one function rather than two calls
- * at five sites. The new buffer is shown *first* and the old ones closed after,
- * because closing disposes a Monaco model and disposing the one the editor is
- * pointed at leaves it showing a dead document.
+ * A path that is already open is focused rather than opened again, and never
+ * re-read from disk. Two tabs over two models of one file are two independent
+ * sets of edits, and whichever is saved last would silently win.
  */
-function showOnly({ path = null, text = "" }) {
-  const key = openBuffer({ path, text });
-  for (const other of bufferKeys()) {
-    if (other !== key) {
-      closeBuffer(other);
-    }
+function showInTab({ path = null, text = "" }) {
+  const open = path === null ? null : bufferForPath(path);
+  const key = open === null ? openBuffer({ path, text }) : open;
+  if (open !== null) {
+    showBuffer(open);
   }
+  refreshTabs();
   return key;
 }
 
+/**
+ * Show a tab, as clicking it does.
+ *
+ * The workspace is written on every switch rather than only at quit, so that
+ * which tab was active survives a crash as well as a clean exit. It is one
+ * settings write, which is what selecting a tab already cost.
+ */
+export async function selectTab(key) {
+  showBuffer(key);
+  refreshTabs();
+  syncKernelDirectory();
+  await saveWorkspace();
+}
+
+/**
+ * Close a tab, offering to save it first.
+ *
+ * Shown before it is asked about, even when it was not the tab on screen. The
+ * prompt names a file and answering "Save" saves the buffer the editor is
+ * showing, so asking about a background tab while another is displayed would
+ * describe one file and write another.
+ *
+ * The replacement is attached before the closed model is disposed, which is
+ * buffers.close's stated requirement: disposing the model the editor is pointed
+ * at leaves it showing a dead document. Closing the last tab leaves no tab at
+ * all, which is what group 2 decided.
+ *
+ * @returns {Promise<boolean>} false if the user cancelled
+ */
+export async function closeTab(key) {
+  if (activeBufferKey() !== key) {
+    showBuffer(key);
+    refreshTabs();
+  }
+  if (!(await confirmDiscardChanges())) {
+    return false;
+  }
+
+  const keys = bufferKeys();
+  const index = keys.indexOf(key);
+  const remaining = keys.filter((other) => other !== key);
+  if (remaining.length === 0) {
+    showNoBuffer();
+  } else {
+    // The tab that took its place, or the last one when the closed tab was.
+    showBuffer(remaining[Math.min(index, remaining.length - 1)]);
+  }
+  closeBuffer(key);
+
+  refreshTabs();
+  syncKernelDirectory();
+  await saveWorkspace();
+  log.info(`Closed a tab; ${bufferKeys().length} open`);
+  return true;
+}
+
+/**
+ * Offer to save every tab that differs from disk. Returns false if cancelled.
+ *
+ * Once per dirty file, which is not where this ends up: group 2's piece 4 makes
+ * it a single prompt listing all of them, because being asked five times in a
+ * row is how people learn to dismiss the dialog without reading it. It is here
+ * now rather than then because the moment a second tab can exist, quitting has
+ * to account for it - and the alternative, asking only about the tab on screen,
+ * loses the other four without a word.
+ */
+export async function confirmDiscardAll() {
+  for (const key of bufferKeys()) {
+    if (!isBufferDirty(key)) {
+      continue;
+    }
+    if (activeBufferKey() !== key) {
+      showBuffer(key);
+      refreshTabs();
+    }
+    if (!(await confirmDiscardChanges())) {
+      return false;
+    }
+  }
+  return true;
+}
+
+const WORKSPACE_KEY = "workspace";
 const LAST_FILE_KEY = "lastFile";
 const LAST_POSITION_KEY = "lastPosition";
 const LAST_SCROLL_KEY = "lastScrollTop";
@@ -128,37 +217,40 @@ async function rememberFolder(path) {
 }
 
 /**
- * Remember where the caret and viewport are, for the next start.
+ * The session, written so the next start can put it back.
  *
- * Written at quit rather than as the caret moves: the alternative is a debounced
- * write on every cursor pause, which is a lot of disk traffic for a
- * convenience. The cost is that a crash loses the position - the file itself is
- * never at risk, only the place in it.
+ * Every open tab, in strip order, with where its caret was left, and which one
+ * was showing. Replaces lastFile/lastPosition/lastScrollTop, which described a
+ * single file because there could only be one.
+ *
+ * The caret of the tab on screen is captured here: every other tab recorded its
+ * position when it was switched away from, and the one being looked at has not
+ * been switched away from yet.
+ *
+ * Unsaved buffers are left out. Only a path is ever remembered, never a
+ * buffer's contents - reopening a file means seeing what is on disk, including
+ * edits made elsewhere since - so a buffer with no path has nothing to reopen
+ * from, and inventing a scratch file to hold it would be a second place work
+ * could go missing.
+ *
+ * The active tab is stored as its path rather than its index, because a file
+ * that has been deleted since is simply not reopened and every index after it
+ * would shift.
  */
-export async function rememberPosition() {
-  if (getCurrentFile() === null) {
-    // Nothing was reopened, so there is no file the position would belong to.
-    return;
+export async function saveWorkspace() {
+  captureActiveCaret();
+  const active = activeBufferKey();
+  const tabs = [];
+  for (const key of bufferKeys()) {
+    const path = bufferPath(key);
+    if (path !== null) {
+      tabs.push({ path, caret: bufferCaret(key) });
+    }
   }
-  const view = getViewState();
-  if (view === null) {
-    return;
-  }
-  await setSetting(LAST_POSITION_KEY, { line: view.line, column: view.column });
-  await setSetting(LAST_SCROLL_KEY, view.scrollTop);
-}
-
-/** The remembered caret and viewport, or null. */
-export function lastViewState() {
-  const position = getSetting(LAST_POSITION_KEY);
-  if (typeof position !== "object" || position === null) {
-    return null;
-  }
-  return {
-    line: position.line,
-    column: position.column,
-    scrollTop: getSetting(LAST_SCROLL_KEY),
-  };
+  await setSetting(WORKSPACE_KEY, {
+    tabs,
+    active: active === null ? null : bufferPath(active),
+  });
 }
 
 /**
@@ -236,14 +328,12 @@ export function newFileTemplate() {
 }
 
 export async function newFile() {
-  if (!(await confirmDiscardChanges())) {
-    return false;
-  }
-  showOnly({ text: newFileTemplate() });
-  await setSetting(LAST_FILE_KEY, null);
-  await setSetting(LAST_POSITION_KEY, null);
-  await setSetting(LAST_SCROLL_KEY, null);
+  // No longer asks about the current buffer, because it no longer replaces it.
+  // New opens a tab beside what is already there, so there is nothing to
+  // discard and nothing to confirm.
+  showInTab({ text: newFileTemplate() });
   syncKernelDirectory();
+  await saveWorkspace();
   log.info("New file");
   return true;
 }
@@ -265,49 +355,62 @@ export async function newFile() {
  */
 async function startWithSampleOrEmpty() {
   if (getSetting(SAMPLE_SHOWN_KEY) === true) {
-    showOnly({ text: "" });
+    showInTab({ text: "" });
     return;
   }
-  showOnly({ text: SAMPLE_SOURCE });
+  showInTab({ text: SAMPLE_SOURCE });
   await setSetting(SAMPLE_SHOWN_KEY, true);
   log.info("First start: showing the sample");
 }
 
 /**
- * Reopen whatever was last open, if it is still there.
+ * Reopen the tabs from the previous session, and show the one that was active.
  *
- * Only a path is remembered, never the buffer's contents: reopening the file
- * means seeing what is on disk, including edits made elsewhere since. Anything
- * else would quietly resurrect a stale copy over the real one.
+ * Only paths are remembered, never contents, so this is what is on disk now -
+ * including anything edited elsewhere in between. A file that has since been
+ * renamed, deleted or left on an unmounted volume is quietly not reopened
+ * rather than reported: it is one line in the log, and a dialog on every start
+ * about a file somebody deliberately moved would be worse than the gap.
+ *
+ * @returns {Promise<string|null>} the path shown, or null when nothing reopened
  */
-export async function restoreLastFile() {
-  const path = getSetting(LAST_FILE_KEY);
-  if (typeof path === "string" && path !== "") {
+export async function restoreWorkspace() {
+  const saved = readWorkspace({
+    workspace: getSetting(WORKSPACE_KEY),
+    lastFile: getSetting(LAST_FILE_KEY),
+    lastPosition: getSetting(LAST_POSITION_KEY),
+    lastScrollTop: getSetting(LAST_SCROLL_KEY),
+  });
+  const opened = new Map();
+
+  for (const tab of saved === null ? [] : saved.tabs) {
     try {
-      const content = await filesystem.readFile(path);
-      showOnly({ path, text: content });
-      log.info("Reopened", path);
-      return path;
+      const content = await filesystem.readFile(tab.path);
+      opened.set(tab.path, openBuffer({ path: tab.path, text: content, caret: tab.caret }));
     } catch {
-      // Renamed, deleted, or on a volume that is not mounted. Forgetting it
-      // means one quiet fallback rather than the same failure every start.
-      log.info(`Last file is no longer readable, starting fresh: ${path}`);
-      await setSetting(LAST_FILE_KEY, null);
-      await setSetting(LAST_POSITION_KEY, null);
-      await setSetting(LAST_SCROLL_KEY, null);
+      log.info(`Not reopening a file that is no longer readable: ${tab.path}`);
     }
   }
-  await startWithSampleOrEmpty();
-  return null;
+
+  if (opened.size === 0) {
+    await startWithSampleOrEmpty();
+    return null;
+  }
+
+  const active = opened.get(chooseActive([...opened.keys()], saved.active));
+  showBuffer(active);
+  refreshTabs();
+  log.info(`Reopened ${opened.size} tab(s)`);
+
+  // Written back at once, which is what retires the pre-tabs keys after a
+  // migration - the next start finds a workspace and never looks at them again.
+  await saveWorkspace();
+  return bufferPath(active);
 }
 
 export async function openFile() {
-  // Opening replaces the buffer exactly as New does, so it has to ask first.
-  // Asked before the file chooser rather than after, so the user is not made to
-  // pick a file and only then told the choice is about to cost them work.
-  if (!(await confirmDiscardChanges())) {
-    return null;
-  }
+  // It used to ask about the open buffer before showing the chooser, because
+  // opening replaced it. Opening adds a tab now, so there is nothing at risk.
   const entries = await os.showOpenDialog("Open a Python file", {
     defaultPath: await startingFolder(),
     filters: FILTERS,
@@ -318,15 +421,10 @@ export async function openFile() {
   }
   const path = entries[0];
   const content = await filesystem.readFile(path);
-  showOnly({ path, text: content });
-  await setSetting(LAST_FILE_KEY, path);
+  showInTab({ path, text: content });
   await rememberFolder(path);
-  // The remembered position belonged to the file being replaced. Quitting
-  // normally would overwrite it anyway, but not if the app dies first - and
-  // reopening a new file at the old one's line 380 is a puzzle, not a feature.
-  await setSetting(LAST_POSITION_KEY, null);
-  await setSetting(LAST_SCROLL_KEY, null);
   syncKernelDirectory();
+  await saveWorkspace();
   log.info("Opened", path);
   return path;
 }
@@ -420,9 +518,10 @@ export async function saveFile({ saveAs = false } = {}) {
   }
   setCurrentFile(path);
   markSaved();
-  await setSetting(LAST_FILE_KEY, path);
+  refreshTabs();
   await rememberFolder(path);
   syncKernelDirectory();
+  await saveWorkspace();
   log.info("Saved", path);
   return path;
 }

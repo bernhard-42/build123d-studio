@@ -318,6 +318,122 @@ html body {
   -webkit-user-select: none !important;
 }
 
+/* The tab strip above the editor.
+
+   Overflow scrolls rather than wrapping or collapsing into a dropdown - a
+   second row would steal height from the editor on exactly the projects that
+   need it most, and a dropdown is a second place to look for a file that is
+   already on screen somewhere. The scrollbar is thin and the strip keeps a
+   fixed height, so the editor below it never moves. */
+
+.tab-strip {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: stretch;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+}
+
+.tab-strip[hidden] {
+  display: none;
+}
+
+.tab-strip::-webkit-scrollbar {
+  height: 4px;
+}
+
+.tab-strip::-webkit-scrollbar-thumb {
+  border-radius: 2px;
+  background: var(--border);
+}
+
+.tab {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: baseline;
+  gap: 6px;
+  max-width: 240px;
+  padding: 5px 8px 5px 12px;
+  border-right: 1px solid var(--border);
+  color: var(--fg-dim);
+  font-size: 12px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.tab:hover {
+  background: var(--hover);
+}
+
+/* The showing tab is lit from above rather than merely tinted: a background
+   change alone is hard to pick out along a row of near-identical labels. */
+.tab-active {
+  background: var(--bg-pane);
+  color: var(--fg);
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+
+.tab-label {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* The folder that tells two files of one name apart - see tabs.js. Dimmer and
+   smaller than the filename, because it is the answer to a question the eye
+   only asks after it has found two identical labels. */
+.tab-hint {
+  flex: 0 1 auto;
+  overflow: hidden;
+  color: var(--fg-dim);
+  font-size: 11px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  opacity: 0.8;
+}
+
+/* One control, two appearances: the close cross, which becomes a dot while the
+   buffer differs from disk and goes back to a cross on hover. Two separate
+   indicators would change the tab's width as it became dirty and shuffle the
+   whole strip under the pointer. */
+.tab-close {
+  flex: 0 0 auto;
+  align-self: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.tab-close::before {
+  content: "×";
+  font-size: 14px;
+}
+
+.tab-close.tab-dirty::before {
+  content: "●";
+  font-size: 10px;
+}
+
+.tab-close.tab-dirty:hover::before {
+  content: "×";
+  font-size: 14px;
+}
+
+.tab-close:hover {
+  background: var(--hover);
+  color: var(--fg);
+}
+
 /* Cell markers in the editor */
 
 .cell-marker-line {

@@ -53,7 +53,7 @@ export function initBuffers(modelOperations) {
  * Does not activate it. Which buffer the editor shows is a separate decision and
  * belongs to the caller that is about to attach the model.
  */
-export function open({ path = null, text = "" }) {
+export function open({ path = null, text = "", caret = null }) {
   const key = nextKey;
   nextKey += 1;
   const model = models.create(text);
@@ -63,6 +63,7 @@ export function open({ path = null, text = "" }) {
     model,
     savedVersionId: models.versionOf(model),
     viewState: null,
+    caret,
   });
   return key;
 }
@@ -101,11 +102,39 @@ export function get(key) {
   return buffers.get(key) ?? null;
 }
 
+/**
+ * The buffer already showing a path, or null.
+ *
+ * So that opening a file that is open focuses its tab instead of adding a
+ * second one for the same document - two tabs over two models of one file is
+ * two sets of edits, and whichever is saved last wins silently.
+ *
+ * Compared exactly. A path that reaches here has been through Neutralino's
+ * getJoinedPath, which is its only realpath, so the two spellings of one file
+ * that would matter have already been resolved to the same string.
+ */
+export function findByPath(path) {
+  if (typeof path !== "string" || path === "") {
+    return null;
+  }
+  for (const buffer of buffers.values()) {
+    if (buffer.path === path) {
+      return buffer.key;
+    }
+  }
+  return null;
+}
+
 export function activate(key) {
   if (!buffers.has(key)) {
     throw new Error(`No such buffer: ${key}`);
   }
   activeKey = key;
+}
+
+/** Show none of them, which is what closing the last tab leaves behind. */
+export function deactivate() {
+  activeKey = null;
 }
 
 export function activeKeyOf() {
@@ -170,4 +199,31 @@ export function viewState(key) {
     return null;
   }
   return buffer.viewState;
+}
+
+/**
+ * Where the caret and viewport were, in a form that survives a restart.
+ *
+ * Kept beside the view state rather than instead of it, because the two answer
+ * different questions. Monaco's view state restores far more - folded regions,
+ * the exact scroll - but it is Monaco's own shape, undocumented and free to
+ * change between versions, so writing it into settings.json would be storing a
+ * dependency's internals and reading them back a release later. A line, a column
+ * and a scroll offset are ours, and restoreLastFile has clamped them against a
+ * file that changed on disk since Phase 1.
+ */
+export function setCaret(key, caret) {
+  const buffer = buffers.get(key);
+  if (buffer === undefined) {
+    return;
+  }
+  buffer.caret = caret;
+}
+
+export function caret(key) {
+  const buffer = buffers.get(key);
+  if (buffer === undefined) {
+    return null;
+  }
+  return buffer.caret;
 }

@@ -224,8 +224,8 @@ export function getValue() {
  * it, so Cmd-Z in a freshly opened file could put back a line belonging to a
  * file that was no longer on screen.
  */
-export function openBuffer({ path = null, text = "" }) {
-  const key = buffers.open({ path, text });
+export function openBuffer({ path = null, text = "", caret = null }) {
+  const key = buffers.open({ path, text, caret });
   showBuffer(key);
   return key;
 }
@@ -241,6 +241,7 @@ export function showBuffer(key) {
   const outgoing = buffers.activeKeyOf();
   if (outgoing !== null && currentModel() !== null) {
     buffers.setViewState(outgoing, editor.saveViewState());
+    buffers.setCaret(outgoing, getViewState());
   }
   clearCellDecorations();
 
@@ -250,8 +251,32 @@ export function showBuffer(key) {
   const state = buffers.viewState(key);
   if (state !== null) {
     editor.restoreViewState(state);
+  } else {
+    // Never shown in this session, so there is no Monaco view state - only the
+    // line and column carried over from the last one, if this tab was restored.
+    placeCaret(buffers.caret(key));
   }
   refreshCellDecorations();
+  notifyDirtyChanged();
+}
+
+/**
+ * Show no buffer at all, which is what closing the last tab leaves behind.
+ *
+ * A decided behaviour rather than a fallback: an editor with no tab shows
+ * nothing, instead of a phantom empty buffer that can be typed into, asks to be
+ * saved, and belongs to no file. Everything that reads the buffer already
+ * handles the model being null, because the editor starts that way too.
+ */
+export function showNoBuffer() {
+  const outgoing = buffers.activeKeyOf();
+  if (outgoing !== null && currentModel() !== null) {
+    buffers.setViewState(outgoing, editor.saveViewState());
+    buffers.setCaret(outgoing, getViewState());
+  }
+  clearCellDecorations();
+  buffers.deactivate();
+  editor.setModel(null);
   notifyDirtyChanged();
 }
 
@@ -263,6 +288,46 @@ export function closeBuffer(key) {
 /** The keys of every open buffer, in the order they were opened. */
 export function bufferKeys() {
   return buffers.keys();
+}
+
+/** Which buffer the editor is showing, or null. */
+export function activeBufferKey() {
+  return buffers.activeKeyOf();
+}
+
+/** The path of any buffer, not only the one on screen. */
+export function bufferPath(key) {
+  const buffer = buffers.get(key);
+  return buffer === null ? null : buffer.path;
+}
+
+/** Whether any buffer differs from disk, not only the one on screen. */
+export function isBufferDirty(key) {
+  return buffers.isDirty(key);
+}
+
+/** Where a tab was left, for writing into the workspace at quit. */
+export function bufferCaret(key) {
+  return buffers.caret(key);
+}
+
+/**
+ * Bring the buffer on screen's caret up to date.
+ *
+ * Every other tab recorded its position when it was switched away from; the one
+ * being looked at has not been switched away from yet, and at quit there is no
+ * later moment to do it in.
+ */
+export function captureActiveCaret() {
+  const key = buffers.activeKeyOf();
+  if (key !== null) {
+    buffers.setCaret(key, getViewState());
+  }
+}
+
+/** The buffer already showing a path, so opening it again focuses its tab. */
+export function bufferForPath(path) {
+  return buffers.findByPath(path);
 }
 
 /** Record the buffer as matching disk - after a load or a successful save. */
@@ -351,19 +416,16 @@ export function getViewState() {
  *
  * @param {{line: number, column: number, scrollTop: number}|null} state
  */
-export function focusAt(state = null) {
+function placeCaret(state) {
   const model = currentModel();
   if (model === null) {
-    // No file open, so there is no caret to place. Focus still belongs here:
-    // the editor pane is where typing should go the moment one is opened.
-    editor.focus();
     return;
   }
   let line = 1;
   let column = 1;
   let exact = false;
 
-  if (state !== null && Number.isFinite(state.line)) {
+  if (state !== null && state !== undefined && Number.isFinite(state.line)) {
     line = Math.min(Math.max(1, Math.trunc(state.line)), model.getLineCount());
     const maxColumn = model.getLineMaxColumn(line);
     column = Math.min(Math.max(1, Math.trunc(state.column ?? 1)), maxColumn);
@@ -376,6 +438,16 @@ export function focusAt(state = null) {
   } else {
     editor.revealLineInCenterIfOutsideViewport(line);
   }
+}
+
+export function focusAt(state = null) {
+  if (currentModel() === null) {
+    // No file open, so there is no caret to place. Focus still belongs here:
+    // the editor pane is where typing should go the moment one is opened.
+    editor.focus();
+    return;
+  }
+  placeCaret(state);
   editor.focus();
 }
 
