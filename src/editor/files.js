@@ -1,7 +1,6 @@
 import { filesystem, os } from "@neutralinojs/lib";
 
 import {
-  SAMPLE_SOURCE,
   activeBufferKey,
   bufferCaret,
   bufferForPath,
@@ -18,6 +17,7 @@ import {
   showBuffer,
   showNoBuffer,
 } from "./monaco.js";
+import { DEFAULT_NEW_FILE_TEMPLATE, SAMPLE_SOURCE } from "./starters.js";
 import { refreshTabs } from "./tabstrip.js";
 import { chooseActive, readWorkspace } from "./workspace.js";
 import { unsavedPrompt } from "./unsaved.js";
@@ -441,31 +441,29 @@ export async function saveAll() {
 }
 
 /**
- * Start an empty buffer, after offering to save the current one.
- *
- * Empty rather than the sample the app first launches with: "New" that arrives
- * pre-filled is a surprise, and the sample is a first-run introduction rather
- * than a template.
- *
- * @returns {Promise<boolean>} false if the user cancelled
- */
-/**
  * What a new buffer starts with.
  *
- * Empty unless the user has put something in Settings. Almost every build123d
- * file opens with the same two imports, and typing them again is the sort of
- * small tax that is paid several times a day - so it is worth a field, and
- * worth being *their* two imports rather than ones chosen here.
+ * The default in starters.js until the user edits the field in Settings, and
+ * whatever they put there afterwards - including nothing. An empty string is a
+ * stored answer rather than an absent one, so it is honoured: someone who
+ * clears the field wants blank files, and handing them the default back would
+ * make the field impossible to switch off.
  *
  * Deliberately not the sample: that is a one-off introduction for someone who
  * has never seen the application, and it appears once. This is a preference and
  * applies to every New File from now on.
  */
 export function newFileTemplate() {
-  const template = getSetting(NEW_FILE_TEMPLATE_KEY, "");
-  return typeof template === "string" ? template : "";
+  const template = getSetting(NEW_FILE_TEMPLATE_KEY, DEFAULT_NEW_FILE_TEMPLATE);
+  return typeof template === "string" ? template : DEFAULT_NEW_FILE_TEMPLATE;
 }
 
+/**
+ * Open a new tab on the template.
+ *
+ * @returns {Promise<boolean>} true; kept for the menu and toolbar callers, which
+ *   treat a false from a File command as "the user cancelled"
+ */
 export async function newFile() {
   // No longer asks about the current buffer, because it no longer replaces it.
   // New opens a tab beside what is already there, so there is nothing to

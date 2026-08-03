@@ -16,6 +16,7 @@ import {
   showSplash,
 } from "./bootstrap/splash.js";
 import { NEW_FILE_TEMPLATE_KEY, newFileTemplate } from "./editor/files.js";
+import { DEFAULT_NEW_FILE_TEMPLATE } from "./editor/starters.js";
 import { setSetting } from "./store.js";
 import * as ipc from "./ipc.js";
 import * as log from "./log.js";
@@ -200,13 +201,16 @@ export async function showSettings() {
 
         <h2 class="info-heading">New file</h2>
         <p class="info-note">
-          What a new file starts with. Left empty, New File opens an empty
-          buffer.
+          What a new file starts with. Cleared, New File opens an empty buffer;
+          Restore default puts the shipped template back.
         </p>
-        <textarea class="settings-template" id="settings-new-template" rows="6"
+        <textarea class="settings-template" id="settings-new-template" rows="10"
                   spellcheck="false"
-                  placeholder="from build123d import *&#10;from build123d_studio import show"
+                  placeholder="Empty: New File opens a blank buffer"
         >${escapeHtml(newFileTemplate())}</textarea>
+        <button class="settings-btn settings-template-reset" id="settings-template-default">
+          Restore default
+        </button>
 
         <div class="settings-actions">
           <button class="settings-btn" id="settings-cancel">Cancel</button>
@@ -221,6 +225,14 @@ export async function showSettings() {
   document.getElementById("settings-upgrade").addEventListener("click", upgradeAndResync);
   document.getElementById("settings-cancel").addEventListener("click", close);
   document.addEventListener("keydown", onKeyDown);
+
+  // Puts the text back in the field, not in settings: Apply is still what
+  // saves, so restoring and then cancelling leaves the stored template alone
+  // like every other edit in this dialog. Without this there is no way back -
+  // clearing the field is one keystroke and retyping twenty lines is not.
+  document.getElementById("settings-template-default").addEventListener("click", () => {
+    document.getElementById("settings-new-template").value = DEFAULT_NEW_FILE_TEMPLATE;
+  });
 
   document.getElementById("settings-apply").addEventListener("click", async () => {
     // Saved whether or not the package sources changed, and before the branch

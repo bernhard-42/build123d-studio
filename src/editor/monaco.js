@@ -47,30 +47,6 @@ self.MonacoEnvironment = {
   },
 };
 
-/**
- * The jump start, shown once: on the very first run and never again.
- *
- * Exported because whether it belongs in the buffer is a startup decision, not
- * an editor one - see restoreLastFile. The editor itself opens empty.
- */
-export const SAMPLE_SOURCE = `# %%
-from build123d import *
-from build123d_studio import show
-
-# %%
-part = Box(10, 10, 10) - Cylinder(3, 12)
-show(part)
-print(f"volume = {part.volume:.3f}")
-
-# %%
-# Shift+Enter runs the cell at the cursor and moves on, Ctrl+Enter runs it and
-# stays, Ctrl+Shift+Enter runs the selection or the current line, and F5 runs
-# the whole file. Output appears in the console below as In [n]:, and the
-# kernel is shared with it - so you can poke at "part" down there straight
-# after running this.
-part.bounding_box()
-`;
-
 let editor = null;
 
 /**

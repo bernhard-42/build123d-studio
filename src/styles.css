@@ -925,6 +925,13 @@ html body {
   resize: vertical;
 }
 
+/* Under the template field, not beside it: the textarea is 100% wide, so an
+   inline-block button wraps anyway and only contributes a baseline gap. */
+.settings-template-reset {
+  display: block;
+  margin-top: 8px;
+}
+
 .settings-package-name {
   margin-bottom: 6px;
   font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
