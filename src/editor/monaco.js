@@ -551,7 +551,7 @@ export function initEditor() {
  * silent, so it is decided in one tested place instead of at four call sites.
  *
  * Returns the disposables, so a later binding change can re-register rather than
- * leaving both the old and the new chord live. Group 4's dialog is what will
+ * leaving both the old and the new chord live. Group 5's dialog is what will
  * call it a second time.
  */
 export function registerRunActions(target) {

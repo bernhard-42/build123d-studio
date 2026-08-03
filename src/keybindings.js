@@ -51,7 +51,7 @@ export function labelFor(commandId) {
   return chords.length === 0 ? "" : describeChord(NL_OS, chords[0]);
 }
 
-/** Every command with its current chords, for the menu and for group 4's dialog. */
+/** Every command with its current chords, for the menu and for group 5's dialog. */
 export function currentBindings() {
   return COMMANDS.map((command) => ({
     id: command.id,

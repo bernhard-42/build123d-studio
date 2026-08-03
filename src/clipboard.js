@@ -82,7 +82,7 @@ export function contextMenuItems({ pane, hasSelection, platform }) {
  * A clipboard chord, written the way its platform writes it.
  *
  * The symbol on macOS and the word elsewhere, which is what each platform's own
- * menus do. Group 4 owns shortcut display properly - conflict detection, chord
+ * menus do. Group 5 owns shortcut display properly - conflict detection, chord
  * capture, the whole editing dialog - and will have a general version of this;
  * two letters and a modifier did not seem worth waiting for it.
  */

@@ -1,7 +1,7 @@
 // Keyboard shortcuts, as data rather than as literals at the call site.
 //
 // Shortcuts are subjective, so the bindings below are defaults and not verdicts:
-// they are merged with whatever is in settings.json, and group 4 puts a dialog
+// they are merged with whatever is in settings.json, and group 5 puts a dialog
 // over the same map. Registering actions from a map rather than from constants
 // is the part that would be expensive to retrofit - the dialog is then a form
 // over data that already exists.

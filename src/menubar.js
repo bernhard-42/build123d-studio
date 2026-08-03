@@ -151,7 +151,7 @@ export async function initMenu(commands) {
  *
  * Whole rather than mutated, because there is no documented way to change one
  * item, and because a menu built from the current keymap has to be rebuilt when
- * that keymap changes - which is what group 4's dialog will do.
+ * that keymap changes - which is what group 5's dialog will do.
  */
 export async function refreshMenu() {
   const menu = buildMenu({

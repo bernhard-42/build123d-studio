@@ -116,7 +116,7 @@ Done. What changed, and why it was worth doing.
 
 ### 1. Usability (quick wins)
 
-- Add an OS menu to get Cmd-C/Cmd-V/Cmd-X. Would also deliver Cmd-Q, ... (a prerequisite for code completion in group 5: without it macOS never binds the standard shortcuts, so Ctrl-Space is swallowed by the system's input-source shortcut). Same for Windows and Linux including typical short-cuts on these OS.
+- Add an OS menu to get Cmd-C/Cmd-V/Cmd-X. Would also deliver Cmd-Q, ... (a prerequisite for code completion in group 3: without it macOS never binds the standard shortcuts, so Ctrl-Space is swallowed by the system's input-source shortcut). Same for Windows and Linux including typical short-cuts on these OS.
 
   `Neutralino.window.setMainMenu` is the API and it exists in the pinned 6.9.0 - checked in the JS client and in all three native binaries. The comment in `src/main.js` claiming "Neutralino creates no native menu bar" is stale, and the hand-rolled Cmd-Q keydown handler underneath it exists because of that belief; both go when the menu lands.
 
@@ -157,7 +157,7 @@ Done. What changed, and why it was worth doing.
 
   **"Run line" means one physical line.** A line that is not valid on its own - `for i in range(5):` - gets the kernel's "incomplete input" back, and that is the shortcut behaving as named. Blocks are what run-cell and run-selection are for, and second-guessing the user by extending to the enclosing statement would make the one literal action ambiguous.
 
-- Keyboard shortcuts are subjective, so the five above are **defaults rather than verdicts**: a defaults map, the bindings read from `settings.json`, and a `parseChord("ctrl+shift+enter")` function turning a VS Code-style string into Monaco modifiers. That parser is a pure function and is where the platform subtlety above lives, so it is unit-testable in the way `quoting` already is. The editing dialog is group 4, where the config dialog is being opened up anyway; nothing is thrown away, because by then actions are already registered from a map instead of from literals.
+- Keyboard shortcuts are subjective, so the five above are **defaults rather than verdicts**: a defaults map, the bindings read from `settings.json`, and a `parseChord("ctrl+shift+enter")` function turning a VS Code-style string into Monaco modifiers. That parser is a pure function and is where the platform subtlety above lives, so it is unit-testable in the way `quoting` already is. The editing dialog is group 5, where the config dialog is being opened up anyway; nothing is thrown away, because by then actions are already registered from a map instead of from literals.
 
   The map has to land before or with the menu rather than after it. Menu items carry their own `shortcut` strings, so configurable bindings mean the menu is rebuilt when they change - trivial if both read the same map from the start, and a rewrite if the menu is built from literals first.
 
@@ -165,7 +165,7 @@ Done. What changed, and why it was worth doing.
 
 - Open Folder should work as in VS Code with a left sidebar and with tabs for files. tab label is filename with full path on hover
 
-Before the instance model, but not because it replaces it - see group 3, the two are orthogonal. It comes first because it is the smaller and safer piece: it is self-contained, every project needs it whether or not a second window is ever opened, and it touches none of the shared state the instance work has to make safe.
+Before the instance model, but not because it replaces it - see group 4, the two are orthogonal. It comes first because it is the smaller and safer piece: it is self-contained, every project needs it whether or not a second window is ever opened, and it touches none of the shared state the instance work has to make safe.
 
 **Size.** The largest group so far and laborious rather than risky - unlike Phase 3, where the danger was a race nobody could see, the danger here is forgetting a case. Two things make it smaller than it looks. The single-buffer assumption is concentrated rather than spread: nineteen call sites in `editor/files.js`, fourteen in `editor/monaco.js`, four in `toolbar.js`, and nowhere else. And nothing needs inventing - Monaco holds many models natively (`createModel` and `setModel` against one editor), `filesystem` has `readDirectory` and `createWatcher`, and `os.showFolderDialog` is the Open Folder dialog.
 
@@ -180,6 +180,16 @@ Before the instance model, but not because it replaces it - see group 3, the two
 **Where this can actually hurt.** Closing a tab must dispose its Monaco model; nothing in the application disposes anything today because nothing has ever needed to, and the leak is invisible until someone has opened forty files. `confirmDiscardChanges` is load-bearing - Phase 2 exists partly because work could be lost silently - and rewriting it for many buffers is the one change here that can lose somebody's edits. A CAD project full of STEP exports is large, so the tree has to expand lazily or Open Folder hangs on it. And `createWatcher` is undocumented enough that live updates should wait: ship a refresh, then add watching once a build has said how it behaves.
 
 Plenty of it is pure and testable in the way the rest of the frontend now is: tab labels and their disambiguation, tree sorting and filtering, workspace serialisation, whether anything is dirty.
+
+Done, in five commits. What changed, and what it cost to find out.
+
+**The single-buffer assumption was concentrated, as hoped, and one of its habits was a bug.** A buffer's path, model, saved version and view state were four module-level values; making them a Map was the whole of piece 1. What it also fixed was undo bleeding between files - opening a file poured it into the previous file's model and carried that file's undo history with it, so Cmd-Z in a freshly opened file could put back a line belonging to a file no longer on screen.
+
+**Two defects were only ever going to be found on a real build, and both looked like something else.** The tree's splitter had no width, because `.splitter-v` positions itself with `grid-column` and the sidebar's row is flex - five pixels of nothing to grab. And `▸`/`▾` have no glyph in WKWebView and render as a dot, so folder rows now use the bundled icon subset, which either renders or nothing does.
+
+**The dirty indicators lied, and the way they lied said where to look.** Undoing back to the saved version left the tab's dot and the title's bullet on - but closing that buffer asked nothing, so the answer was right and only the moment it was asked was wrong: the alternative version id had not settled while the content-change event was being delivered. Deferring the check a tick fixed it without anyone having to know Monaco's internals. Worth remembering that this id tracks undo-stack position rather than content equality, so retyping a deleted character is legitimately still dirty.
+
+**Asking about unsaved work once was the point of piece 4, not Save All.** The prompt had grown from one file to a loop over many, and five questions in a row is how people learn to dismiss a dialog without reading it. One prompt, one list, and the same implementation behind quitting, closing a tab, Close All and both folder commands - which is what stops them drifting into asking differently.
 
 **Open Folder, decided.** One folder at a time, which is VS Code's model without multi-root workspaces - and it is what makes "the project root" a well-defined thing for the kernel's working directory to be.
 
@@ -200,7 +210,44 @@ Plenty of it is pure and testable in the way the rest of the frontend now is: ta
 - **Tab overflow scrolls the strip.** A dropdown is a second place to look for a file that is already on screen somewhere
 - **No preview tabs.** VS Code's single-click italic tab that the next file replaces is an extra concept - a second kind of tab, an italic state, and a promotion rule - for little gain at the number of files this application is opened with. Every file that is opened gets a tab, and it stays until it is closed
 
-### 3. Instance Model (decided: multi-instance)
+### 3. Developer Experience
+
+- Add Python code completion
+  - There is none today, and there never was: monaco-editor ships language services for TypeScript, JSON, CSS and HTML only, and the editor deliberately registers just the Python grammar - tokenisation and colouring - to avoid pulling in some nine megabytes of services it cannot use. What is left is Monaco's word-based suggestion, which offers words already present in the buffer, so "time.sl" was never going to complete
+  - The kernel is the better source than a language server. It already speaks Jupyter's complete_request, which is what gives IPython its Tab completion, and it completes against the live namespace: it knows time.sleep, and it also knows the methods of the "part" the user built two cells ago, which no static analysis of the file can. A Monaco registerCompletionItemProvider routed through the sidecar to complete_request reuses transport that already exists
+- Debugging Python in Monaco should work
+  - having the usual step buttons
+  - Using the variable explorer (if possible)
+  - Allows to hook into "breakpoint reached" or "Step finished" to including visual debugging, i.e. execute show_all(locals())
+- The variable explorer needs to get multilevel for iterables (`a = dict(a=12, b="wert", c=[1,2,3,4,5,6], d=dict(x=dict(aa=1, bb="sdfg"), y=2))`)
+- the variable explorer needs to support paging to avoid showing hundreds of objects for arrays
+- the columns of the variable explorer need to be resizable. currently type uses way too much space
+- Show the repr in an expanded variable explorer row. Removing bounding box, volume and area is done - they cost 19 s, 2.8 s and 2.2 s on a real assembly and hung the pane
+- Update to uv 0.12.1
+- Add this as default coed for new files:
+
+  ```
+    # Default code for new files. It can be adapted in settings
+    #
+    # Note: lines starting with "# %%" are cell boundaries for "Run cell"
+    #
+    # Ctrl/Cmd+Enter runs the cell at the cursor, Shift+Enter the selection or
+    # current line, Ctrl/Cmd+Shift+Enter the whole file. Output appears in the
+    # console below as In [n]:, and the kernel is shared with it - so you can
+    # poke at "part" down there straight after running this.
+
+    from build123d import *
+    from build123d_studio import show
+
+    # %%
+
+    b = Box(1,2,3)
+
+    show(b)
+    # %%
+  ```
+
+### 4. Instance Model (decided: multi-instance)
 
 Multi-instance, deliberately, and it is not an alternative to multi-file above - the two are orthogonal. Multi-file is one project with many files; multi-instance is several projects open at once. A build123d project is normally a hierarchy of files under one root, and the workflow that matters is a large assembly open beside the self-contained components it is built from. Tabs do not serve that, and neither does one window.
 
@@ -237,50 +284,13 @@ Not needed, but worth recording so nobody rediscovers it: a single-instance guar
 
 **Command line tool.** `studio <file>` and `studio <folder>` open a new instance on that file or folder, installable from a menu entry. `studio --list` names the live instances and their connection files, which is where a user would ask the "which namespace" question. This is also the natural entry point for the desktop integration that makes double-clicking a `.py` file open it here.
 
-### 4. Config dialog: extra packages, and editing the shortcuts
+### 5. Config dialog: extra packages, and editing the shortcuts
 
 - Rename from Packages to Settings
 - Config should get a field where users can add extra packages in pyproject.toml syntax. They will be added to pyproject.toml (a "custom" section: `# --- custom: own packages ---`)
 - Editing the keyboard shortcuts, on top of the defaults map group 1 lands. This is the expensive half of "shortcuts are configurable" and is deliberately not a quick win: capturing a chord, detecting conflicts both between our own actions and against Monaco's built-in bindings, reset-to-default, and displaying each binding the way its platform writes it (⌘⇧↵ against Ctrl+Shift+Enter). By this point the storage, the parser and the re-registration all exist, so it is a form over data rather than new machinery.
 
 Its own group rather than a usability quick win, because it is the first place free user text reaches a command line. Everything interpolated into a command already goes through quote(), which on Windows now refuses a value containing a double quote outright rather than escaping it - that refusal exists for this field, before the field does. It wants the same care as a security item: what happens to a malformed entry, what a failed sync leaves behind, and whether the custom section survives an "upgrade packages".
-
-### 5. Developer Experience
-
-- Add Python code completion
-  - There is none today, and there never was: monaco-editor ships language services for TypeScript, JSON, CSS and HTML only, and the editor deliberately registers just the Python grammar - tokenisation and colouring - to avoid pulling in some nine megabytes of services it cannot use. What is left is Monaco's word-based suggestion, which offers words already present in the buffer, so "time.sl" was never going to complete
-  - The kernel is the better source than a language server. It already speaks Jupyter's complete_request, which is what gives IPython its Tab completion, and it completes against the live namespace: it knows time.sleep, and it also knows the methods of the "part" the user built two cells ago, which no static analysis of the file can. A Monaco registerCompletionItemProvider routed through the sidecar to complete_request reuses transport that already exists
-- Debugging Python in Monaco should work
-  - having the usual step buttons
-  - Using the variable explorer (if possible)
-  - Allows to hook into "breakpoint reached" or "Step finished" to including visual debugging, i.e. execute show_all(locals())
-- The variable explorer needs to get multilevel for iterables (`a = dict(a=12, b="wert", c=[1,2,3,4,5,6], d=dict(x=dict(aa=1, bb="sdfg"), y=2))`)
-- the variable explorer needs to support paging to avoid showing hundreds of objects for arrays
-- the columns of the variable explorer need to be resizable. currently type uses way too much space
-- Show the repr in an expanded variable explorer row. Removing bounding box, volume and area is done - they cost 19 s, 2.8 s and 2.2 s on a real assembly and hung the pane
-- Update to uv 0.12.1
-- Add this as default coed for new files:
-
-  ```
-    # Default code for new files. It can be adapted in settings
-    #
-    # Note: lines starting with "# %%" are cell boundaries for "Run cell"
-    #
-    # Ctrl/Cmd+Enter runs the cell at the cursor, Shift+Enter the selection or
-    # current line, Ctrl/Cmd+Shift+Enter the whole file. Output appears in the
-    # console below as In [n]:, and the kernel is shared with it - so you can
-    # poke at "part" down there straight after running this.
-
-    from build123d import *
-    from build123d_studio import show
-
-    # %%
-
-    b = Box(1,2,3)
-
-    show(b)
-    # %%
-  ```
 
 ### 6. OCP VS Code integration
 
