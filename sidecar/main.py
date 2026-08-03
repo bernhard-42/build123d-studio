@@ -563,33 +563,43 @@ class Sidecar:
         self.refresh_variables()
 
     def on_vars_detail(self, message):
-        """Claim the name here, do the reading on the lane.
+        """Claim the row here, do the reading on the lane.
 
         Runs on the receive thread, which is why it must not read anything: all
         it does is a set membership test. Dropping a duplicate rather than
         queueing it is the whole coalescing - the answer the in-flight request
         produces is the answer this one would, and it goes to the same row.
-        """
-        name = message["name"]
-        with self._details_lock:
-            if name in self._pending_details:
-                return
-            self._pending_details.add(name)
-        self.channel.submit(INSPECT, lambda: self._send_detail(name))
 
-    def _send_detail(self, name):
+        Claimed by path *and page*, not by name. A path is one row wherever it
+        sits in the tree, and the page matters because paging through a large
+        list is the one case where two requests for the same row are genuinely
+        different questions - dropping the second would leave the pane on the
+        page the user has just clicked away from.
+        """
+        path = message.get("path") or []
+        offset = int(message.get("offset", 0))
+        claim = (json.dumps(path), offset)
+        with self._details_lock:
+            if claim in self._pending_details:
+                return
+            self._pending_details.add(claim)
+        self.channel.submit(INSPECT, lambda: self._send_detail(path, offset, claim))
+
+    def _send_detail(self, path, offset, claim):
         try:
-            self._read_detail(name)
+            self._read_detail(path, offset)
         finally:
             # Cleared after the answer has been sent, so that a request arriving
             # while this one runs is dropped rather than answered twice, and one
             # arriving afterwards - the namespace having changed again - is not.
             with self._details_lock:
-                self._pending_details.discard(name)
+                self._pending_details.discard(claim)
 
-    def _read_detail(self, name):
-        # repr() so a name can never be injected into the expression.
-        detail = self._inspect(f"{INSPECTOR}.detail({name!r})")
+    def _read_detail(self, path, offset):
+        # Both interpolated through repr(), so nothing a user can name reaches
+        # the kernel as code. A path is a list of a string and some ints, and
+        # repr() of that is a literal the kernel parses back to the same list.
+        detail = self._inspect(f"{INSPECTOR}.detail({path!r}, {int(offset)!r})")
         if detail is None:
             # Answered anyway. The row is showing "loading" and only a reply
             # takes that away, so staying silent here left it saying so for the
@@ -597,7 +607,7 @@ class Sidecar:
             # via a bounding_box() that cost 19 s against a 15 s budget. The
             # inspector no longer spends that long, but something will, and
             # "could not be read" is a result where "loading" for ever is a bug.
-            detail = {"name": name, "error": "could not be read in time"}
+            detail = {"path": path, "error": "could not be read in time"}
         self.channel.send("vars.detail", detail=detail)
 
     # --- UI -> sidecar ---

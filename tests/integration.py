@@ -510,18 +510,96 @@ def main():
     # a suspension assembly did, through a bounding_box() costing 19 s against a
     # 15 s budget.
     before = len(side.frames)
-    side.send("vars.detail", name="n1")
+    side.send("vars.detail", path=["n1"], offset=0)
     _, detail = side.wait_frame("vars.detail", ACTION_TIMEOUT, since=before)
     check("expanding a row is answered", detail is not None)
 
     # Including one that cannot be read at all, which is the case that used to
     # be silent.
     before = len(side.frames)
-    side.send("vars.detail", name="does_not_exist")
+    side.send("vars.detail", path=["does_not_exist"], offset=0)
     _, missing = side.wait_frame("vars.detail", ACTION_TIMEOUT, since=before)
     check("expanding a name that is gone is answered too",
           missing is not None and "error" in missing["detail"],
           str(missing["detail"]) if missing is not None else "silence")
+
+    # --- the explorer goes as deep as the data does ---
+    #
+    # The plan's example, through the real kernel: a dict of a dict of a dict.
+    # Addressed by ordinal, so ["nested", 3, 0] is the first entry of the fourth.
+    side.send("kernel.execute", code=(
+        "nested = dict(a=12, b='wert', c=[1,2,3,4,5,6], "
+        "d=dict(x=dict(aa=1, bb='sdfg'), y=2))\n"
+        "points = list(range(5043))\n"
+    ))
+    time.sleep(1.0)
+
+    before = len(side.frames)
+    side.send("vars.detail", path=["nested", 3, 0], offset=0)
+    _, deep = side.wait_frame("vars.detail", ACTION_TIMEOUT, since=before)
+    names = [] if deep is None else [c["name"] for c in deep["detail"].get("children", [])]
+    check("a dict inside a dict inside a dict can be opened",
+          names == ["aa", "bb"], str(names) if deep is not None else "silence")
+
+    # --- and pages what will not fit ---
+
+    before = len(side.frames)
+    side.send("vars.detail", path=["points"], offset=0)
+    _, first = side.wait_frame("vars.detail", ACTION_TIMEOUT, since=before)
+    page = {} if first is None else first["detail"]
+    check("a long list arrives one page at a time",
+          page.get("total") == 5043 and len(page.get("children", [])) == page.get("page"),
+          f"{len(page.get('children', []))} of {page.get('total')}")
+
+    before = len(side.frames)
+    side.send("vars.detail", path=["points"], offset=5000)
+    _, last = side.wait_frame("vars.detail", ACTION_TIMEOUT, since=before)
+    tail = {} if last is None else last["detail"]
+    # The names are absolute positions, so a child's row and the row it opens
+    # describe the same element. Numbered within the page instead, every page
+    # after the first would open the wrong one.
+    # A shape is Iterable and Sized, so it unrolls - and it still has the counts
+    # this pane has always shown for one. Choosing between them would mean that
+    # making shapes iterable quietly took the faces away.
+    side.send("kernel.execute", code=(
+        "from build123d import BuildPart, Box\n"
+        "with BuildPart() as _bd:\n"
+        "    Box(10, 10, 10)\n"
+        "solid = _bd.part\n"
+    ))
+    time.sleep(1.0)
+    before = len(side.frames)
+    side.send("vars.detail", path=["solid"], offset=0)
+    _, shape = side.wait_frame("vars.detail", ACTION_TIMEOUT, since=before)
+    opened = {} if shape is None else shape["detail"]
+    check("a shape gives both its counts and its contents",
+          opened.get("attributes", {}).get("topology") == "6 faces, 12 edges, 8 vertices"
+          and len(opened.get("children", [])) == 1,
+          f"{opened.get('attributes')}, {len(opened.get('children', []))} children")
+
+    # The label, which is the only thing that tells one child from another: the
+    # rows under a container are called 0, 1, 2. Asked through a path rather
+    # than off the listing, because by now the namespace holds the eleven
+    # hundred names the truncation check above made and anything sorting late is
+    # past the five-hundred-row cut.
+    side.send("kernel.execute", code=(
+        "solid.label = 'housing'\n"
+        "_assembly = [solid]\n"
+    ))
+    time.sleep(1.0)
+    before = len(side.frames)
+    side.send("vars.detail", path=["_assembly"], offset=0)
+    _, labelled = side.wait_frame("vars.detail", ACTION_TIMEOUT, since=before)
+    children = [] if labelled is None else labelled["detail"].get("children", [])
+    check("a labelled shape shows its label",
+          len(children) == 1 and children[0].get("label") == "housing",
+          "no children" if len(children) == 0 else str(children[0].get("label")))
+
+    check("a later page is numbered from where it starts",
+          tail.get("offset") == 5000
+          and [c["name"] for c in tail.get("children", [])][:1] == ["5000"]
+          and len(tail.get("children", [])) == 43,
+          f"offset {tail.get('offset')}, {len(tail.get('children', []))} children")
 
     # --- the measurement backend indexes the model that is on screen ---
     #

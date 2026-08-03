@@ -27,9 +27,15 @@ import { requirePython } from "./envroot.mjs";
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const { python } = requirePython();
 
+// Both halves of the Python this repository owns. `sidecar` is run by path in
+// production, so its modules import each other as plain top-level names, and
+// `kernel` is what the application puts on the *kernel process's* PYTHONPATH -
+// which is the only reason `build123d_studio` is importable there. Putting both
+// here from outside is what reproduces each, and keeps the tests free of
+// import-order hacks that ruff would rightly complain about.
+const owned = [join(ROOT, "sidecar"), join(ROOT, "kernel")];
 const existing = process.env.PYTHONPATH ?? "";
-const pythonPath =
-  existing === "" ? join(ROOT, "sidecar") : join(ROOT, "sidecar") + delimiter + existing;
+const pythonPath = (existing === "" ? owned : [...owned, existing]).join(delimiter);
 
 const result = spawnSync(
   python,

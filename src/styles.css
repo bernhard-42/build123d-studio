@@ -722,11 +722,13 @@ html body {
   table-layout: fixed;
 }
 
-.var-row {
+/* Only rows that lead somewhere say so. A pointer over an int would offer an
+   expansion the row cannot perform. */
+.var-openable {
   cursor: pointer;
 }
 
-.var-row:hover {
+.var-openable:hover {
   background: var(--hover);
 }
 
@@ -738,13 +740,60 @@ html body {
   vertical-align: top;
 }
 
+/* The header exists to be grabbed - see header() - so it stays out of the way
+   otherwise: it is the column names and a line, at the pane's dim colour. */
+.var-header th {
+  position: relative;
+  padding: 2px 6px 3px 6px;
+  border-bottom: 1px solid var(--border);
+  color: var(--fg-dim);
+  font-size: 11px;
+  font-weight: 500;
+  text-align: left;
+  user-select: none;
+}
+
+/* A hit target wider than the line it moves. Four pixels of border is
+   accurate and unusable; this is eight, centred on the boundary. */
+.var-grip {
+  position: absolute;
+  top: 0;
+  right: -4px;
+  bottom: 0;
+  width: 8px;
+  cursor: col-resize;
+}
+
+.var-grip:hover {
+  background: var(--accent);
+}
+
 .var-name {
-  width: 30%;
   font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 }
 
+/* Fixed rather than inline, so a name and a chevron-less row line up: without
+   it every element of a list would sit one glyph left of its siblings. */
+.var-twisty {
+  display: inline-block;
+  width: 12px;
+  color: var(--fg-dim);
+}
+
+.var-child-name {
+  color: var(--key-fg);
+}
+
+/* The object's own label, beside the name it is filed under. Dimmed and in the
+   pane's proportional face, so it reads as an annotation on the row rather than
+   as part of the identifier - "0" is the path, "top" is what it is. */
+.var-label {
+  color: var(--fg-dim);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-style: italic;
+}
+
 .var-type {
-  width: 26%;
   color: var(--type-fg);
 }
 
@@ -758,13 +807,43 @@ html body {
 }
 
 .var-detail td {
-  padding-left: 18px;
   background: var(--row-alt);
   font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 }
 
 .var-detail-key {
   color: var(--key-fg);
+}
+
+.var-pager td {
+  padding: 3px 6px;
+  color: var(--fg-dim);
+  background: var(--row-alt);
+}
+
+.var-page-btn {
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--bg);
+  color: var(--fg);
+  min-width: 20px;
+  margin-right: 4px;
+  padding: 0 5px;
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 16px;
+  cursor: pointer;
+}
+
+.var-page-btn:disabled {
+  color: var(--fg-dim);
+  cursor: default;
+  opacity: 0.5;
+}
+
+.var-page-label {
+  margin-left: 4px;
+  font-size: 11px;
 }
 
 .var-loading,
