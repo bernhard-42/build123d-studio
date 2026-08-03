@@ -20,6 +20,7 @@ import { setSetting } from "./store.js";
 import * as ipc from "./ipc.js";
 import * as log from "./log.js";
 import { escapeHtml } from "./escape.js";
+import { closeOnBackdropClick } from "./backdrop.js";
 
 // Package sources.
 //
@@ -215,11 +216,7 @@ export async function showSettings() {
     </div>`;
   document.body.appendChild(overlay);
 
-  overlay.addEventListener("click", (event) => {
-    if (event.target === overlay) {
-      close();
-    }
-  });
+  closeOnBackdropClick(overlay, close);
   document.getElementById("settings-close").addEventListener("click", close);
   document.getElementById("settings-upgrade").addEventListener("click", upgradeAndResync);
   document.getElementById("settings-cancel").addEventListener("click", close);

@@ -3,6 +3,7 @@ import { version as threeCadViewerVersion } from "three-cad-viewer";
 
 import { appVersion, monacoVersion, xtermVersion } from "./versions.js";
 import { escapeHtml } from "./escape.js";
+import { closeOnBackdropClick } from "./backdrop.js";
 import { resolveEnvRoot } from "./bootstrap/envroot.js";
 import { ensureUv } from "./bootstrap/uv.js";
 import { run, quote } from "./proc.js";
@@ -39,10 +40,6 @@ async function logRows() {
   } catch {
     // Never rotated, which is the common case.
   }
-  rows.push(row(
-    "Sidecar and kernel output",
-    "timestamped into the log above; there is no separate file",
-  ));
   return rows;
 }
 
@@ -66,7 +63,10 @@ async function uvVersion() {
 }
 
 function row(label, value) {
-  return { label, value: value === undefined || value === null ? "unknown" : String(value) };
+  return {
+    label,
+    value: value === undefined || value === null ? "unknown" : String(value),
+  };
 }
 
 // How long the About dialog waits for the sidecar's answer. Long enough for a
@@ -79,7 +79,9 @@ async function gather() {
 
   // The wait is bounded where the subscription lives, so a sidecar that never
   // answers releases the listener rather than only the waiting. See ipc.once.
-  const pending = ipc.isConnected() ? ipc.once("app.info", { timeout: INFO_TIMEOUT }) : null;
+  const pending = ipc.isConnected()
+    ? ipc.once("app.info", { timeout: INFO_TIMEOUT })
+    : null;
   if (pending !== null) {
     try {
       ipc.send("app.info");
@@ -92,7 +94,10 @@ async function gather() {
     title: "Application",
     rows: [
       row("build123d_studio", appVersion),
-      row("Platform", `${NL_OS} ${typeof NL_ARCH === "string" ? NL_ARCH : ""}`.trim()),
+      row(
+        "Platform",
+        `${NL_OS} ${typeof NL_ARCH === "string" ? NL_ARCH : ""}`.trim(),
+      ),
       row(
         "Neutralino",
         `${typeof NL_VERSION === "string" ? NL_VERSION : "?"} (client ${
@@ -119,7 +124,12 @@ async function gather() {
       "It is not removed when the application is deleted.",
     rows: [
       row("Location", envRoot),
-      row("Python", info?.info ? `${info.info.python} (${info.info.implementation})` : "starting…"),
+      row(
+        "Python",
+        info?.info
+          ? `${info.info.python} (${info.info.implementation})`
+          : "starting…",
+      ),
       row("Kernel connection file", info?.info?.connectionFile ?? "starting…"),
       // Beside the environment rather than inside it, so they survive the clean
       // rebuild the note above describes - the log of the run that went wrong is
@@ -226,12 +236,9 @@ export async function showInfo() {
     </div>`;
   document.body.appendChild(overlay);
 
-  // Clicking the backdrop closes; clicking inside must not.
-  overlay.addEventListener("click", (event) => {
-    if (event.target === overlay) {
-      close();
-    }
-  });
+  // Clicking the backdrop closes; clicking inside must not - and neither must
+  // dragging a selection across the two, which is what this pane is for.
+  closeOnBackdropClick(overlay, close);
   document.getElementById("info-close").addEventListener("click", close);
   document.addEventListener("keydown", onKeyDown);
 
