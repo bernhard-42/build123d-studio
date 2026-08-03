@@ -27,6 +27,20 @@
 // for it - so this is the layer that can be written here rather than a proof.
 // What it is not is a guess: if a reload ever does get through on some platform,
 // the fix is that platform's accelerator setting, and this file is still right.
+//
+// ## The other way in
+//
+// Keys were not the only route, which the first version of this file assumed.
+// The webview also brings its own context menu, and on macOS right-clicking the
+// empty area below the last line offers a "Reload" *item* - a labelled button
+// for discarding the buffer, which is worse than a mis-typed chord because
+// nothing about it looks like a mistake. Reported from a real build; no amount
+// of reading would have found it.
+//
+// So the native menu is suppressed everywhere. That costs the browser's own
+// Copy and Paste entries, which this application already provides on the Edit
+// menu and on the usual chords, and it is the whole menu rather than a per-pane
+// exception because every pane's version of it carries the same Reload.
 
 /**
  * True for the chords a browser reloads on.
@@ -75,4 +89,27 @@ export function guardAgainstReload(target = window) {
   // the way past and leave the browser to reload behind our backs.
   target.addEventListener("keydown", onKeyDown, { capture: true });
   return () => target.removeEventListener("keydown", onKeyDown, { capture: true });
+}
+
+/**
+ * Stop the webview showing its own context menu, which offers a Reload.
+ *
+ * Bubble phase, which is the opposite of the keydown guard above and for a
+ * reason worth stating. There, running first is the point: another handler may
+ * stopPropagation and leave the browser to act on a key nobody cancelled. Here,
+ * running *last* is the point: Monaco draws its own context menu in response to
+ * this same event, and a pane that wants to show one must get the chance before
+ * anything declares the event dealt with. preventDefault only ever cancels the
+ * browser's menu - it does not stop Monaco drawing its own, which is HTML rather
+ * than a native menu and does not depend on the default action.
+ *
+ * @param {EventTarget} target defaults to the window; injectable for tests
+ * @returns {() => void} removes the guard
+ */
+export function suppressNativeContextMenu(target = window) {
+  const onContextMenu = (event) => {
+    event.preventDefault();
+  };
+  target.addEventListener("contextmenu", onContextMenu);
+  return () => target.removeEventListener("contextmenu", onContextMenu);
 }

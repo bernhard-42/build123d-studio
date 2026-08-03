@@ -20,6 +20,7 @@
     "filesystem.*",
     "window.*",
     "events.*",
+    "clipboard.*",
     "computer.getOSInfo"
   ],
   "modes": {

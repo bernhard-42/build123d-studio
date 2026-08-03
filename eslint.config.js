@@ -47,6 +47,8 @@ const browser = {
   FileReader: "readonly",
   TextEncoder: "readonly",
   TextDecoder: "readonly",
+  // Its boundary-point constants are what confines a drag to one pane.
+  Range: "readonly",
   ResizeObserver: "readonly",
   MutationObserver: "readonly",
   IntersectionObserver: "readonly",

@@ -4,6 +4,18 @@
 // about 9 MB of assets for an editor that only ever shows Python.
 import * as monaco from "monaco-editor/editor/editor.api.js";
 import "monaco-editor/languages/definitions/python/register.js";
+// The context menu, and the Cut/Copy/Paste entries that fill it.
+//
+// editor.api.js is the API and nothing else: every *contribution* - the menu,
+// the find widget, folding - is a separate import, and editor.main.js is what
+// pulls all of them in along with the languages this editor cannot use. Taking
+// the two that are wanted costs none of that.
+//
+// Without them the editor had no context menu of its own, so a right-click fell
+// through to the webview's - which selects the word under the pointer, discards
+// the selection the user had made, and offers a Reload that discards the buffer.
+import "monaco-editor/editor/contrib/contextmenu/browser/contextmenu.js";
+import "monaco-editor/editor/contrib/clipboard/browser/clipboard.js";
 // Not the "monaco-editor/esm/vs/editor/editor.worker" path that most guides
 // still show: as of 0.56 the exports map is {"./*": "./esm/vs/*.js"}, so the
 // esm/vs prefix is added for us and spelling it out resolves to esm/vs/esm/vs.
@@ -376,6 +388,22 @@ export function initEditor() {
     versionOf: (model) => model.getAlternativeVersionId(),
   });
 
+  // Give Cut, Copy and Paste their chords back, so the context menu shows them
+  // beside the items the way it shows Shift-Enter beside Run Cell.
+  //
+  // Monaco registers those three actions with no keybinding unless it believes
+  // it is running natively, on the reasoning that in a browser the chords belong
+  // to the browser - true, and it means the menu has nothing to display. The
+  // action still exists and still works; only the label was missing. CtrlCmd is
+  // Cmd on macOS and Ctrl elsewhere, which is exactly right for the clipboard
+  // and is the one place that mapping needs no thought - see keys.js for the
+  // places it does.
+  monaco.editor.addKeybindingRules([
+    { keybinding: monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyX, command: "editor.action.clipboardCutAction" },
+    { keybinding: monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyC, command: "editor.action.clipboardCopyAction" },
+    { keybinding: monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyV, command: "editor.action.clipboardPasteAction" },
+  ]);
+
   editor = monaco.editor.create(document.getElementById("editor-host"), {
     // No model, rather than an empty one Monaco would create for us and nothing
     // would ever own: restoreLastFile decides what the first buffer is - the
@@ -431,7 +459,7 @@ export function registerRunActions(target) {
   ];
 
   const registered = [];
-  for (const { id, run } of actions) {
+  for (const [index, { id, run }] of actions.entries()) {
     const command = COMMANDS.find((candidate) => candidate.id === id);
     if (command === undefined) {
       // An id here that keys.js does not define is a bug, but losing one
@@ -444,6 +472,12 @@ export function registerRunActions(target) {
       id: `build123d-studio.${id}`,
       label: command.label,
       keybindings: bindingsFor(monaco, id),
+      // In the context menu too, above Cut/Copy/Paste - Monaco's clipboard
+      // group is "9_cutcopypaste", and groups sort by name. Running code is
+      // what this editor is for, and the menu that only offers to copy it
+      // would be a menu for some other application.
+      contextMenuGroupId: "1_run",
+      contextMenuOrder: index,
       run,
     }));
   }

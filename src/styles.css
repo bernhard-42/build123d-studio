@@ -269,6 +269,55 @@ body {
   z-index: 300;
 }
 
+/* three-cad-viewer's stylesheet says `body { user-select: none }`, commented
+   "Disables text selection of UI elements" - and it disables it for the whole
+   application, not for its own. This is an IDE: the code, the console
+   transcript, the variable values and the log paths in the About box are all
+   text someone will want to select and paste into a bug report.
+
+   It went unnoticed for two phases because the bundler was deleting the
+   -webkit- prefixed declaration as redundant, and that is the one WKWebView
+   honours - so the rule had no effect in a packaged macOS build. Fixing the
+   minification (see vite.config.js cssTarget) turned it on, and the variable
+   explorer stopped being selectable at all.
+
+   Undone here rather than opted back in pane by pane. The library sets
+   user-select: none on each of its own components - .tcv_panel, .tcv_label,
+   .tcv_radio_label, .tcv_tools_label - so its UI is covered without the blanket
+   rule, and .tcv_cad_info still opts itself back into text. The viewer pane
+   keeps none of its own so that dragging the model never starts selecting the
+   furniture around it.
+
+   `html body` rather than `body`, because the two rules would otherwise have
+   equal specificity and the winner would be whichever the bundler emitted last
+   - which is theirs, an import order away from silently flipping back. One
+   extra element name states the precedence instead of depending on it. */
+
+html body {
+  user-select: text;
+}
+
+.pane-viewer {
+  user-select: none;
+}
+
+/* A pane that a drag from somewhere else must not spill into - see selection.js.
+   Present only while a mouse button is down in another pane.
+
+   The universal selector and the !important are both deliberate, and neither is
+   decoration. Setting user-select on the pane alone was tried and does not work:
+   that value is merely *inherited*, so any descendant declaring its own beats it
+   whatever its importance - and Monaco declares `user-select: text` on
+   `.view-lines:hover` on macOS, which is exactly the element under the pointer
+   when a drag arrives in the editor. So the rule has to reach the descendants,
+   and it has to outrank a declaration that is already there. */
+
+.selection-locked,
+.selection-locked * {
+  user-select: none !important;
+  -webkit-user-select: none !important;
+}
+
 /* Cell markers in the editor */
 
 .cell-marker-line {
@@ -277,6 +326,63 @@ body {
 
 .cell-marker-margin {
   border-top: 1px solid var(--border);
+}
+
+/* Right-click menu for the console and the variable explorer.
+   Drawn to match Monaco's own, which the editor pane shows - see
+   contextmenu.js. The z-index clears the splitters and the pane chrome but
+   stays below the busy overlay and the dialogs, which must cover it.
+
+   The colours are Monaco's own variables rather than this file's, because
+   matching by eye is what produced two menus in one window with different
+   backgrounds. Monaco publishes these for the theme it is currently rendering,
+   so the two follow each other through a theme switch without this file
+   knowing there was one. The fallbacks are what the pane would use if a future
+   monaco stopped defining them - close, and never nothing. */
+
+.context-menu {
+  position: fixed;
+  z-index: 40;
+  min-width: 140px;
+  padding: 4px 0;
+  background: var(--menu-background, var(--bg-pane));
+  border: 1px solid var(--menu-border, var(--border));
+  border-radius: 5px;
+  box-shadow: 0 2px 8px rgb(0 0 0 / 28%);
+}
+
+.context-menu-item {
+  display: flex;
+  gap: 24px;
+  align-items: baseline;
+  justify-content: space-between;
+  width: 100%;
+  padding: 4px 12px;
+  border: 0;
+  background: none;
+  color: var(--menu-foreground, var(--fg));
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.context-menu-item:hover:not(:disabled) {
+  background: var(--menu-hover-background, var(--accent));
+  color: var(--menu-hover-foreground, var(--accent-fg));
+}
+
+.context-menu-item:disabled {
+  color: var(--menu-disabled-foreground, var(--fg-dim));
+  cursor: default;
+}
+
+/* Dimmed, and it stays dimmed under the hover highlight - the shortcut is a
+   reminder, not a second label competing with the item's name. */
+
+.context-menu-shortcut {
+  opacity: 0.7;
+  font-size: 12px;
 }
 
 .app {

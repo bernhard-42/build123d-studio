@@ -13,7 +13,7 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
 
-import { chooseTarget, isTextField, replaceRange } from "./clipboard.js";
+import { chooseTarget, contextMenuItems, isTextField, replaceRange } from "./clipboard.js";
 
 // --- routing ---
 
@@ -100,4 +100,52 @@ test("a backwards range inserts rather than deleting what it spans", () => {
   // It collapses to an insertion at start and nothing is lost - "hellXo", with
   // the trailing character still there, is the whole point.
   assert.equal(replaceRange("hello", 4, 2, "X"), "hellXo");
+});
+
+// --- what a pane's right-click menu offers ---
+
+test("the console offers Copy and Paste, because a terminal takes typing", () => {
+  assert.deepEqual(contextMenuItems({ pane: "console", hasSelection: true, platform: "Darwin" }), [
+    { id: "copy", label: "Copy", shortcut: "\u2318C", enabled: true },
+    { id: "paste", label: "Paste", shortcut: "\u2318V", enabled: true },
+  ]);
+});
+
+test("the variable explorer offers Copy alone, being read-only", () => {
+  assert.deepEqual(contextMenuItems({ pane: "variables", hasSelection: true, platform: "Darwin" }), [
+    { id: "copy", label: "Copy", shortcut: "\u2318C", enabled: true },
+  ]);
+});
+
+test("the chord is written the way each platform writes it", () => {
+  const mac = contextMenuItems({ pane: "console", hasSelection: true, platform: "Darwin" });
+  assert.equal(mac[0].shortcut, "\u2318C");
+  assert.equal(mac[1].shortcut, "\u2318V");
+
+  for (const platform of ["Windows", "Linux"]) {
+    const items = contextMenuItems({ pane: "console", hasSelection: true, platform });
+    assert.equal(items[0].shortcut, "Ctrl+C", platform);
+    assert.equal(items[1].shortcut, "Ctrl+V", platform);
+  }
+});
+
+test("Copy is disabled rather than absent when nothing is selected", () => {
+  // Absent would make the console menu one row high and then two, which reads
+  // as a different menu rather than the same one with less to offer.
+  const items = contextMenuItems({ pane: "console", hasSelection: false });
+  assert.equal(items.length, 2);
+  assert.equal(items[0].enabled, false);
+  assert.equal(items[1].enabled, true, "there is always something to paste into a terminal");
+});
+
+test("Paste is never offered where it could not go anywhere", () => {
+  const items = contextMenuItems({ pane: "variables", hasSelection: false });
+  assert.equal(items.some((item) => item.id === "paste"), false);
+});
+
+test("a pane with no menu of its own gets no menu at all", () => {
+  // The editor, which has Monaco's, and anything not named here - so a new pane
+  // shows nothing rather than a stray Copy that does not work.
+  assert.deepEqual(contextMenuItems({ pane: "editor", hasSelection: true }), []);
+  assert.deepEqual(contextMenuItems({ pane: "viewer", hasSelection: true }), []);
 });

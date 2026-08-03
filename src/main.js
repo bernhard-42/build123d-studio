@@ -22,7 +22,9 @@ import {
   runSelectionOrLine,
   selectedText,
 } from "./editor/monaco.js";
-import { copy, cut, initClipboard, paste } from "./editing.js";
+import { copy, copyText, cut, initClipboard, paste, pasteInto } from "./editing.js";
+import { attachContextMenu } from "./contextmenu.js";
+import { confineSelection, textWithin } from "./selection.js";
 import { MENU } from "./menu.js";
 import { initMenu } from "./menubar.js";
 import {
@@ -45,7 +47,7 @@ import { initTheme } from "./theme.js";
 import { initStore } from "./store.js";
 import { hideBusy, resetBusy, showBusy } from "./busy.js";
 import * as log from "./log.js";
-import { guardAgainstReload } from "./reload.js";
+import { guardAgainstReload, suppressNativeContextMenu } from "./reload.js";
 
 init();
 log.installGlobalHandlers();
@@ -123,6 +125,10 @@ window.addEventListener("keydown", (event) => {
 // key, so Ctrl-R still reaches the console's readline and F5 still reaches Run
 // File.
 guardAgainstReload();
+
+// And the context menu that carries a Reload item of its own. Same reason, a
+// different route in - see reload.js.
+suppressNativeContextMenu();
 
 /**
  * Offer a way back when the Python backend dies during a session.
@@ -268,6 +274,54 @@ async function main() {
       hasFocus: consoleHasFocus,
       selectedText: consoleSelectedText,
       send: sendText,
+    },
+  });
+
+  // Right-click menus for the two panes that have none of their own. The editor
+  // has Monaco's, which offers the Run actions as well as the clipboard; the
+  // viewer has three-cad-viewer's own controls and nothing to copy.
+  const consolePane = document.getElementById("pane-console");
+  const varsPane = document.getElementById("pane-vars");
+
+  // A drag that starts in one pane must not run into another - see selection.js.
+  // All four, not just the two with menus: the editor and the viewer never start
+  // a document selection of their own, but they are perfectly capable of being
+  // dragged *into*, which highlighted Monaco's code and its minimap.
+  confineSelection([
+    document.getElementById("pane-editor"),
+    document.getElementById("pane-viewer"),
+    consolePane,
+    varsPane,
+  ]);
+
+  attachContextMenu({
+    element: consolePane,
+    pane: "console",
+    platform: NL_OS,
+    selectedText: consoleSelectedText,
+    onPick: (id, text) => {
+      if (id === "copy") {
+        copyText(text);
+        return;
+      }
+      // Straight to the pty, exactly as if it had been typed - which is what a
+      // terminal paste is. The console's own line editor does the rest.
+      pasteInto(sendText);
+    },
+  });
+
+  attachContextMenu({
+    element: varsPane,
+    pane: "variables",
+    platform: NL_OS,
+    // An ordinary document selection, unlike the console's: the explorer is
+    // HTML, and what the user dragged across is what Copy means - clamped to
+    // this pane, so a drag that reached another one copies only this part.
+    selectedText: () => textWithin(varsPane),
+    onPick: (id, text) => {
+      if (id === "copy") {
+        copyText(text);
+      }
     },
   });
 

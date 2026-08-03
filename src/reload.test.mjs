@@ -11,11 +11,17 @@
 // platform. What this pins down is that the guard recognises the right chords
 // and - the part that would break the console - that it never claims to have
 // consumed them.
+//
+// The context-menu guard at the end is the same shape of problem found by the
+// same means: the browser's own menu offers a Reload item, so the keys were
+// never the only way in. What can be asserted is that the guard cancels the
+// default and nothing else; whether Monaco then draws its own menu is, again,
+// the build's answer.
 
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
 
-import { guardAgainstReload, isReloadChord } from "./reload.js";
+import { guardAgainstReload, isReloadChord, suppressNativeContextMenu } from "./reload.js";
 
 const chord = (key, modifiers = {}) => ({
   key,
@@ -158,6 +164,64 @@ test("the guard can be removed", () => {
   assert.equal(target.listeners.length, 0);
 
   const event = fakeEvent("F5");
+  target.fire(event);
+  assert.equal(event.defaultPrevented, false);
+});
+
+// --- the context menu, which carries a Reload item of its own ---
+
+/** A right-click, which has no chord to it - only somewhere it happened. */
+function rightClick() {
+  const event = { defaultPrevented: false, propagationStopped: false };
+  event.preventDefault = () => {
+    event.defaultPrevented = true;
+  };
+  event.stopPropagation = () => {
+    event.propagationStopped = true;
+  };
+  return event;
+}
+
+test("the native context menu is cancelled", () => {
+  const target = fakeTarget();
+  suppressNativeContextMenu(target);
+
+  const event = rightClick();
+  target.fire(event);
+  assert.equal(event.defaultPrevented, true, "no browser menu, so no Reload item");
+});
+
+test("the event still propagates, so Monaco can draw its own menu", () => {
+  // preventDefault cancels the browser's menu and nothing else. Monaco's is
+  // HTML it renders itself in response to this same event, and stopping the
+  // event would take that away along with the one being suppressed.
+  const target = fakeTarget();
+  suppressNativeContextMenu(target);
+
+  const event = rightClick();
+  target.fire(event);
+  assert.equal(event.propagationStopped, false);
+});
+
+test("this guard bubbles, unlike the keydown one", () => {
+  // Deliberately the opposite choice, and the tests say so because the two sit
+  // in one file and look like an inconsistency. Capture is right for keydown so
+  // it beats anything that would stopPropagation; bubbling is right here so a
+  // pane gets to show its own menu before the event is called dealt with.
+  const target = fakeTarget();
+  suppressNativeContextMenu(target);
+  assert.equal(target.listeners.length, 1);
+  assert.equal(target.listeners[0].type, "contextmenu");
+  assert.equal(target.listeners[0].options, undefined);
+});
+
+test("the context-menu guard can be removed", () => {
+  const target = fakeTarget();
+  const remove = suppressNativeContextMenu(target);
+  remove();
+  assert.equal(target.listeners.length, 0);
+
+  const event = rightClick();
   target.fire(event);
   assert.equal(event.defaultPrevented, false);
 });

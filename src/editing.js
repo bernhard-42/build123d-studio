@@ -93,6 +93,44 @@ async function cutOrCopy(removing) {
   }
 }
 
+/**
+ * Copy text that has already been captured, rather than looked up now.
+ *
+ * The context menu's case, and the capture is the point: opening a menu moves
+ * focus, and both of the panes that use this hold their selection in something
+ * that a focus change can clear. What the user right-clicked on is read at that
+ * moment and carried into the item, so no timing question arises at all.
+ */
+export async function copyText(text) {
+  if (typeof text !== "string" || text === "") {
+    return;
+  }
+  try {
+    await clipboard.writeText(text);
+  } catch (error) {
+    log.error("Could not copy:", error);
+  }
+}
+
+/**
+ * Put the clipboard's contents wherever `deliver` puts them.
+ *
+ * Generic rather than console-specific so that the reading, the empty case and
+ * the error reporting are not written a second time for the next pane that
+ * wants a paste.
+ */
+export async function pasteInto(deliver) {
+  try {
+    const text = await clipboard.readText();
+    if (typeof text !== "string" || text === "") {
+      return;
+    }
+    deliver(text);
+  } catch (error) {
+    log.error("Could not paste:", error);
+  }
+}
+
 export async function paste() {
   const target = currentTarget();
   if (target === "none") {
