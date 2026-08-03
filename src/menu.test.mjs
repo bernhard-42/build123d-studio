@@ -99,9 +99,9 @@ test("File carries the items tabs will need, separated into groups", () => {
   const file = submenu(menu("Darwin"), "menu.file");
   assert.deepEqual(
     file.map((entry) => entry.text),
-    ["New", "Open File…", "Open Folder…", "Close Folder", "-",
+    ["New", "Open File…", "Open Folder…", "-",
       "Save", "Save As…", "Save All", "-",
-      "Close", "Close All", "Close Tab"],
+      "Close", "Close All", "Close Folder"],
   );
 });
 
@@ -111,12 +111,12 @@ test("View carries the sidebar toggle", () => {
   assert.equal(view[0].id, MENU.TOGGLE_SIDEBAR);
 });
 
-test("Close Folder sits with Open Folder rather than with the tab items", () => {
-  // Both are project-scale commands - each closes every tab - so they belong
-  // together and above the separator that starts the saving group.
+test("Close Folder sits with the other closing commands", () => {
+  // It closes every tab, like Close All directly above it, so it belongs in
+  // the group about closing things rather than beside Open Folder.
   const file = submenu(menu("Linux"), "menu.file").map((entry) => entry.text);
-  assert.equal(file.indexOf("Close Folder"), file.indexOf("Open Folder…") + 1);
-  assert.ok(file.indexOf("Close Folder") < file.indexOf("Save"));
+  assert.ok(file.indexOf("Close Folder") > file.indexOf("Close All"));
+  assert.ok(file.indexOf("Close Folder") > file.indexOf("Save All"));
 });
 
 test("Run is built from the keymap, so the two cannot drift", () => {
@@ -157,19 +157,28 @@ test("nothing outside Edit ever gets a role", () => {
   }
 });
 
-// --- what group 2 has not built yet ---
+// --- items that are greyed out ---
 
-test("items that need tabs ship disabled rather than broken", () => {
-  const needsTabs = new Set([
-    MENU.OPEN_FOLDER, MENU.SAVE_ALL, MENU.CLOSE, MENU.CLOSE_ALL, MENU.CLOSE_TAB,
-  ]);
-  const built = menu("Darwin", { isEnabled: (id) => !needsTabs.has(id) });
-  const file = submenu(built, "menu.file");
-  for (const id of needsTabs) {
+test("what is disabled is whatever the caller says is disabled", () => {
+  // This used to pin a fixed list of items group 2 had not built. They are all
+  // built now, and what is greyed changes with the session - Close needs a tab,
+  // Close Folder needs a project - so the mechanism is what is worth asserting.
+  const away = new Set([MENU.SAVE_ALL, MENU.CLOSE, MENU.CLOSE_ALL, MENU.CLOSE_FOLDER]);
+  const file = submenu(menu("Darwin", { isEnabled: (id) => !away.has(id) }), "menu.file");
+  for (const id of away) {
     assert.equal(find(file, id).isDisabled, true, `${id} should be disabled`);
   }
-  assert.equal(find(file, MENU.NEW).isDisabled, undefined, "New works today");
-  assert.equal(find(file, MENU.SAVE).isDisabled, undefined, "Save works today");
+  assert.equal(find(file, MENU.NEW).isDisabled, undefined, "New is always available");
+  assert.equal(find(file, MENU.OPEN).isDisabled, undefined, "so is Open File");
+});
+
+test("nothing is disabled when everything is available", () => {
+  // isDisabled is absent rather than false, because Neutralino reads the
+  // presence of the field.
+  const file = submenu(menu("Darwin", { isEnabled: () => true }), "menu.file");
+  for (const entry of file.filter((candidate) => candidate.id !== undefined)) {
+    assert.equal(entry.isDisabled, undefined, entry.text);
+  }
 });
 
 test("every item is either a separator or has an id to dispatch on", () => {

@@ -12,7 +12,6 @@ import {
   getCurrentFile,
   getValue,
   isBufferDirty,
-  isDirty,
   markSaved,
   openBuffer,
   setCurrentFile,
@@ -21,6 +20,7 @@ import {
 } from "./monaco.js";
 import { refreshTabs } from "./tabstrip.js";
 import { chooseActive, readWorkspace } from "./workspace.js";
+import { unsavedPrompt } from "./unsaved.js";
 import { hideFolder, revealInTree, showFolder } from "./sidebar.js";
 import { askThreeWay, notifyFailure } from "../confirm.js";
 import { writeFileSafely } from "./safewrite.js";
@@ -98,7 +98,7 @@ export function syncKernelDirectory() {
  * otherwise depend on where each file sits, and that is a rule someone has to
  * hold in their head to predict what a menu item does.
  */
-async function closeEveryTab() {
+export async function closeEveryTab() {
   if (!(await confirmDiscardAll())) {
     return false;
   }
@@ -236,32 +236,6 @@ export async function closeTab(key) {
   return true;
 }
 
-/**
- * Offer to save every tab that differs from disk. Returns false if cancelled.
- *
- * Once per dirty file, which is not where this ends up: group 2's piece 4 makes
- * it a single prompt listing all of them, because being asked five times in a
- * row is how people learn to dismiss the dialog without reading it. It is here
- * now rather than then because the moment a second tab can exist, quitting has
- * to account for it - and the alternative, asking only about the tab on screen,
- * loses the other four without a word.
- */
-export async function confirmDiscardAll() {
-  for (const key of bufferKeys()) {
-    if (!isBufferDirty(key)) {
-      continue;
-    }
-    if (activeBufferKey() !== key) {
-      showBuffer(key);
-      refreshTabs();
-    }
-    if (!(await confirmDiscardChanges())) {
-      return false;
-    }
-  }
-  return true;
-}
-
 const WORKSPACE_KEY = "workspace";
 const LAST_FILE_KEY = "lastFile";
 const LAST_POSITION_KEY = "lastPosition";
@@ -346,52 +320,124 @@ export async function saveWorkspace() {
   });
 }
 
+/** Close the tab on screen, which is what Close and Cmd-W do. */
+export async function closeActiveTab() {
+  const key = activeBufferKey();
+  return key === null ? true : closeTab(key);
+}
+
 /**
- * Offer to save when the buffer is dirty. Returns false if the user cancelled.
+ * Offer to save the buffers that differ from disk. False if the user cancelled.
  *
- * Shared by everything that is about to throw the buffer away - quitting, and
- * starting a new file. One implementation means the two cannot drift into
- * asking differently, or one of them forgetting to ask at all.
+ * One prompt for however many there are, which is the change piece 4 exists
+ * for: this used to ask once per file, and the fifth question looks exactly
+ * like the first, which is how people learn to dismiss a dialog without reading
+ * it. The wording is in unsaved.js and tested there.
+ *
+ * Shared by everything that is about to throw buffers away - quitting, closing
+ * a tab, Close All, and both folder commands. One implementation means they
+ * cannot drift into asking differently, or one of them forgetting to ask.
+ *
+ * @param {number[]} keys the buffers at risk, in tab order
  */
-export async function confirmDiscardChanges() {
-  if (!isDirty()) {
+async function confirmDiscard(keys) {
+  const dirty = keys.filter((key) => isBufferDirty(key));
+  if (dirty.length === 0) {
     return true;
   }
-  const file = getCurrentFile();
-  const answer = await askThreeWay({
-    title: "Unsaved changes",
-    detail:
-      file === null
-        ? "The editor has changes that have never been saved to a file."
-        : `${file} has unsaved changes.`,
-    save: "Save",
-    discard: "Discard",
-    cancel: "Cancel",
-  });
 
+  const answer = await askThreeWay(
+    unsavedPrompt(dirty.map((key) => bufferPath(key) ?? "Untitled")),
+  );
   if (answer === "cancel") {
     return false;
   }
   if (answer === "discard") {
     return true;
   }
-  // Saving an unnamed buffer opens the save dialog, which the user can also
-  // dismiss - and dismissing it is not consent to lose the work, so that
-  // cancels the whole operation too.
-  try {
-    return (await saveFile()) !== null;
-  } catch {
-    // saveFile has already said so on screen; what is decided here is what
-    // happens next, and the answer is nothing.
-    //
-    // This used to throw out of here into shutdown()'s catch, which is written
-    // for a failed *prompt* and reads any throw as permission to quit. So the
-    // one case where the user had explicitly asked to keep their work - answer
-    // "Save", have the save fail - was also the case that discarded it and
-    // closed the window. A failed save is the strongest possible reason not to
-    // continue with something whose next step is to throw the buffer away.
-    return false;
+
+  for (const key of dirty) {
+    // saveFile writes whichever buffer is on screen, and an unnamed one opens
+    // the save dialog - so the buffer being saved has to be the one showing, or
+    // the dialog would name one file and write another.
+    if (activeBufferKey() !== key) {
+      showBuffer(key);
+      refreshTabs();
+    }
+    try {
+      // Dismissing the save dialog is not consent to lose the work, so it
+      // cancels the whole operation rather than skipping one file.
+      if ((await saveFile()) === null) {
+        return false;
+      }
+    } catch {
+      // saveFile has already said so on screen; what is decided here is what
+      // happens next, and the answer is nothing.
+      //
+      // This used to throw out of here into shutdown()'s catch, which is
+      // written for a failed *prompt* and reads any throw as permission to
+      // quit. So the one case where the user had explicitly asked to keep their
+      // work - answer "Save", have the save fail - was also the case that
+      // discarded it and closed the window. A failed save is the strongest
+      // possible reason not to continue with something whose next step is to
+      // throw the buffer away.
+      return false;
+    }
   }
+  return true;
+}
+
+/** Offer to save the buffer on screen. */
+export async function confirmDiscardChanges() {
+  const key = activeBufferKey();
+  return key === null ? true : confirmDiscard([key]);
+}
+
+/** Offer to save every buffer that differs from disk, in one prompt. */
+export async function confirmDiscardAll() {
+  return confirmDiscard(bufferKeys());
+}
+
+/**
+ * Save every named buffer that has changed.
+ *
+ * Buffers that have never been saved are skipped rather than each opening a
+ * save dialog: Save All is a command for getting the project onto disk, and one
+ * that stops to ask where four scratch buffers should live is not that. They
+ * keep their dot and are still offered when something would discard them.
+ *
+ * @returns {Promise<boolean>} false if a save failed
+ */
+export async function saveAll() {
+  const pending = bufferKeys()
+    .filter((key) => isBufferDirty(key) && bufferPath(key) !== null);
+  if (pending.length === 0) {
+    return true;
+  }
+
+  const returning = activeBufferKey();
+  for (const key of pending) {
+    if (activeBufferKey() !== key) {
+      showBuffer(key);
+      refreshTabs();
+    }
+    try {
+      await saveFile();
+    } catch {
+      // Reported on screen by saveFile. Stopping here rather than carrying on
+      // leaves the failure in front of the user instead of behind three more.
+      return false;
+    }
+  }
+
+  // Back to where they were. Save All is not a command about navigation, and
+  // being left in the last file it happened to write is a surprise.
+  if (returning !== null && activeBufferKey() !== returning) {
+    showBuffer(returning);
+    refreshTabs();
+  }
+  log.info(`Saved ${pending.length} file(s)`);
+  return true;
 }
 
 /**

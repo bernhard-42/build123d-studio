@@ -1,6 +1,6 @@
 import { window as neuWindow } from "@neutralinojs/lib";
 
-import { newFile, openFile, saveFile } from "./editor/files.js";
+import { closeActiveTab, newFile, openFile, saveFile } from "./editor/files.js";
 import { toggleSidebar } from "./editor/sidebar.js";
 import {
   focusAt,
@@ -141,7 +141,17 @@ export function initToolbar() {
     if (event.shiftKey || event.altKey) {
       return;
     }
-    if (event.key === "b") {
+    if (event.key === "w") {
+      // Cmd-W / Ctrl-W, as every editor binds it. Prevented as well as handled:
+      // in a webview it is the browser's own close-the-window chord. There is
+      // no toolbar button for it - the tabs have their own crosses - so unlike
+      // the others this does not go through `actions`.
+      event.preventDefault();
+      withErrorReporting("Close", async () => {
+        await closeActiveTab();
+        await updateTitle();
+      });
+    } else if (event.key === "b") {
       // Cmd-B / Ctrl-B, as VS Code binds it. Global rather than a Monaco
       // action, because showing the tree is worth doing from the console too.
       event.preventDefault();

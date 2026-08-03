@@ -1130,7 +1130,10 @@ html body {
   font-weight: 600;
 }
 
+/* The unsaved-changes question lists the files one per line, so the newlines
+   in it have to survive - see unsaved.js. */
 .confirm-detail {
+  white-space: pre-line;
   margin: 0 0 18px;
   color: var(--fg-dim);
   /* Long paths must wrap rather than stretch the dialog off-screen. */

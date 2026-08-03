@@ -13,6 +13,7 @@ import {
   sendText,
 } from "./console/terminal.js";
 import {
+  bufferKeys,
   focus as focusEditor,
   hasTextFocus,
   initEditor,
@@ -26,8 +27,10 @@ import { copy, copyText, cut, initClipboard, paste, pasteInto } from "./editing.
 import { attachContextMenu } from "./contextmenu.js";
 import { confineSelection, textWithin } from "./selection.js";
 import { MENU } from "./menu.js";
-import { initMenu, refreshMenu, watchFolder } from "./menubar.js";
+import { initMenu, refreshMenu, watchSession } from "./menubar.js";
 import {
+  closeActiveTab,
+  closeEveryTab,
   closeFolder,
   closeTab,
   currentFolder,
@@ -37,6 +40,7 @@ import {
   openFolder,
   openPath,
   restoreWorkspace,
+  saveAll,
   saveFile,
   saveWorkspace,
   selectTab,
@@ -149,6 +153,7 @@ function withTitle(action) {
   Promise.resolve()
     .then(action)
     .then(() => updateTitle())
+    .then(() => refreshMenu())
     .catch((error) => log.error("Tab action failed:", error));
 }
 
@@ -370,9 +375,13 @@ async function main() {
     },
   });
 
-  // Close Folder and Toggle Sidebar are greyed until there is a project, and
-  // the menu is rebuilt whenever that changes - see menubar.refreshMenu.
-  watchFolder(() => currentFolder() !== null);
+  // What is greyed out depends on the session rather than on what has been
+  // built: Close needs a tab, Close Folder needs a project. Both are asked at
+  // rebuild time, and everything that changes either rebuilds the menu.
+  watchSession({
+    folder: () => currentFolder() !== null,
+    tabs: () => bufferKeys().length > 0,
+  });
 
   await initMenu({
     [MENU.ABOUT]: showInfo,
@@ -388,6 +397,9 @@ async function main() {
     [MENU.TOGGLE_SIDEBAR]: toggleSidebar,
     [MENU.SAVE]: () => saveFile(),
     [MENU.SAVE_AS]: () => saveFile({ saveAs: true }),
+    [MENU.SAVE_ALL]: () => withMenu(saveAll),
+    [MENU.CLOSE]: () => withMenu(closeActiveTab),
+    [MENU.CLOSE_ALL]: () => withMenu(closeEveryTab),
     "run.cell": () => runCell(),
     "run.cell.stay": () => runCell({ advance: false }),
     "run.selectionOrLine": () => runSelectionOrLine(),
