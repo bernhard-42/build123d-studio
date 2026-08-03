@@ -137,7 +137,7 @@ Done. What changed, and why it was worth doing.
   The menu is a pure function of state - which items are enabled, and what each one's shortcut currently is - so it is rebuilt rather than mutated, and that function is unit-testable without a window.
 
 - **The application must never reload.** There is no guard today: the only global key handler is Cmd/Ctrl-Q, so an accidental F5 (Windows, Linux) or Cmd-R (macOS) discards the editor buffer and re-runs the whole bootstrap. Same family as the Phase 2 work on losing edits silently, and a prerequisite for binding F5 to anything.
-- Logically, idle/busy indicator belongs to kernel button group. Tried in front of the buttons first, as originally written here, and it read as a *label for* them rather than as the kernel's state - a word followed by two icons is taken as a caption. So the group is Restart, Interrupt, indicator, and the indicator needs a fixed-width box or the dot slides about as the word changes between "starting", "busy" and "idle"
+- Logically, idle/busy indicator belongs to kernel button group. Tried in front of the buttons first, as originally written here, and it read as a _label for_ them rather than as the kernel's state - a word followed by two icons is taken as a caption. So the group is Restart, Interrupt, indicator, and the indicator needs a fixed-width box or the dot slides about as the word changes between "starting", "busy" and "idle"
 - Add all log paths to the info box
 - Fix the Application icon on MacOS (logo.svg should now be compliant with Apple rules for Tahoe)
 - Config should get a multiline field where I can add code that should be used during "New File"
@@ -171,24 +171,24 @@ Before the instance model, but not because it replaces it - see group 3, the two
 
 **The pieces, in the order they want building.** Each is a commit; the first is a prerequisite for everything after it.
 
-1. **Many buffers, one editor.** A buffer is a path, a Monaco model, a saved version id and a view state. Today each of those is a single module-level value, and *that* is the work - the multiplicity itself is a Map. Ships with one tab's worth of behaviour and no visible tabs, so it can be verified before any UI depends on it.
+1. **Many buffers, one editor.** A buffer is a path, a Monaco model, a saved version id and a view state. Today each of those is a single module-level value, and _that_ is the work - the multiplicity itself is a Map. Ships with one tab's worth of behaviour and no visible tabs, so it can be verified before any UI depends on it.
 2. **The tab strip.** Label is the filename, the full path on hover. Fiddly rather than deep: overflow, close targets, a dirty mark, and two files of the same name in different folders needing a disambiguating hint.
 3. **The sidebar.** The most genuinely new code - a lazily expanded tree, sorted, with `__pycache__` and `.git` filtered out, behind a new splitter whose width persists like the others.
-4. **Save All, Close, Close All, and quitting.** The menu already carries these disabled; this enables them. `confirmDiscardChanges` reasons about exactly one buffer today and has to ask *once* for many rather than once per file.
+4. **Save All, Close, Close All, and quitting.** The menu already carries these disabled; this enables them. `confirmDiscardChanges` reasons about exactly one buffer today and has to ask _once_ for many rather than once per file.
 5. **The workspace, restored.** `lastFile`/`lastPosition`/`lastScrollTop` become a folder, a set of open tabs, which one is active, and a caret for each - with a migration, because an existing installation has the old keys.
 
 **Where this can actually hurt.** Closing a tab must dispose its Monaco model; nothing in the application disposes anything today because nothing has ever needed to, and the leak is invisible until someone has opened forty files. `confirmDiscardChanges` is load-bearing - Phase 2 exists partly because work could be lost silently - and rewriting it for many buffers is the one change here that can lose somebody's edits. A CAD project full of STEP exports is large, so the tree has to expand lazily or Open Folder hangs on it. And `createWatcher` is undocumented enough that live updates should wait: ship a refresh, then add watching once a build has said how it behaves.
 
 Plenty of it is pure and testable in the way the rest of the frontend now is: tab labels and their disambiguation, tree sorting and filtering, workspace serialisation, whether anything is dirty.
 
-**Open, and each one changes the design rather than the code.**
+**Decided.** Six questions that changed the design rather than the code, answered before any of it was written.
 
-- **The kernel's working directory when a folder is open** - the project root, or the active file's directory as it is today? The most consequential of these: relative paths in user scripts resolve against it, and Phase 1 chose per-file deliberately so that `export_step(part, "bracket.step")` lands beside `bracket.py`. A project root is the other reasonable answer and would change that promise
-- **What the sidebar shows** - every file, as VS Code does, or Python only
-- **Closing the last tab** - an empty buffer, or an editor with no tab at all
-- **Restoring tabs on restart** - the previous session's open files, or just the folder
-- **Tab overflow** - scrolling the strip, or a dropdown of what does not fit
-- **Preview tabs**, VS Code's single-click italic tab that the next file replaces - recommended against, as an extra concept for little gain
+- **The kernel's working directory follows the folder when there is one, and the file when there is not.** No folder open: the active file's directory, exactly as Phase 1 chose, so `export_step(part, "bracket.step")` still lands beside `bracket.py` - and $HOME until the buffer has been saved anywhere, which is already what an unsaved buffer does today. Folder open: the project root, and it stays there rather than moving as tabs are switched. Both halves are what VS Code does - a workspace root when there is a workspace, the file's own directory when there is not - so the two readings of "like VS Code" agree, and the Phase 1 promise is kept in precisely the case it was made for, a single script opened on its own
+- **The sidebar shows every file**, not Python only. A build123d project is STEP exports, STL, images and a README as much as it is `.py`, and a tree that hides them is a tree that has to be explained
+- **Closing the last tab leaves the editor with no tab at all** - no phantom empty buffer to save, close or wonder about. The editor pane shows nothing until a file is opened or created
+- **Restart restores the previous session's open tabs**, not just the folder, along with which one was active and a caret for each
+- **Tab overflow scrolls the strip.** A dropdown is a second place to look for a file that is already on screen somewhere
+- **No preview tabs.** VS Code's single-click italic tab that the next file replaces is an extra concept - a second kind of tab, an italic state, and a promotion rule - for little gain at the number of files this application is opened with. Every file that is opened gets a tab, and it stays until it is closed
 
 ### 3. Instance Model (decided: multi-instance)
 
@@ -229,6 +229,7 @@ Not needed, but worth recording so nobody rediscovers it: a single-instance guar
 
 ### 4. Config dialog: extra packages, and editing the shortcuts
 
+- Rename from Packages to Settings
 - Config should get a field where users can add extra packages in pyproject.toml syntax. They will be added to pyproject.toml (a "custom" section: `# --- custom: own packages ---`)
 - Editing the keyboard shortcuts, on top of the defaults map group 1 lands. This is the expensive half of "shortcuts are configurable" and is deliberately not a quick win: capturing a chord, detecting conflicts both between our own actions and against Monaco's built-in bindings, reset-to-default, and displaying each binding the way its platform writes it (⌘⇧↵ against Ctrl+Shift+Enter). By this point the storage, the parser and the re-registration all exist, so it is a form over data rather than new machinery.
 
@@ -245,6 +246,7 @@ Its own group rather than a usability quick win, because it is the first place f
   - Allows to hook into "breakpoint reached" or "Step finished" to including visual debugging, i.e. execute show_all(locals())
 - The variable explorer needs to get multilevel for iterables (`a = dict(a=12, b="wert", c=[1,2,3,4,5,6], d=dict(x=dict(aa=1, bb="sdfg"), y=2))`)
 - the variable explorer needs to support paging to avoid showing hundreds of objects for arrays
+- the columns of the variable explorer need to be resizable. currently type uses way too much space
 - Show the repr in an expanded variable explorer row. Removing bounding box, volume and area is done - they cost 19 s, 2.8 s and 2.2 s on a real assembly and hung the pane
 - Update to uv 0.12.1
 

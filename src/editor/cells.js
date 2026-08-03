@@ -11,7 +11,14 @@ const CELL_MARKER = /^\s*#\s*%%/;
 /**
  * Split source into cells.
  *
- * @returns {Array<{startLine: number, endLine: number, code: string}>}
+ * `marked` says whether the cell began with a real "# %%" line or is the
+ * synthesised one covering text ahead of the first marker. The two are otherwise
+ * indistinguishable by start line - both can begin at line 1 - and telling them
+ * apart is what stops a plain script's first line being decorated as a cell
+ * boundary it does not have.
+ *
+ * @returns {Array<{startLine: number, endLine: number, code: string,
+ *                  marked: boolean}>}
  *          1-based inclusive line numbers, matching Monaco's convention.
  */
 export function findCells(source) {
@@ -24,8 +31,10 @@ export function findCells(source) {
     }
   }
 
-  // Content ahead of the first marker is still a cell.
-  if (boundaries.length === 0 || boundaries[0] !== 0) {
+  // Content ahead of the first marker is still a cell - but it is one this
+  // function invented, not one the author wrote a marker for.
+  const synthesised = boundaries.length === 0 || boundaries[0] !== 0;
+  if (synthesised) {
     boundaries.unshift(0);
   }
 
@@ -35,6 +44,7 @@ export function findCells(source) {
       startLine: start + 1,
       endLine: end + 1,
       code: lines.slice(start, end + 1).join("\n"),
+      marked: !(synthesised && index === 0),
     };
   });
 }

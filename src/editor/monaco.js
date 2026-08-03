@@ -10,6 +10,7 @@ import "monaco-editor/languages/definitions/python/register.js";
 import EditorWorker from "monaco-editor/editor/editor.worker.js?worker";
 
 import { cellAt, findCells, nextCell } from "./cells.js";
+import * as buffers from "./buffers.js";
 import { COMMANDS } from "../keys.js";
 import { bindingsFor } from "../keybindings.js";
 import * as ipc from "../ipc.js";
@@ -59,7 +60,19 @@ part.bounding_box()
 `;
 
 let editor = null;
-let currentFile = null;
+
+/**
+ * The model the editor is showing, or null when it is showing none.
+ *
+ * There genuinely is such a moment: the editor is created before startup knows
+ * what to put in it, and once tabs can be closed there is no file open after the
+ * last one goes. Everything that reads the buffer goes through here rather than
+ * assuming, because Monaco's getValue, getPosition and getSelection all reach
+ * through the model and throw or return null when there is not one.
+ */
+function currentModel() {
+  return editor === null ? null : editor.getModel();
+}
 
 /** Send code to the kernel. It is echoed into the console pane as In [n]:. */
 function execute(code) {
@@ -75,10 +88,16 @@ function execute(code) {
 }
 
 export function runFile() {
+  if (currentModel() === null) {
+    return;
+  }
   execute(editor.getValue());
 }
 
 export function runCell({ advance = true } = {}) {
+  if (currentModel() === null) {
+    return;
+  }
   const source = editor.getValue();
   const position = editor.getPosition();
   const cell = cellAt(source, position.lineNumber);
@@ -100,8 +119,11 @@ export function runCell({ advance = true } = {}) {
 }
 
 export function runSelectionOrLine({ advance = true } = {}) {
+  const model = currentModel();
+  if (model === null) {
+    return;
+  }
   const selection = editor.getSelection();
-  const model = editor.getModel();
 
   if (selection !== null && !selection.isEmpty()) {
     execute(model.getValueInRange(selection));
@@ -127,44 +149,117 @@ export function runSelectionOrLine({ advance = true } = {}) {
   }
 }
 
+// The cell-boundary highlights for whichever model is attached. Decorations
+// belong to a model, so this is cleared before the editor is pointed at another
+// one and rebuilt afterwards rather than carried across.
+let decorations = null;
+
+/**
+ * Drop the highlights, which must happen while their own model is still attached.
+ *
+ * A decoration belongs to a model rather than to the editor, so a collection
+ * left standing across a setModel is holding ids that mean nothing in the new
+ * document - and the old model is about to be disposed with them still on it.
+ */
+function clearCellDecorations() {
+  if (decorations !== null) {
+    decorations.clear();
+    decorations = null;
+  }
+}
+
 /** Highlight cell boundaries so the run-cell target is obvious. */
-function decorateCells() {
+function refreshCellDecorations() {
+  clearCellDecorations();
+  if (currentModel() === null) {
+    return;
+  }
   const cells = findCells(editor.getValue());
-  const decorations = cells
-    .filter((cell) => cell.startLine > 1)
-    .map((cell) => ({
-      range: new monaco.Range(cell.startLine, 1, cell.startLine, 1),
-      options: {
-        isWholeLine: true,
-        className: "cell-marker-line",
-        marginClassName: "cell-marker-margin",
-      },
-    }));
-  return editor.createDecorationsCollection(decorations);
+  decorations = editor.createDecorationsCollection(
+    cells
+      // Every line the author actually wrote "# %%" on, including the first line
+      // of the file. This used to be `startLine > 1`, which meant a file opening
+      // with a marker had no highlight on it - and the test could not tell that
+      // apart from a plain script, whose first line findCells also reports as a
+      // cell start and which must *not* be decorated. See cells.js: `marked` is
+      // the distinction that line number cannot make.
+      .filter((cell) => cell.marked)
+      .map((cell) => {
+        const options = { isWholeLine: true, className: "cell-marker-line" };
+        // The margin rule is a top border, and its job is to divide this cell
+        // from the one above. Line 1 has nothing above it to divide.
+        if (cell.startLine > 1) {
+          options.marginClassName = "cell-marker-margin";
+        }
+        return {
+          range: new monaco.Range(cell.startLine, 1, cell.startLine, 1),
+          options,
+        };
+      }),
+  );
 }
 
 export function getValue() {
-  return editor.getValue();
+  return currentModel() === null ? "" : editor.getValue();
 }
 
-// Version id of the buffer as last written to or read from disk.
-//
-// Monaco's alternative version id is the right thing to compare, rather than
-// the text: it moves with every edit but comes *back* to an earlier value when
-// those edits are undone. So typing a line and undoing it leaves the buffer
-// clean, which matches what the user believes, whereas comparing strings would
-// also be correct here but means keeping a whole copy of the file around.
-let savedVersionId = null;
+/**
+ * Open text as a buffer of its own and show it.
+ *
+ * One model per file rather than one model reused for all of them, which is what
+ * setValue used to do. That was not only a step towards tabs: pouring a second
+ * file into the first one's model carried the first one's *undo history* with
+ * it, so Cmd-Z in a freshly opened file could put back a line belonging to a
+ * file that was no longer on screen.
+ */
+export function openBuffer({ path = null, text = "" }) {
+  const key = buffers.open({ path, text });
+  showBuffer(key);
+  return key;
+}
 
-export function setValue(text, fileName = null) {
-  editor.setValue(text);
-  currentFile = fileName;
-  markSaved();
+/**
+ * Point the editor at a buffer, putting the caret back where it was left.
+ *
+ * The outgoing buffer's view state is saved first, because the whole reason to
+ * keep one per buffer is that coming back to a file lands where it was left
+ * rather than at line 1.
+ */
+export function showBuffer(key) {
+  const outgoing = buffers.activeKeyOf();
+  if (outgoing !== null && currentModel() !== null) {
+    buffers.setViewState(outgoing, editor.saveViewState());
+  }
+  clearCellDecorations();
+
+  const buffer = buffers.get(key);
+  buffers.activate(key);
+  editor.setModel(buffer.model);
+  const state = buffers.viewState(key);
+  if (state !== null) {
+    editor.restoreViewState(state);
+  }
+  refreshCellDecorations();
+  notifyDirtyChanged();
+}
+
+/** Close a buffer. The caller must show another one first, or none. */
+export function closeBuffer(key) {
+  return buffers.close(key);
+}
+
+/** The keys of every open buffer, in the order they were opened. */
+export function bufferKeys() {
+  return buffers.keys();
 }
 
 /** Record the buffer as matching disk - after a load or a successful save. */
 export function markSaved() {
-  savedVersionId = editor.getModel().getAlternativeVersionId();
+  const key = buffers.activeKeyOf();
+  if (key === null) {
+    return;
+  }
+  buffers.markSaved(key);
   notifyDirtyChanged();
 }
 
@@ -192,28 +287,38 @@ export function onDirtyChange(listener) {
   dirtyListeners.add(listener);
 }
 
-/** True when the buffer has edits that are not on disk. */
+/** True when the buffer on screen has edits that are not on disk. */
 export function isDirty() {
-  if (editor === null || savedVersionId === null) {
-    return false;
-  }
-  return editor.getModel().getAlternativeVersionId() !== savedVersionId;
+  const key = buffers.activeKeyOf();
+  return key === null ? false : buffers.isDirty(key);
 }
 
+/** The path of the buffer on screen: null for one that has never been saved. */
 export function getCurrentFile() {
-  return currentFile;
+  const buffer = buffers.active();
+  return buffer === null ? null : buffer.path;
 }
 
+/** After a Save As: the same buffer, under a new name. */
 export function setCurrentFile(path) {
-  currentFile = path;
+  const key = buffers.activeKeyOf();
+  if (key === null) {
+    return;
+  }
+  buffers.setPath(key, path);
 }
 
 export function focus() {
   editor.focus();
 }
 
-/** Caret and viewport, for remembering where the user was. */
+/** Caret and viewport, for remembering where the user was, or null with no file open. */
 export function getViewState() {
+  if (currentModel() === null) {
+    // Null rather than line 1: there is no caret, and a made-up one would be
+    // written to settings and restored next time as though it meant something.
+    return null;
+  }
   const position = editor.getPosition();
   return {
     line: position.lineNumber,
@@ -235,7 +340,13 @@ export function getViewState() {
  * @param {{line: number, column: number, scrollTop: number}|null} state
  */
 export function focusAt(state = null) {
-  const model = editor.getModel();
+  const model = currentModel();
+  if (model === null) {
+    // No file open, so there is no caret to place. Focus still belongs here:
+    // the editor pane is where typing should go the moment one is opened.
+    editor.focus();
+    return;
+  }
   let line = 1;
   let column = 1;
   let exact = false;
@@ -257,11 +368,23 @@ export function focusAt(state = null) {
 }
 
 export function initEditor() {
+  // Every buffer's model is made here, so that buffers.js can stay free of
+  // monaco and be tested without a window.
+  buffers.initBuffers({
+    create: (text) => monaco.editor.createModel(text, "python"),
+    dispose: (model) => model.dispose(),
+    versionOf: (model) => model.getAlternativeVersionId(),
+  });
+
   editor = monaco.editor.create(document.getElementById("editor-host"), {
-    // Empty: restoreLastFile decides what belongs here - the reopened file, the
-    // sample on a first run, or nothing.
-    value: "",
-    language: "python",
+    // No model, rather than an empty one Monaco would create for us and nothing
+    // would ever own: restoreLastFile decides what the first buffer is - the
+    // reopened file, the sample on a first run, or an empty one - and opening it
+    // is what gives the editor a model.
+    model: null,
+    // No "language" here: that option only ever described the model Monaco
+    // creates when it is not given one, and it is not given one. Every buffer's
+    // model is created as Python above.
     theme: resolvedTheme() === "light" ? "vs" : "vs-dark",
     automaticLayout: true,
     minimap: { enabled: true },
@@ -273,16 +396,12 @@ export function initEditor() {
     rulers: [88],
   });
 
-  // The sample the editor opens with counts as clean: quitting without having
-  // touched it should not ask about saving something the user never wrote.
-  markSaved();
-
   onThemeChange((theme) => monaco.editor.setTheme(theme === "light" ? "vs" : "vs-dark"));
 
-  let decorations = decorateCells();
+  // Bound to the editor rather than to a model, so it follows whichever buffer
+  // is on screen and survives every switch between them.
   editor.onDidChangeModelContent(() => {
-    decorations.clear();
-    decorations = decorateCells();
+    refreshCellDecorations();
     notifyDirtyChanged();
   });
 
@@ -354,6 +473,10 @@ export function selectedText() {
  */
 export function replaceSelection(text) {
   const selection = editor.getSelection();
+  if (selection === null) {
+    // No file open: there is nowhere for a paste to land.
+    return;
+  }
   editor.executeEdits("clipboard", [{ range: selection, text, forceMoveMarkers: true }]);
   editor.focus();
 }

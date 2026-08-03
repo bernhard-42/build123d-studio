@@ -2,13 +2,15 @@ import { filesystem, os } from "@neutralinojs/lib";
 
 import {
   SAMPLE_SOURCE,
+  bufferKeys,
+  closeBuffer,
   getCurrentFile,
   getValue,
   getViewState,
   isDirty,
   markSaved,
+  openBuffer,
   setCurrentFile,
-  setValue,
 } from "./monaco.js";
 import { askThreeWay, notifyFailure } from "../confirm.js";
 import { writeFileSafely } from "./safewrite.js";
@@ -55,6 +57,29 @@ export function syncKernelDirectory() {
     return;
   }
   ipc.send("kernel.cwd", { path: directoryOf(getCurrentFile()) });
+}
+
+/**
+ * Show text as a buffer of its own, and close whatever was open before it.
+ *
+ * One buffer at a time is all the UI can express today: there is no tab strip
+ * yet, so a second one would be open with no way to reach it - and unreachable
+ * is exactly how a buffer with unsaved changes in it gets lost. Every caller
+ * here has already offered to save through confirmDiscardChanges.
+ *
+ * The order matters and is the reason this is one function rather than two calls
+ * at five sites. The new buffer is shown *first* and the old ones closed after,
+ * because closing disposes a Monaco model and disposing the one the editor is
+ * pointed at leaves it showing a dead document.
+ */
+function showOnly({ path = null, text = "" }) {
+  const key = openBuffer({ path, text });
+  for (const other of bufferKeys()) {
+    if (other !== key) {
+      closeBuffer(other);
+    }
+  }
+  return key;
 }
 
 const LAST_FILE_KEY = "lastFile";
@@ -116,6 +141,9 @@ export async function rememberPosition() {
     return;
   }
   const view = getViewState();
+  if (view === null) {
+    return;
+  }
   await setSetting(LAST_POSITION_KEY, { line: view.line, column: view.column });
   await setSetting(LAST_SCROLL_KEY, view.scrollTop);
 }
@@ -211,7 +239,7 @@ export async function newFile() {
   if (!(await confirmDiscardChanges())) {
     return false;
   }
-  setValue(newFileTemplate(), null);
+  showOnly({ text: newFileTemplate() });
   await setSetting(LAST_FILE_KEY, null);
   await setSetting(LAST_POSITION_KEY, null);
   await setSetting(LAST_SCROLL_KEY, null);
@@ -237,10 +265,10 @@ export async function newFile() {
  */
 async function startWithSampleOrEmpty() {
   if (getSetting(SAMPLE_SHOWN_KEY) === true) {
-    setValue("", null);
+    showOnly({ text: "" });
     return;
   }
-  setValue(SAMPLE_SOURCE, null);
+  showOnly({ text: SAMPLE_SOURCE });
   await setSetting(SAMPLE_SHOWN_KEY, true);
   log.info("First start: showing the sample");
 }
@@ -257,7 +285,7 @@ export async function restoreLastFile() {
   if (typeof path === "string" && path !== "") {
     try {
       const content = await filesystem.readFile(path);
-      setValue(content, path);
+      showOnly({ path, text: content });
       log.info("Reopened", path);
       return path;
     } catch {
@@ -290,7 +318,7 @@ export async function openFile() {
   }
   const path = entries[0];
   const content = await filesystem.readFile(path);
-  setValue(content, path);
+  showOnly({ path, text: content });
   await setSetting(LAST_FILE_KEY, path);
   await rememberFolder(path);
   // The remembered position belonged to the file being replaced. Quitting
