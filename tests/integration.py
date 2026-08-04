@@ -626,6 +626,11 @@ def main():
             "\n"
             "def make(size):\n"
             "    b = Box(size, size, size)\n"
+            # A second statement inside the function, so a step stays in a frame
+            # where a shape exists. Stepping off `return b` lands back at module
+            # level, where `part` is not yet bound and there is correctly
+            # nothing to draw - which is the filter working, not a failure.
+            "    marker = size * 2\n"
             "    return b\n"
             "\n"
             "part = make(3)\n"
