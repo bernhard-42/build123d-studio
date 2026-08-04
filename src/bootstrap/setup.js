@@ -3,11 +3,13 @@ import { appDir, resolveEnvRoot, uvEnvironment, venvPython } from "./envroot.js"
 import { ensureUv } from "./uv.js";
 import {
   PACKAGES,
+  customPackages,
   isDefaultSelection,
   loadPackageSources,
   packageSources,
   renderPyproject,
   savePackageSources,
+  shippedLockApplies,
 } from "../packages.js";
 import { run, quote } from "../proc.js";
 import { appendLog, setStatus } from "./splash.js";
@@ -43,26 +45,37 @@ async function exists(path) {
  *
  * @returns {Promise<boolean>} whether the shipped lock applies
  */
-async function stageProjectFiles(envRoot, selection) {
+async function stageProjectFiles(envRoot, selection, custom) {
   const root = await appDir();
-  await filesystem.writeFile(`${envRoot}/pyproject.toml`, await renderPyproject(selection));
+  await filesystem.writeFile(`${envRoot}/pyproject.toml`, await renderPyproject(selection, custom));
 
   const lockPath = `${envRoot}/uv.lock`;
   const shipped = await filesystem.readFile(`${root}/runtime/uv.lock`);
 
-  if (isDefaultSelection(selection)) {
+  if (shippedLockApplies(selection, custom)) {
     await filesystem.writeFile(lockPath, shipped);
     return true;
   }
 
-  if (await exists(lockPath)) {
-    // A leftover copy of the shipped lock pins the PyPI builds and would send
-    // --frozen down the wrong path; a lock uv wrote for this selection stays.
-    const current = await filesystem.readFile(lockPath);
-    if (current === shipped) {
-      await filesystem.remove(lockPath);
-    }
-  }
+  // Whatever lock is here stays, including the shipped one.
+  //
+  // It used to be deleted when it still matched the shipped copy, to stop a
+  // stale lock sending us down `uv sync --frozen` with the wrong contents. That
+  // job belongs to shippedLockApplies above, which already answers false
+  // whenever anything has been added or redirected - so the deletion was
+  // redundant, and it cost the one thing that makes Apply different from
+  // Upgrade.
+  //
+  // Measured: `uv lock` keeps a package at its locked version even after its
+  // constraint is loosened, and still adds whatever is new. Delete the lock
+  // first and the same command resolves from scratch and moves everything. So
+  // deleting it meant the first Apply after adding a single package silently
+  // upgraded the entire environment, which is precisely what Upgrade is for and
+  // what Apply should not do.
+  //
+  // Keeping it is safe because the constraints still do the work: an app update
+  // that ships `ocp_vscode==4.1.0` invalidates the locked 4.0.1 and uv
+  // re-resolves that package regardless of what the old lock preferred.
   return false;
 }
 
@@ -135,8 +148,8 @@ async function verifyNativeLibraries(python) {
  *
  * @returns {Promise<number>} exit code of the last uv command
  */
-async function syncSelection(envRoot, selection, onLine) {
-  const shippedLockApplies = await stageProjectFiles(envRoot, selection);
+async function syncSelection(envRoot, selection, onLine, custom = customPackages()) {
+  const shippedLockApplies = await stageProjectFiles(envRoot, selection, custom);
 
   if (shippedLockApplies) {
     // Nothing to resolve: install exactly what was tested.
@@ -177,11 +190,29 @@ export async function ensureEnvironment() {
 
   let code = await syncSelection(envRoot, selection, appendLog);
 
+  // A bad line in the additional-packages field must not lock the user out of
+  // the dialog that would fix it.
+  //
+  // This runs before the window is usable, so a single typo - or a git URL that
+  // has gone - would otherwise mean the application never starts, with the
+  // field that caused it unreachable. Retried without the custom section, which
+  // is the same shape as the package-source fallback below: keep the app
+  // usable, say plainly what was dropped, and leave the text alone so it can be
+  // corrected rather than retyped.
+  if (code !== 0 && customPackages() !== "") {
+    log.warn("Sync failed with the additional packages; retrying without them");
+    appendLog("");
+    appendLog("Could not build the environment with the additional packages.");
+    appendLog("Starting without them - they are still in Settings, uncorrected.");
+    setStatus("Retrying without the additional packages…");
+    code = await syncSelection(envRoot, selection, appendLog, "");
+  }
+
   if (code !== 0 && !isDefaultSelection(selection)) {
-    // The user chose a combination uv cannot satisfy - build123d and
-    // bd_warehouse constrain each other, and which pairs work changes with
-    // every release, so this is not predictable in advance. Rather than leave
-    // the application unusable, fall back to the tested selection and say so.
+    // The user chose a source uv cannot satisfy - a dev branch that has moved
+    // ahead of what the frozen packages accept, or a local checkout that does
+    // not build. Not predictable in advance, so rather than leave the
+    // application unusable, fall back to the tested selection and say so.
     log.warn("Sync failed with the chosen package sources; reverting to PyPI");
     appendLog("");
     appendLog("Could not build the environment with the selected package sources.");
@@ -226,15 +257,23 @@ export async function upgradePackages(onLine) {
   // that built the environment, which is the last thing a user chasing a
   // package problem wants changing underneath them. See src/bootstrap/pins.json.
 
-  // Named packages, never a blanket --upgrade.
+  // A blanket --upgrade, and the exact pins are what make it safe.
   //
-  // ocp_vscode is tied to the three-cad-viewer build in the frontend and
-  // ocp_tessellate follows it, so upgrading them here would break the viewer
-  // without touching a line of application code. Only the packages the config
-  // dialog exposes may move.
-  const upgrades = PACKAGES.flatMap((p) => ["--upgrade-package", p.name]);
-
-  const lockCode = await runUv(["lock", ...upgrades], envRoot, { onLine });
+  // This used to name each package with --upgrade-package, on the grounds that
+  // a blanket upgrade would move ocp_vscode and break the viewer. Measured:
+  // `uv lock --upgrade` cannot move a dependency pinned with ==, so the pins in
+  // runtime/pyproject.toml were already the guarantee and the name list was
+  // restating it. Everything now moves as far as its own constraint allows,
+  // which is one sentence a user can hold - build123d>=0.11.1 moves,
+  // ocp_vscode==4.0.1 does not, and an added package moves exactly as far as
+  // whatever the user wrote for it.
+  //
+  // The cost is transitive drift: packages nothing here declares may land on
+  // combinations this release never tested. That is the nature of the button,
+  // and anyone pressing it has left the tested configuration by definition.
+  // Naming packages instead would mean parsing names out of the user's own text
+  // and putting them on a command line, which this avoids entirely.
+  const lockCode = await runUv(["lock", "--upgrade"], envRoot, { onLine });
   if (lockCode !== 0) {
     throw new Error(`uv lock failed with exit code ${lockCode}`);
   }
@@ -242,6 +281,26 @@ export async function upgradePackages(onLine) {
   const syncCode = await runUv(["sync"], envRoot, { onLine });
   if (syncCode !== 0) {
     throw new Error(`uv sync failed with exit code ${syncCode}`);
+  }
+}
+
+/**
+ * Put one package back into the environment from its source. Throws on failure.
+ *
+ * For a local checkout, which is the case that needs it: uv installs a `path`
+ * source as an ordinary build rather than a live link, so editing the source
+ * tree changes nothing in the environment until it is installed again - and
+ * nothing in the lock has changed, so an ordinary sync is a no-op. Only
+ * `--reinstall-package` makes it happen.
+ *
+ * The name comes from PACKAGES, so what reaches the command line is a constant
+ * in this repository rather than anything a user typed.
+ */
+export async function reinstallPackage(name, onLine) {
+  const { path: envRoot } = await resolveEnvRoot();
+  const code = await runUv(["sync", "--reinstall-package", name], envRoot, { onLine });
+  if (code !== 0) {
+    throw new Error(`uv sync failed with exit code ${code}`);
   }
 }
 

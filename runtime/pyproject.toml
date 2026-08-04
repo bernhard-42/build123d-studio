@@ -4,29 +4,9 @@ version = "0.1.0"
 description = "Encapsulated Python environment for the build123d-studio application"
 requires-python = "==3.14.*"
 
-# Two classes of dependency here, and the difference matters.
-#
-# FROZEN - must never be upgraded by the application.
-#   ocp_vscode is tied to the three-cad-viewer version bundled in the frontend:
-#   it produces the data that viewer consumes, so moving one without the other
-#   breaks the viewer. ocp_tessellate follows ocp_vscode through its own
-#   pyproject, so pinning ocp_vscode pins it too. build123d-studio also calls
-#   ocp_vscode.show._convert(), a private function, which is a second reason
-#   these move only when the application is rebuilt and retested.
-#
-# FLOATING - the user may upgrade these from the config dialog.
-#   build123d moves fast and many users track its dev branch. bd_warehouse
-#   follows build123d. They must be compatible with each other, but no logic
-#   here tries to enforce that: the constraint changes too often to encode, and
-#   uv will refuse an unsatisfiable combination anyway.
-#
-# The upgrade action names the floating packages explicitly (uv's
-# --upgrade-package) rather than using a blanket --upgrade, so the frozen ones
-# cannot drift.
 dependencies = [
-    # --- frozen ---
+    # --- frozen: moves only when the application is rebuilt and retested ---
     "ocp_vscode==4.0.1",
-    "ocp_tessellate==3.4.1",
     "ipykernel==7.3.0",
     "jupyter_client==8.9.1",
     "jupyter_console==6.6.3",
@@ -35,22 +15,12 @@ dependencies = [
     "orjson==3.11.9",
     "websockets==16.1.1",
     "pywinpty==3.0.5; sys_platform == 'win32'",
-    # The editor's static analysis: completion, signatures, and what the file
-    # means before any of it has been run. Frozen with the rest because it is
-    # the application's own tool rather than the user's, and because it brings
-    # Node with it - basedpyright is Pyright with a JavaScript runtime shipped
-    # as a wheel, which is what lets it pin like everything else here instead of
-    # downloading a runtime on first use. 271 MB installed, all of it in this
-    # per-user environment and none of it in the application bundle.
     "basedpyright==1.39.9",
 
-    # --- floating: upgradable, and switchable to a GitHub branch ---
-    "build123d==0.11.1",
-    "bd_warehouse==0.3.0",
+    # --- floating: moved by "Upgrade packages", within this range ---
+    "build123d>=0.11.1",
 ]
 
 # This project exists only to pin an environment - there is no package to build.
-# The sidecar and kernel-side code are run from the app tree via PYTHONPATH, so
-# they stay editable without a reinstall and survive the env root moving.
 [tool.uv]
 package = false

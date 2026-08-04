@@ -42,19 +42,6 @@ wheels = [
 ]
 
 [[package]]
-name = "bd-warehouse"
-version = "0.3.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "build123d" },
-    { name = "typing-extensions" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/8d/28/e8fa9fcd867db480ae7e109476c73310a5ca1ff7f246466709ad84f4f830/bd_warehouse-0.3.0.tar.gz", hash = "sha256:38f339909772770f7d211d7d25dd3572bdfb83d09eb65dee6380dea3a09ea49e", size = 8046603, upload-time = "2026-07-12T18:31:28.714Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/d1/10/431fed58b4bccf7aed3f124442f2eeeecc3f83468eaa341aab9b31ff84e3/bd_warehouse-0.3.0-py3-none-any.whl", hash = "sha256:291c40f3ed04ac6dac2fbd7592eb0da3193a6aa93e3d3b741d915ca190dc99fc", size = 140511, upload-time = "2026-07-12T18:31:27.177Z" },
-]
-
-[[package]]
 name = "blinker"
 version = "1.9.0"
 source = { registry = "https://pypi.org/simple" }
@@ -97,12 +84,10 @@ version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
     { name = "basedpyright" },
-    { name = "bd-warehouse" },
     { name = "build123d" },
     { name = "ipykernel" },
     { name = "jupyter-client" },
     { name = "jupyter-console" },
-    { name = "ocp-tessellate" },
     { name = "ocp-vscode" },
     { name = "orjson" },
     { name = "prompt-toolkit" },
@@ -114,12 +99,10 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "basedpyright", specifier = "==1.39.9" },
-    { name = "bd-warehouse", specifier = "==0.3.0" },
-    { name = "build123d", specifier = "==0.11.1" },
+    { name = "build123d", specifier = ">=0.11.1" },
     { name = "ipykernel", specifier = "==7.3.0" },
     { name = "jupyter-client", specifier = "==8.9.1" },
     { name = "jupyter-console", specifier = "==6.6.3" },
-    { name = "ocp-tessellate", specifier = "==3.4.1" },
     { name = "ocp-vscode", specifier = "==4.0.1" },
     { name = "orjson", specifier = "==3.11.9" },
     { name = "prompt-toolkit", specifier = "==3.0.53" },
