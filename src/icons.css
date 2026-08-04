@@ -116,3 +116,33 @@
 .icon-settings::before {
   content: "\e429";
 }
+
+/* bug_report */
+.icon-debug::before {
+  content: "\e868";
+}
+
+/* resume */
+.icon-debug-continue::before {
+  content: "\f7d0";
+}
+
+/* step_over */
+.icon-debug-step-over::before {
+  content: "\f6ff";
+}
+
+/* step_into */
+.icon-debug-step-into::before {
+  content: "\f701";
+}
+
+/* step_out */
+.icon-debug-step-out::before {
+  content: "\f700";
+}
+
+/* stop */
+.icon-debug-stop::before {
+  content: "\e047";
+}

@@ -4,13 +4,21 @@ import "./icons.css";
 
 import { ensureEnvironment } from "./bootstrap/setup.js";
 import { appDir } from "./bootstrap/envroot.js";
-import { acknowledge, fail, hideSplash, showSplash, splashVisible } from "./bootstrap/splash.js";
+import {
+  acknowledge,
+  appendLog,
+  fail,
+  hideSplash,
+  showSplash,
+  splashVisible,
+} from "./bootstrap/splash.js";
 import { initSplitters } from "./layout/splitter.js";
 import {
   hasFocus as consoleHasFocus,
   initConsole,
   selectedText as consoleSelectedText,
   sendText,
+  writeProgress,
 } from "./console/terminal.js";
 import {
   bufferKeys,
@@ -22,6 +30,7 @@ import {
   runFile,
   runSelectionOrLine,
   selectedText,
+  setDebugHandler,
 } from "./editor/monaco.js";
 import { copy, copyText, cut, initClipboard, paste, pasteInto } from "./editing.js";
 import { attachContextMenu } from "./contextmenu.js";
@@ -52,7 +61,9 @@ import { initViewer, showLogo } from "./viewer/viewer.js";
 import { initVariables } from "./vars/explorer.js";
 import { awaitKernelRestart, showSettings } from "./settings.js";
 import { showInfo } from "./info.js";
-import { initToolbar, updateTitle } from "./toolbar.js";
+import { initToolbar, setDebugToggle, updateTitle } from "./toolbar.js";
+import { initDebug } from "./debug/session.js";
+import { initDebugUi, stepAction, toggleDebugging } from "./debug/start.js";
 import * as ipc from "./ipc.js";
 import { initTheme } from "./theme.js";
 import { initStore } from "./store.js";
@@ -404,7 +415,36 @@ async function main() {
     "run.cell.stay": () => runCell({ advance: false }),
     "run.selectionOrLine": () => runSelectionOrLine(),
     "run.file": runFile,
+    "debug.start": () => withMenu(toggleDebugging),
+    "debug.restart": () => stepAction("restart"),
+    "debug.stop": () => stepAction("stop"),
+    "debug.continue": () => stepAction("continue"),
+    "debug.stepOver": () => stepAction("stepOver"),
+    "debug.stepInto": () => stepAction("stepInto"),
+    "debug.stepOut": () => stepAction("stepOut"),
   });
+
+  // Debugging: the session listens to the sidecar, the UI follows the session,
+  // and the editor's Shift-F5 is handed the action. All three before the
+  // workspace is restored, so a file that reopens can be debugged at once.
+  // The sidecar's own progress, on the splash, while it is still up. Its log
+  // already says what it is doing - the kernel starting, the language server,
+  // the two warm-ups - and on a slow machine that is five seconds of "starting"
+  // with nothing to show for it.
+  ipc.onSidecarProgress((line) => {
+    if (splashVisible()) {
+      appendLog(line);
+    }
+    // And in the console pane, which is what somebody is looking at once the
+    // splash lifts and before the console itself has said anything. It stops on
+    // the console's first byte; see writeProgress.
+    writeProgress(line);
+  });
+
+  initDebug();
+  initDebugUi();
+  setDebugHandler(toggleDebugging, stepAction);
+  setDebugToggle(toggleDebugging);
 
   // Before the splash lifts, so the window is revealed already showing the
   // files rather than the sample being replaced a moment later. Files that have

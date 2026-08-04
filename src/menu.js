@@ -39,7 +39,7 @@
 // This module is pure so that the shape can be asserted without a window; the
 // installing half is menubar.js. Same split as keys.js and keybindings.js.
 
-import { KEY_CHARS } from "./keys.js";
+import { KEY_CHARS, describeChord } from "./keys.js";
 
 /** Every command the menu can raise. Ids are what come back on a click. */
 export const MENU = {
@@ -128,6 +128,17 @@ function item(id, text, { platform, shortcut, enabled = true, role = false }) {
   const accelerator = menuShortcut(platform, shortcut);
   if (accelerator !== undefined) {
     built.shortcut = accelerator;
+  } else if (platform === "Darwin" && shortcut !== null && shortcut !== undefined) {
+    // Written into the label, because macOS can be told nothing else.
+    //
+    // The shortcut field there is not a display string: it *binds*, as Command
+    // plus one character, so Shift-Enter, F5 and Shift-F5 cannot be expressed
+    // through it at all and a value chosen to look right would bind a chord
+    // nobody asked for. The label is a plain string this application controls,
+    // so the chord goes in it - after the text rather than in the right-aligned
+    // column macOS would use, which is the whole of what is lost. Windows and
+    // Linux get the real display shortcut above and never reach this.
+    built.text = `${text}  (${describeChord(platform, shortcut)})`;
   }
   if (!enabled) {
     built.isDisabled = true;
@@ -147,6 +158,47 @@ function item(id, text, { platform, shortcut, enabled = true, role = false }) {
  * @param {Array<{id: string, label: string}>} options.runCommands from keys.js,
  *   so the menu cannot drift from what Monaco actually bound
  */
+
+// The Run menu's shape, which is not the order the keymap happens to list its
+// commands in. Three ideas, separated: run part of this file, run the whole of
+// it, debug it. Grouping is the only thing a menu can say about which items
+// belong together, and this one would otherwise be nine flat entries.
+const RUN_GROUPS = [
+  ["run.cell", "run.cell.stay", "run.selectionOrLine"],
+  ["run.file"],
+  ["debug.start", "debug.stepOver", "debug.stepInto", "debug.stepOut", "debug.continue",
+   "debug.restart", "debug.stop"],
+];
+
+/**
+ * Build the Run menu from the keymap, in groups.
+ *
+ * A command the groups do not mention is appended rather than dropped: this
+ * table and keys.js are two lists that have to agree, and the failure that
+ * costs nothing to prevent is a new command that silently never appears.
+ */
+function runGroups(runCommands, at) {
+  const byId = new Map(runCommands.map((command) => [command.id, command]));
+  const items = [];
+  for (const group of RUN_GROUPS) {
+    const present = group.filter((id) => byId.has(id));
+    if (present.length === 0) {
+      continue;
+    }
+    if (items.length > 0) {
+      items.push(SEPARATOR);
+    }
+    for (const id of present) {
+      items.push(at(id, byId.get(id).label));
+      byId.delete(id);
+    }
+  }
+  for (const command of byId.values()) {
+    items.push(at(command.id, command.label));
+  }
+  return items;
+}
+
 export function buildMenu({
   platform, chordFor, isEnabled, nativeClipboard, runCommands, appName = "build123d Studio",
 }) {
@@ -220,8 +272,7 @@ export function buildMenu({
     {
       id: "menu.run",
       text: "Run",
-      menuItems: runCommands.map((command) =>
-        at(command.id, command.label)),
+      menuItems: runGroups(runCommands, at),
     },
     ...(mac ? [] : [helpMenu]),
   ];

@@ -290,6 +290,13 @@ class Sidecar:
             model_port=self.models.port,
         )
 
+        # The kernel is up and nothing of the user's is running, which is what
+        # the indicator means by idle. Said explicitly because nothing else will:
+        # status is forwarded only for an execute_request, so before this the
+        # toolbar read "starting" until the first Run - for the whole session if
+        # somebody only ever used the console.
+        self.channel.send("kernel.status", state="idle")
+
     def kernel_start(self):
         self.kernel = Kernel(
             env_root=self.env_root,
@@ -447,6 +454,10 @@ class Sidecar:
             and parent_type == "kernel_info_request"
         ):
             self.warm_kernel()
+            # The console has been answered, so the pane is live and a Run no
+            # longer queues behind a handshake. The toolbar enables itself on
+            # this rather than guessing from a timer.
+            self.channel.send("console.ready")
 
         if msg_type == "status":
             state = content.get("execution_state")

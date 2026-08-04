@@ -113,6 +113,14 @@
                 <span class="icon icon-run-sel"></span>
               </button>
               <span class="toolbar-sep"></span>
+              <!-- Debugging on its own, between running code in the kernel and
+                   controlling that kernel. It belongs with neither: the file
+                   runs in a process of its own and the kernel is not touched by
+                   it. -->
+              <button class="btn" id="btn-debug" title="Debug File (Shift+F5)">
+                <span class="icon icon-debug"></span>
+              </button>
+              <span class="toolbar-sep"></span>
               <!-- Restart, Interrupt, then what the kernel is doing. The
                    indicator belongs with these two - they are what you press
                    about it - but in front of them it read as a label for the
@@ -138,7 +146,33 @@
                 <span class="icon" id="icon-theme"></span>
               </button>
             </div>
-            <div class="tab-strip" id="tab-strip" role="tablist" hidden></div>
+            <!-- The strip and the debug controls share one row: no second bar,
+                 and no vertical space spent on a mode that is usually off. The
+                 strip itself is untouched - it scrolls in whatever width is
+                 left, which while debugging is a little less. -->
+            <div class="tab-row" id="tab-row">
+              <div class="tab-strip" id="tab-strip" role="tablist" hidden></div>
+              <div class="debug-bar" id="debug-bar" hidden>
+                <button class="btn debug-btn" id="debug-continue" title="Continue (F8)">
+                  <span class="icon icon-debug-continue"></span>
+                </button>
+                <button class="btn debug-btn" id="debug-step-over" title="Step over (F10)">
+                  <span class="icon icon-debug-step-over"></span>
+                </button>
+                <button class="btn debug-btn" id="debug-step-into" title="Step into (F11)">
+                  <span class="icon icon-debug-step-into"></span>
+                </button>
+                <button class="btn debug-btn" id="debug-step-out" title="Step out (Shift+F11)">
+                  <span class="icon icon-debug-step-out"></span>
+                </button>
+                <button class="btn debug-btn" id="debug-restart" title="Restart debugging">
+                  <span class="icon icon-restart"></span>
+                </button>
+                <button class="btn debug-btn" id="debug-stop" title="Stop debugging (Shift+F5)">
+                  <span class="icon icon-debug-stop"></span>
+                </button>
+              </div>
+            </div>
             <div class="editor-host" id="editor-host"></div>
           </div>
           <div class="splitter splitter-v" id="splitter-v-top"></div>
@@ -149,6 +183,19 @@
 
         <div class="row" id="row-bottom">
           <div class="pane pane-console" id="pane-console"></div>
+          <!-- The debug console takes the same grid cell, and only one of the
+               two is ever visible. Two worlds: while a session runs every pane
+               describes the debugged process, and otherwise every pane
+               describes the kernel - so there is never a question of which one
+               a pane is talking about. -->
+          <div class="pane pane-debug" id="pane-debug" hidden>
+            <div class="debug-output" id="debug-output"></div>
+            <div class="debug-prompt">
+              <span class="debug-caret">&gt;</span>
+              <input class="debug-input" id="debug-input" type="text" spellcheck="false"
+                     autocomplete="off" placeholder="Evaluate in the selected frame" />
+            </div>
+          </div>
           <div class="splitter splitter-v" id="splitter-v-bottom"></div>
           <div class="pane pane-vars" id="pane-vars"></div>
         </div>

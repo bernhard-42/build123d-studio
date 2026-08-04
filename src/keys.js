@@ -149,6 +149,51 @@ export const COMMANDS = [
     // the reload guard is a prerequisite for this and not a nicety.
     chords: ["f5"],
   },
+  {
+    id: "debug.start",
+    label: "Debug File",
+    // Shift-F5 beside F5, so the pair reads as one idea. VS Code puts Start on
+    // F5 and Stop on Shift-F5; here F5 has meant Run File since group 1 and
+    // moving it would cost a habit to buy a convention.
+    chords: ["shift+f5"],
+  },
+  {
+    id: "debug.restart",
+    label: "Restart Debugging",
+    // Ctrl-Shift-F5 as VS Code has it, and the one place literal Ctrl is worth
+    // spelling out on macOS: Cmd-Shift-F5 is not free there.
+    chords: ["ctrl+shift+f5"],
+  },
+  {
+    id: "debug.stop",
+    label: "Stop Debugging",
+    // Shift-F5 stops as well as starts - one chord, because there is nothing to
+    // start while something is running. Named here so the menu can say so.
+    chords: [],
+  },
+  {
+    id: "debug.continue",
+    label: "Continue",
+    // VS Code's, all four of them, because somebody who debugs Python already
+    // has these in their hands. F5 is Run File here and stays that way, so
+    // Continue takes the one chord VS Code spends on starting.
+    chords: ["f8"],
+  },
+  {
+    id: "debug.stepOver",
+    label: "Step Over",
+    chords: ["f10"],
+  },
+  {
+    id: "debug.stepInto",
+    label: "Step Into",
+    chords: ["f11"],
+  },
+  {
+    id: "debug.stepOut",
+    label: "Step Out",
+    chords: ["shift+f11"],
+  },
 ];
 
 const DEFAULTS = Object.fromEntries(COMMANDS.map((command) => [command.id, command.chords]));

@@ -32,7 +32,13 @@ import {
 } from "./keys.js";
 
 const KeyMod = { CtrlCmd: 2048, Shift: 1024, Alt: 512, WinCtrl: 256 };
-const KeyCode = { Enter: 3, Escape: 9, Space: 10, F5: 65, KeyA: 31, KeyR: 48, Digit1: 22 };
+const KeyCode = { Enter: 3, Escape: 9, Space: 10, KeyA: 31, KeyR: 48, Digit1: 22 };
+// The function keys as a family rather than the ones that happen to be bound
+// today: the check below walks every default chord, so a fake that knows only
+// F5 reports a new F10 binding as broken when what is missing is the fake.
+for (let n = 1; n <= 12; n += 1) {
+  KeyCode[`F${n}`] = 60 + n;
+}
 const monaco = { KeyMod, KeyCode };
 
 // --- parsing ---
@@ -136,6 +142,12 @@ test("unbindable chords are dropped, not allowed to sink the whole command", () 
 
 test("every default chord parses and binds on every platform", () => {
   for (const command of COMMANDS) {
+    // A command may deliberately have none: Stop Debugging is reached by the
+    // menu and by the chord that starts it, and giving it a second chord of its
+    // own would put two Monaco actions on one keystroke.
+    if (command.chords.length === 0) {
+      continue;
+    }
     for (const platform of ["Darwin", "Windows", "Linux"]) {
       const bindings = monacoBindings(platform, monaco, command.chords);
       assert.ok(
@@ -227,4 +239,14 @@ test("macOS uses symbols with no separator, everywhere else words with +", () =>
 
 test("an unreadable chord describes as empty rather than throwing", () => {
   assert.equal(describeChord("Darwin", "ctrl+nonsense"), "");
+});
+
+test("a chord-less command is menu-only rather than a mistake", () => {
+  // The distinction worth keeping: no chords is a decision, an *unparseable*
+  // chord is a typo, and the two must not look alike.
+  for (const command of COMMANDS) {
+    for (const chord of command.chords) {
+      assert.notEqual(parseChord(chord), null, `${command.id}: ${chord} does not parse`);
+    }
+  }
 });

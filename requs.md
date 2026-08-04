@@ -214,7 +214,7 @@ Done, in five commits. What changed, and what it cost to find out.
 
 - Add Python code completion
   - There is none today, and there never was: monaco-editor ships language services for TypeScript, JSON, CSS and HTML only, and the editor deliberately registers just the Python grammar - tokenisation and colouring - to avoid pulling in some nine megabytes of services it cannot use. What is left is Monaco's word-based suggestion, which offers words already present in the buffer, so "time.sl" was never going to complete
-  - Two sources, merged in the sidecar, because neither is enough alone. The kernel speaks Jupyter's complete_request, which is what gives IPython its Tab completion, and it completes against the live namespace: it knows the methods of the "part" the user built two cells ago, and a variable made in the console, neither of which any reading of the file can. What it cannot do is know anything before the code has been _run_ - and an editor is where people write a whole file first. A language server reads the buffer and infers without executing, which is exactly the other half. This bullet said "the kernel is the better source than a language server" until it was tried; see the write-up below for what changed it
+  - Two sources, merged in the sidecar, because neither is enough alone. The kernel speaks Jupyter's complete*request, which is what gives IPython its Tab completion, and it completes against the live namespace: it knows the methods of the "part" the user built two cells ago, and a variable made in the console, neither of which any reading of the file can. What it cannot do is know anything before the code has been \_run* - and an editor is where people write a whole file first. A language server reads the buffer and infers without executing, which is exactly the other half. This bullet said "the kernel is the better source than a language server" until it was tried; see the write-up below for what changed it
 - Debugging Python in Monaco should work
   - having the usual step buttons
   - Using the variable explorer (if possible)
@@ -235,6 +235,20 @@ Done, in five commits. What changed, and what it cost to find out.
   **Decided, so the UI costs no layout.** Debugging starts with Shift-F5 and saves the buffer first, as VS Code does; F5 stays Run File. The step controls are right-aligned _in the tab strip_ and appear only while a session is running - no second toolbar, and the strip simply scrolls in less width. The debug console is a second tab on the console pane rather than a pane of its own, and it is a plain input line evaluating in the selected frame - never the kernel. Breakpoints are not persisted across runs, which removes storage, migration and stale-breakpoint reconciliation.
 
   Four commits: the relay and the process lifecycle; breakpoints and starting a session; the paused UI - current line, step controls, call stack, the explorer's frame view; then the debug console and the on-stop hook.
+
+  Done. What the plan did not know, and what testing it changed.
+
+  **The relay was the right shape and the measurements held.** Everything probed before a line was written - a breakpoint binding on the real file at its real line, `evaluate` in a paused frame at 13 ms, `show()` from that frame reaching the viewer in 0.02 s - behaved the same through the finished path. What the sidecar contributes is still only what a webview cannot do, and three would-be features stayed one frontend call each.
+
+  **The panes swap rather than sharing.** The plan had the debug console as a second tab beside the Jupyter one; his objection settled it, and the objection is the better design: with both on screen, the variable explorer describes the kernel while the editor describes the debuggee, and somebody has to remember which pane means what. Swapping gives one rule - while a session runs, every pane in the window describes the debugged process, and otherwise every pane describes the kernel. The viewer is the deliberate exception, because a picture is not state.
+
+  **`justMyCode` is not a detail.** debugpy defaults it to true, and with it on a step into `extrude(Ellipse(10, 6), 2)` stays on the line it started on, silently, as though the call had no inside. Measured: off, the same step lands in `Ellipse.__init__` in build123d's own source. It is a setting, defaulting to on, because on this application the library is often the interesting part but meeting that on your first step is disorienting.
+
+  **The on-stop hook drew nothing and hung the window.** `show_all(locals())` handed `_convert` an ordinary list of floats, which produced a model with a header and no geometry, and three-cad-viewer does not come back from one - the app needed a force-quit. Three fixes, and the first is the lesson: the filter now uses `ocp_tessellate.ocp_utils`' own `is_build123d`, `is_vector`, `is_topods_shape` and the rest, which is what ocp_vscode's `show_all` uses, rather than the hand-rolled "not a scalar, not a module, not callable" that let the list through. Whoever wrote the tessellator knows what it can take. Beyond that, nothing sends a model with no geometry, and the viewer refuses one - a hang is not an acceptable answer to a bad frame from anywhere.
+
+  **Stepping is line by line and there is no switch for it.** DAP's `next` takes a `granularity` of `statement`, `line` or `instruction`, and debugpy ignores it: `base -= Cylinder(a, b, c)` written over five lines stops six times - the call line, each argument line, then the call line again as it executes - identically for all three values. So the hook is gated on the `stopped` reason instead, drawing at breakpoints only by default, which is one tessellation per place somebody deliberately stopped.
+
+  Two smaller things worth not rediscovering. The Neutralino `shortcut` field on macOS *binds* Command plus one character rather than displaying a string, so `Shift-Enter`, `F5` and `Shift-F5` cannot be expressed through it at all and a value chosen to look right would bind a chord nobody asked for - the chords are written into the label there instead. And `* { box-sizing: border-box }` was quietly re-laying out three-cad-viewer, whose tree rows are `height: 16px; padding: 2px 0`: 20px under content-box and 16px under border-box, which took four pixels off every row and squeezed the icons. Found by screenshotting the library's own dev page beside ours.
 
 - The variable explorer needs to get multilevel for iterables (`a = dict(a=12, b="wert", c=[1,2,3,4,5,6], d=dict(x=dict(aa=1, bb="sdfg"), y=2))`)
 - the variable explorer needs to support paging to avoid showing hundreds of objects for arrays
@@ -328,12 +342,14 @@ Not needed, but worth recording so nobody rediscovers it: a single-instance guar
 - Config should get a field where users can add extra packages in pyproject.toml syntax. They will be added to pyproject.toml (a "custom" section: `# --- custom: own packages ---`). Allow pypi, github sources and local paths if possible
 - remove bd_warehouse from standard installations, it gets a custom package
 - Editing the keyboard shortcuts, on top of the defaults map group 1 lands. This is the expensive half of "shortcuts are configurable" and is deliberately not a quick win: capturing a chord, detecting conflicts both between our own actions and against Monaco's built-in bindings, reset-to-default, and displaying each binding the way its platform writes it (⌘⇧↵ against Ctrl+Shift+Enter). By this point the storage, the parser and the re-registration all exist, so it is a form over data rather than new machinery.
+- make the settings dialog tabbed (Packages|Updates|New file|Debugging)
 
 Its own group rather than a usability quick win, because it is the first place free user text reaches a command line. Everything interpolated into a command already goes through quote(), which on Windows now refuses a value containing a double quote outright rather than escaping it - that refusal exists for this field, before the field does. It wants the same care as a security item: what happens to a malformed entry, what a failed sync leaves behind, and whether the custom section survives an "upgrade packages".
 
 ### 6. OCP VS Code integration
 
 - show_clear, show_object, push_object, show_objects, show_all, set_defaults, get_defaults, set_default, workspace_cofig, combined_config, status, ... need to work (Note in a separate project ocp_vscode needs to be restructured to better work with jupyter-cadquery and build123d studio)
+- every show should first get the tree status (see "status" in ocp_vscode) and apply it after show to keep the user intent on what to show. At the end, this is what viewer.html in ocp-vscode does. We need to understand what it does and what and how to replicate it.
 
 ### 7. Inspecting while the kernel is busy
 
@@ -347,7 +363,8 @@ Two things already known about the shape of it. Building the message by hand (`s
 
 - Write comprehensive feature test suite: the panes, the editor, the viewer and the workflows, as distinct from Phase 3's ipc, communication and threading
 
-BUGS:
+## BUGS:
 
-- After starting the indicator is not switching to "idle" when the consle is initialized, but keeps showing "starting"
-- Run buttons should be disabled until Consloe start is finished
+## FEATURES:
+
+- Clicking on a file in the file tree should determine whether it is text or not. If not dont open it (show a dialog)

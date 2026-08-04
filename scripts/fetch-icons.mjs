@@ -44,6 +44,14 @@ const ICONS = {
   close: "close",
   copy: "content_copy",
   settings: "tune",
+  // Debugging. The step glyphs are Material Symbols' own, drawn for exactly
+  // this: an arrow hopping over, into and out of a line.
+  debug: "bug_report",
+  "debug-continue": "resume",
+  "debug-step-over": "step_over",
+  "debug-step-into": "step_into",
+  "debug-step-out": "step_out",
+  "debug-stop": "stop",
 };
 
 async function download(url, description) {

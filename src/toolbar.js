@@ -11,6 +11,7 @@ import {
   runFile,
   runSelectionOrLine,
 } from "./editor/monaco.js";
+import { onDebugChange } from "./debug/session.js";
 import * as ipc from "./ipc.js";
 import { nextPreference, onThemeChange, setThemePreference, themePreference } from "./theme.js";
 import { showInfo } from "./info.js";
@@ -25,6 +26,19 @@ function setKernelState(state) {
   container.classList.remove("idle", "busy", "dead");
   container.classList.add(state);
   label.textContent = state;
+}
+
+// The buttons that put work on the kernel's shell channel. Debugging is not
+// among them: it runs in a process of its own and needs no kernel at all.
+const RUN_BUTTONS = ["btn-run-file", "btn-run-cell", "btn-run-sel"];
+
+function setRunEnabled(enabled) {
+  for (const id of RUN_BUTTONS) {
+    const button = document.getElementById(id);
+    if (button !== null) {
+      button.disabled = !enabled;
+    }
+  }
 }
 
 async function withErrorReporting(what, action) {
@@ -54,6 +68,15 @@ export async function updateTitle() {
   const marker = isDirty() ? " •" : "";
   const name = file === null ? "build123d Studio" : `build123d Studio — ${file}`;
   await neuWindow.setTitle(`${name}${marker}`);
+}
+
+// What the debug button does. Injected for the reason the editor's chord is:
+// the action saves the buffer and starts a session, and both reach back through
+// modules this one is imported by.
+let onDebugToggle = () => {};
+
+export function setDebugToggle(handler) {
+  onDebugToggle = handler;
 }
 
 export function initToolbar() {
@@ -112,9 +135,39 @@ export function initToolbar() {
     document.getElementById("btn-theme").title = `Theme: ${themePreference()}`;
   });
 
+  // Debugging, which needs no kernel: the file runs in a process of its own.
+  // The one button both starts and stops, like the chord, and says which it
+  // will do - a button whose label does not change is a button somebody presses
+  // twice to find out what it does.
+  const debugButton = document.getElementById("btn-debug");
+  debugButton.addEventListener("click", () =>
+    withErrorReporting("Debugging", () => onDebugToggle()));
+  onDebugChange((state) => {
+    debugButton.title = state.running
+      ? "Stop debugging (Shift+F5)"
+      : "Debug File (Shift+F5)";
+    debugButton.classList.toggle("btn-active", state.running);
+  });
+
   ipc.on("kernel.status", (frame) => {
     setKernelState(frame.state === "busy" ? "busy" : "idle");
   });
+
+  // Running is off until the console has finished its handshake.
+  //
+  // Not because a Run needs the console - it does not - but because until then
+  // the kernel is still importing build123d, and the kernel serves shell
+  // requests one at a time. A Run pressed in that window does nothing visible
+  // for two seconds on this machine and rather longer on a cold one, which
+  // reads as a button that did not work.
+  setRunEnabled(false);
+  ipc.on("console.ready", () => setRunEnabled(true));
+  // A restart puts the kernel back through the same sequence, and the console
+  // with it. Anything else that ends a session leaves the buttons alone: they
+  // are about whether the kernel can take work promptly, not about whether it
+  // is there at all.
+  ipc.on("kernel.restarting", () => setRunEnabled(false));
+  ipc.on("sidecar.restarting", () => setRunEnabled(false));
   ipc.on("sidecar.disconnected", () => setKernelState("dead"));
   // The kernel dying without the sidecar is the case that used to leave this
   // reading "busy" for the rest of the session, because nothing was watching

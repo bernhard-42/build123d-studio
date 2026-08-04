@@ -42,6 +42,7 @@ import { completionItems, completionQuery, isIncomplete } from "./completion.js"
 import { markersFor } from "./diagnostics.js";
 import { hoverContents } from "./hover.js";
 import { signatureHelp } from "./signature.js";
+import * as breakpoints from "../debug/breakpoints.js";
 import * as buffers from "./buffers.js";
 import { COMMANDS } from "../keys.js";
 import { bindingsFor } from "../keybindings.js";
@@ -68,6 +69,20 @@ self.MonacoEnvironment = {
 };
 
 let editor = null;
+
+// What Shift-F5 calls. Injected rather than imported: the handler saves the
+// buffer and starts a session, and both of those reach back into this module -
+// so importing it here would be a cycle. Same arrangement as buffers.js, which
+// is handed its model operations for the same reason.
+let debugRequested = () => {};
+
+let debugStep = () => {};
+
+/** Tell the editor what its debug chords should do. Called once, at startup. */
+export function setDebugHandler(handler, step) {
+  debugRequested = handler;
+  debugStep = step;
+}
 
 /**
  * The model the editor is showing, or null when it is showing none.
@@ -176,6 +191,139 @@ function clearCellDecorations() {
   }
 }
 
+// The breakpoint marks for whichever model is attached, and the line execution
+// is stopped on. Both belong to a model rather than to the editor, so both are
+// cleared before the editor is pointed at another one - see clearCellDecorations
+// for what a collection left across a setModel is holding.
+let breakpointDecorations = null;
+let stoppedDecorations = null;
+
+/**
+ * Draw the marks for the buffer on screen.
+ *
+ * Read from breakpoints.js rather than from the collection, because this is
+ * also what runs after a tab switch, when the collection belongs to the model
+ * that has just gone.
+ */
+function refreshBreakpointDecorations() {
+  if (breakpointDecorations !== null) {
+    breakpointDecorations.clear();
+    breakpointDecorations = null;
+  }
+  const key = buffers.activeKeyOf();
+  if (key === null || currentModel() === null) {
+    return;
+  }
+  breakpointDecorations = editor.createDecorationsCollection(
+    breakpoints.linesOf(key).map((line) => ({
+      range: new monaco.Range(line, 1, line, 1),
+      options: {
+        glyphMarginClassName: "breakpoint-glyph",
+        // Kept when text is inserted at the mark's own position, so typing at
+        // the start of a marked line moves the mark with the line rather than
+        // leaving it behind on what is now a different statement.
+        stickiness: monaco.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges,
+      },
+    })),
+  );
+}
+
+/**
+ * Write back where the marks ended up after an edit.
+ *
+ * Monaco moves a decoration when text is inserted above it; the line numbers in
+ * breakpoints.js cannot move themselves. Without this, adding a line at the top
+ * of a file leaves every breakpoint pointing one line short of where it is
+ * drawn - and the session would stop somewhere the user never marked.
+ *
+ * Two marks can be pushed onto one line by deleting the lines between them, so
+ * what goes back is deduplicated; see breakpoints.replace.
+ */
+function adoptBreakpointPositions() {
+  const key = buffers.activeKeyOf();
+  if (key === null || breakpointDecorations === null) {
+    return;
+  }
+  const before = breakpoints.linesOf(key).join(",");
+  const after = breakpoints.replace(
+    key,
+    breakpointDecorations.getRanges().map((range) => range.startLineNumber),
+  );
+  // Only when they actually moved. This runs on every keystroke, and a
+  // setBreakpoints request per character typed would be a request per character
+  // typed.
+  if (after.join(",") !== before) {
+    breakpointsChanged(bufferPath(key), after);
+  }
+}
+
+/** The lines marked in the buffer on screen. */
+export function breakpointLines() {
+  const key = buffers.activeKeyOf();
+  return key === null ? [] : breakpoints.linesOf(key);
+}
+
+/**
+ * Every marked file, with its lines. What a session has to be told about.
+ *
+ * Not just the file being debugged: a breakpoint in a module that file imports
+ * is how somebody follows execution out of the script they started. Buffers
+ * with no path are skipped, because there is nothing on disk for the adapter to
+ * match them against.
+ */
+export function allBreakpoints() {
+  const files = [];
+  for (const key of buffers.keys()) {
+    const path = bufferPath(key);
+    const lines = breakpoints.linesOf(key);
+    if (path !== null && lines.length > 0) {
+      files.push({ path, lines });
+    }
+  }
+  return files;
+}
+
+// Told when a mark moves, so a live session can be updated. Injected for the
+// same reason the debug chord is: session.js reaches back into this module.
+let breakpointsChanged = () => {};
+
+export function setBreakpointListener(listener) {
+  breakpointsChanged = listener;
+}
+
+/**
+ * Show where execution is stopped, or clear it.
+ *
+ * Only for the file on screen: a session can stop inside a library the user has
+ * no tab for, and there is nothing to highlight then. The path is compared
+ * against the buffer's own, which is the same string the debugger was given.
+ */
+export function showStoppedLine(path, line) {
+  if (stoppedDecorations !== null) {
+    stoppedDecorations.clear();
+    stoppedDecorations = null;
+  }
+  const key = buffers.activeKeyOf();
+  if (key === null || currentModel() === null || path === null || line === undefined) {
+    return;
+  }
+  if (bufferPath(key) !== path) {
+    return;
+  }
+  stoppedDecorations = editor.createDecorationsCollection([{
+    range: new monaco.Range(line, 1, line, 1),
+    options: {
+      isWholeLine: true,
+      className: "stopped-line",
+      // No glyph. The gutter is the breakpoints' column, and a marker for the
+      // stopped line covered the dot on it - which is exactly the dot somebody
+      // wants to take off while going round a loop. The highlight already says
+      // where execution is.
+    },
+  }]);
+  editor.revealLineInCenterIfOutsideViewport(line);
+}
+
 /** Highlight cell boundaries so the run-cell target is obvious. */
 function refreshCellDecorations() {
   clearCellDecorations();
@@ -244,6 +392,7 @@ export function showBuffer(key) {
   const buffer = buffers.get(key);
   buffers.activate(key);
   editor.setModel(buffer.model);
+  refreshBreakpointDecorations();
   const state = buffers.viewState(key);
   if (state !== null) {
     editor.restoreViewState(state);
@@ -281,6 +430,7 @@ export function closeBuffer(key) {
   // Before the model goes, because the path is read off the buffer and there is
   // nothing left to read it from afterwards.
   forgetBuffer(key, bufferPath(key));
+  breakpoints.forget(key);
   return buffers.close(key);
 }
 
@@ -518,6 +668,10 @@ export function initEditor() {
     // model is created as Python above.
     theme: resolvedTheme() === "light" ? "vs" : "vs-dark",
     automaticLayout: true,
+    // The strip left of the line numbers, where breakpoints live. Off by
+    // default in Monaco, and a decoration asking to be drawn there is simply
+    // not drawn without it - no error, no mark.
+    glyphMargin: true,
     minimap: { enabled: true },
     scrollBeyondLastLine: false,
     fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace',
@@ -535,6 +689,22 @@ export function initEditor() {
     refreshCellDecorations();
     scheduleDirtyCheck();
     scheduleSync();
+    // Monaco has already moved the marks; this writes back where they ended up.
+    adoptBreakpointPositions();
+  });
+
+  // The glyph margin is only a strip until something listens to it.
+  editor.onMouseDown((event) => {
+    if (event.target.type !== monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN) {
+      return;
+    }
+    const key = buffers.activeKeyOf();
+    if (key === null) {
+      return;
+    }
+    breakpoints.toggle(key, event.target.position.lineNumber);
+    refreshBreakpointDecorations();
+    breakpointsChanged(bufferPath(key), breakpoints.linesOf(key));
   });
 
   // A buffer that has just been shown is analysed too, and this is the only
@@ -737,6 +907,16 @@ export function registerRunActions(target) {
     { id: "run.cell.stay", run: () => runCell({ advance: false }) },
     { id: "run.selectionOrLine", run: () => runSelectionOrLine() },
     { id: "run.file", run: runFile },
+    // Registered here with the run actions because it is the same kind of
+    // thing to a user - "make this file happen" - and because an editor action
+    // is what gets the chord delivered while the editor has focus.
+    { id: "debug.start", run: () => void debugRequested() },
+    { id: "debug.continue", run: () => void debugStep("continue") },
+    { id: "debug.stepOver", run: () => void debugStep("stepOver") },
+    { id: "debug.stepInto", run: () => void debugStep("stepInto") },
+    { id: "debug.stepOut", run: () => void debugStep("stepOut") },
+    { id: "debug.restart", run: () => void debugStep("restart") },
+    { id: "debug.stop", run: () => void debugStep("stop") },
   ];
 
   const registered = [];

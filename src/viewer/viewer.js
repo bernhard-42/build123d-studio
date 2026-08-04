@@ -315,6 +315,17 @@ export function showLogo() {
 export function initViewer() {
   ipc.onBinary(ipc.KIND_MODEL, (payload, header, buffer, payloadOffset) => {
     const started = performance.now();
+    // A model with no geometry is refused rather than drawn.
+    //
+    // three-cad-viewer does not come back from one: given a header describing
+    // shapes and no buffers behind them, the window stopped responding and had
+    // to be force-quit. The kernel no longer sends such a thing - `show()` of a
+    // list of floats produced one - but a hang is not an acceptable response to
+    // a bad frame from anywhere, and this is the only place that can refuse it.
+    if (payload.byteLength === 0) {
+      log.warn("Ignored a model with no geometry in it");
+      return;
+    }
     try {
       const data = rehydrate(header.data, buffer, payloadOffset);
       const shapes = resolveInstances(data);

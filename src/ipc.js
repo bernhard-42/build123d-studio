@@ -29,6 +29,18 @@ export { KIND_CONSOLE, KIND_MODEL } from "./frame.js";
 // a wedged sidecar that is still connected sends neither "error" nor an exit.
 const READY_TIMEOUT = 90000;
 
+// Where the sidecar's own progress goes while the splash is still up. A slow
+// machine spends seconds between "starting" and a usable window, and the lines
+// the sidecar is already writing say exactly what it is doing - so they are
+// shown rather than a spinner. Set by main.js; nothing else in this module
+// knows the splash exists.
+let reportProgress = () => {};
+
+/** Show the sidecar's log lines somewhere while it starts. */
+export function onSidecarProgress(report) {
+  reportProgress = report;
+}
+
 const handlers = new Map();
 const binaryHandlers = new Map();
 
@@ -429,7 +441,19 @@ export async function startSidecar({ python, envRoot, appDir }) {
           },
         ),
       // The sidecar keeps stdout for the handshake alone, so stderr is pure log.
-      onStdErr: (data) => log.info("sidecar:", data.trimEnd()),
+      //
+      // Split and filtered, because a chunk is whatever arrived: one line, four
+      // lines, or a lone newline left over from the last one. Logged whole it
+      // produced a blank "INFO sidecar:" between every real line, which is half
+      // the log file a user is asked to send in.
+      onStdErr: (data) => {
+        for (const line of String(data).split("\n")) {
+          if (line.trim() !== "") {
+            log.info("sidecar:", line.trimEnd());
+            reportProgress(line.trim());
+          }
+        }
+      },
     })
       .then((process) => {
         sidecar = process;

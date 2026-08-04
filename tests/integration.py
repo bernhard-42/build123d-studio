@@ -279,6 +279,17 @@ def main():
     check("the warm-up completes", warm_done is not None,
           warm_done if warm_done is not None else "no completion line")
 
+    # --- what startup announces ---
+
+    _, idle = side.wait_frame("kernel.status", ACTION_TIMEOUT)
+    check("the kernel reports itself idle once it is up",
+          idle is not None and idle["state"] == "idle",
+          "never said" if idle is None else idle["state"])
+
+    _, console_ready = side.wait_frame("console.ready", ACTION_TIMEOUT)
+    check("the console says when its handshake is done", console_ready is not None,
+          "never said")
+
     # --- the indicator says nothing before anything has run ---
     #
     # Startup is where this shows: the console asks the kernel for kernel_info
@@ -286,10 +297,10 @@ def main():
     # whether or not it executes anything. Both used to reach the toolbar, so
     # the indicator flickered twice before the user had done a thing - one to
     # four milliseconds each, which reads as a glitch rather than as state.
-    flickers = [f for _, f in side.frames if f["type"] == "kernel.status"]
+    flickers = [f for _, f in side.frames
+                if f["type"] == "kernel.status" and f["state"] == "busy"]
     check("nothing reports the kernel busy before the first Run",
-          len(flickers) == 0, f"{len(flickers)} status frames: "
-          f"{[f['state'] for f in flickers][:6]}")
+          len(flickers) == 0, f"{len(flickers)} busy frames")
 
     # --- a Run reaches the kernel ---
 
@@ -700,6 +711,32 @@ def main():
             at_model = side.wait_binary(KIND_MODEL, ACTION_TIMEOUT, since=at_models)
             check("show_all in a paused frame reaches the viewer", at_model is not None,
                   "no model frame" if at_model is None else f"at {at_model:.2f}s")
+
+            # Stepping, and a shape drawn at the new stop. This is the whole of
+            # visual debugging: the frontend runs the configured expression
+            # after every stop, so stepping through a model is watching it
+            # being built. Driven here as the frontend drives it.
+            at_models = len(side.binary)
+            # The index is taken before the step is sent: the stopped event can
+            # arrive before the response to `next` does, and a `since` computed
+            # afterwards would look straight past it.
+            at_step = len(side.frames)
+            dap("next", threadId=thread_id)
+            stepped = dap_event("stopped", ACTION_TIMEOUT, since=at_step)
+            check("stepping stops again", stepped is not None,
+                  "no second stop" if stepped is None else stepped["body"].get("reason"))
+
+            if stepped is not None:
+                frames = dap_reply(
+                    dap("stackTrace", threadId=stepped["body"]["threadId"]),
+                    since=before,
+                )["body"]["stackFrames"]
+                dap_reply(dap("evaluate", expression="show_all(locals())",
+                              frameId=frames[0]["id"], context="repl"), since=before)
+                at_model = side.wait_binary(KIND_MODEL, ACTION_TIMEOUT, since=at_models)
+                check("a shape drawn at a later stop reaches the viewer too",
+                      at_model is not None,
+                      "no model frame" if at_model is None else f"at {at_model:.2f}s")
 
             dap("continue", threadId=thread_id)
 

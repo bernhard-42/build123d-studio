@@ -12,9 +12,7 @@ arguments behave the way they do everywhere else in these tools.
 
 import inspect
 import os
-import types
 import warnings
-from enum import Enum
 
 from ocp_vscode.comms import set_port
 
@@ -92,10 +90,21 @@ def _require_ocp_vscode():
 
 
 def _deliver(converted, mapping):
-    """Split the buffers out of a converted model and send it."""
+    """Split the buffers out of a converted model and send it.
+
+    A model with no geometry is not sent. `_convert` will happily produce one -
+    a list of floats is enough - and the viewer, given a header describing
+    nothing, stops responding rather than drawing an empty scene. Refusing here
+    covers every caller rather than only the one that found it.
+    """
     # _convert returns ({"data", "type", "config", "count"}, mapping) with the
     # arrays already base64-wrapped by numpy_to_buffer_json.
     payload_free, payload = split_buffers(converted.get("data"))
+
+    if len(payload) == 0:
+        raise ValueError(
+            "nothing to show: the objects given have no geometry the viewer can draw"
+        )
 
     header = {
         "type": converted.get("type", "data"),
@@ -126,23 +135,82 @@ def show_object(obj, name=None, options=None, parent=None, clear=False, **kwargs
     _deliver(converted, mapping)
 
 
-# Things a viewer cannot draw, and that a scope is always full of. The list is
-# short on purpose: everything past it goes to _convert, which is the authority
-# on what can be tessellated, and which says so with an error the user can read.
-_NOT_DRAWABLE = (str, bytes, int, float, complex, bool, dict, set, type(None))
+# What the viewer can draw, asked of ocp_tessellate rather than guessed at.
+#
+# These are the same tests ocp_vscode's own show_all uses, from the same module
+# - a whitelist of things known to tessellate rather than a blacklist of things
+# that obviously do not. The difference is not stylistic: a hand-rolled "not a
+# scalar, not a module, not callable" predicate let a plain list of floats
+# through, `_convert` produced a model with a header and no geometry, and the
+# viewer stopped responding. Whoever wrote the tessellator knows what it can
+# take; this does not.
+#
+# Imported at the top like everything else, and if ocp_tessellate ever moves
+# them this fails loudly at import rather than silently drawing nothing.
+from ocp_tessellate.ocp_utils import (  # noqa: E402 - see the module docstring
+    is_build123d,
+    is_build123d_assembly,
+    is_build123d_axis,
+    is_build123d_location,
+    is_build123d_locationlist,
+    is_build123d_plane,
+    is_build123d_shell,
+    is_cadquery,
+    is_cadquery_assembly,
+    is_topods_compound,
+    is_topods_shape,
+    is_toploc_location,
+    is_vector,
+)
+
+
+def _can_draw(obj):
+    """Whether the viewer could make anything of this value.
+
+    A list or a tuple is drawable only if its contents are, which is where this
+    differs from ocp_vscode's version and why: it passes any list through, and a
+    scope is full of lists of numbers. One of those produced a model with no
+    geometry in it and hung the viewer.
+    """
+    if isinstance(obj, (list, tuple)):
+        return len(obj) > 0 and all(_can_draw(item) for item in obj)
+    if isinstance(obj, dict):
+        # By value: the keys become names in the viewer's tree, and a mapping of
+        # shapes is an ordinary way to hold an assembly.
+        return len(obj) > 0 and all(_can_draw(item) for item in obj.values())
+    if hasattr(obj, "wrapped") and (
+        is_topods_shape(obj.wrapped)
+        or is_topods_compound(obj.wrapped)
+        or is_toploc_location(obj.wrapped)
+    ):
+        return True
+    for test in (
+        is_build123d,
+        is_build123d_assembly,
+        is_build123d_axis,
+        is_build123d_location,
+        is_build123d_locationlist,
+        is_build123d_plane,
+        is_build123d_shell,
+        is_cadquery,
+        is_cadquery_assembly,
+        is_vector,
+    ):
+        try:
+            if test(obj):
+                return True
+        except Exception:  # noqa: BLE001 - a test that dislikes a value is a no
+            continue
+    return False
 
 
 def _drawable(name, obj, exclude, classes):
     """Whether a name in a scope is worth handing to the viewer."""
     if name.startswith("_") or name in exclude:
         return False
-    if isinstance(obj, (type, types.ModuleType, Enum)) or callable(obj):
-        return False
-    if isinstance(obj, _NOT_DRAWABLE):
-        return False
     if classes is not None:
         return isinstance(obj, tuple(classes))
-    return True
+    return _can_draw(obj)
 
 
 def show_all(variables=None, exclude=None, classes=None, **kwargs):

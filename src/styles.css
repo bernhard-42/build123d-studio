@@ -19,6 +19,12 @@
   --ok-fg: #4ec94e;
   --busy-fg: #d7a300;
   --cell-marker: rgba(14, 99, 156, 0.14);
+  /* The line execution is stopped on. Distinct from the cell marker on
+     purpose: the two were the same blue, so a stopped line inside a cell
+     said nothing the cell had not already said. Yellow, as VS Code has
+     it, because the eye is looking for "where am I" and that is the one
+     colour nothing else in this editor uses. */
+  --debug-line: rgba(255, 213, 0, 0.16);
 }
 
 :root[data-theme="light"] {
@@ -37,6 +43,7 @@
   --ok-fg: #2c8c2c;
   --busy-fg: #9a6b00;
   --cell-marker: rgba(10, 92, 146, 0.1);
+  --debug-line: rgba(215, 163, 0, 0.28);
 }
 
 :root {
@@ -212,6 +219,14 @@ body {
   color: var(--accent-fg);
 }
 
+/* A toggle that is currently on - the debug button while a session runs. Filled
+   rather than outlined, so it reads as a state rather than as a hover. */
+.btn-active {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+
 .btn:disabled {
   opacity: 0.4;
   cursor: default;
@@ -262,6 +277,41 @@ body {
 
 .kernel-status.dead .dot {
   background: var(--error-fg);
+}
+
+/* = = = Debugging = = = */
+
+/* Marks in the strip left of the line numbers.
+ *
+ * The shape is drawn on a child rather than on the element itself. Monaco sizes
+ * a glyph-margin decoration to the line height and the margin width, and it
+ * wins: styling the element directly gave a circle stretched into a tall
+ * ellipse and a triangle stretched with it, because only the width was being
+ * overridden and the height stayed at the line's. Centring a fixed-size child
+ * in whatever box Monaco provides needs no !important and no guesses about
+ * either dimension.
+ *
+ * Drawn rather than lettered, deliberately: the chevrons taught this
+ * application that a character with no glyph in WKWebView renders as a dot and
+ * says nothing. A circle is a circle everywhere. */
+.breakpoint-glyph {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.breakpoint-glyph::before {
+  content: "";
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--error-fg);
+}
+
+/* Where execution is stopped. The whole line, because the eye is looking for
+   "where am I" rather than for a character. */
+.stopped-line {
+  background: var(--debug-line);
 }
 
 /* = = = three-cad-viewer fixes for WKWebView = = = */
@@ -470,15 +520,61 @@ html body {
    already on screen somewhere. The scrollbar is thin and the strip keeps a
    fixed height, so the editor below it never moves. */
 
-.tab-strip {
+/* The strip and the debug controls, in one row. The controls take what they
+   need and the strip scrolls in the rest, so debugging costs a little width and
+   no height at all - the alternative was a second bar, which every pane pays
+   for whether or not anybody is debugging.
+
+   min-width: 0 on the strip is what lets it shrink: a flex item's minimum is
+   the size of its content by default, so without it the row would grow wider
+   than the pane rather than the strip scrolling. */
+.tab-row {
   display: flex;
   flex: 0 0 auto;
   align-items: stretch;
   border-bottom: 1px solid var(--border);
   background: var(--bg);
+}
+
+.tab-strip {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  align-items: stretch;
+  background: var(--bg);
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: thin;
+}
+
+/* Present only while a session is running, which is what makes it worth having
+   in this row at all. */
+.debug-bar {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 2px;
+  padding: 0 4px;
+  border-left: 1px solid var(--border);
+}
+
+.debug-bar[hidden] {
+  display: none;
+}
+
+.debug-btn {
+  width: 26px;
+  height: 22px;
+}
+
+/* The one that says "carry on", coloured like the kernel's idle dot so it reads
+   as the way out of a pause rather than as another step. */
+#debug-continue:not(:disabled) {
+  color: var(--ok-fg);
+}
+
+#debug-stop:not(:disabled) {
+  color: var(--error-fg);
 }
 
 .tab-strip[hidden] {
@@ -704,6 +800,81 @@ html body {
      content box - still computes rows and columns correctly. */
   padding-left: 3px;
 }
+/* The debug console, in the console's cell. Output above, one line below -
+   which is the shape of the thing it replaces, so the eye does not have to
+   relearn the pane when a session starts. */
+.pane-debug {
+  grid-column: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.pane-debug[hidden] {
+  display: none;
+}
+
+.debug-output {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 4px 6px;
+  overflow-y: auto;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* What the debugged process printed, what was asked, and what came back, each
+   distinguishable at a glance - the pane is a transcript and a transcript that
+   does not say who spoke is hard to read back. */
+.debug-line-output {
+  color: var(--fg);
+}
+
+.debug-line-echo {
+  color: var(--fg-dim);
+}
+
+.debug-line-result {
+  color: var(--key-fg);
+}
+
+.debug-line-error {
+  color: var(--error-fg);
+}
+
+.debug-prompt {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 6px;
+  border-top: 1px solid var(--border);
+}
+
+.debug-caret {
+  color: var(--ok-fg);
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+
+.debug-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--fg);
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+
+.debug-input::placeholder {
+  color: var(--fg-dim);
+}
+
 .pane-vars {
   grid-column: 3;
   overflow: auto;
@@ -1053,6 +1224,30 @@ html body {
   border-radius: 3px;
   background: var(--hover);
   font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+
+/* A one-line field, for a setting that is an expression rather than a choice. */
+.settings-line {
+  width: 100%;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+
+.settings-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.settings-check input {
+  margin: 0;
 }
 
 .settings-actions {

@@ -33,6 +33,8 @@ function menu(platform, overrides = {}) {
   });
 }
 
+const CHORDS = { "run.cell": "shift+enter", "run.file": "f5" };
+
 const find = (items, id) => items.find((entry) => entry.id === id);
 const submenu = (built, id) => find(built, id).menuItems;
 
@@ -121,8 +123,40 @@ test("Close Folder sits with the other closing commands", () => {
 
 test("Run is built from the keymap, so the two cannot drift", () => {
   const run = submenu(menu("Linux"), "menu.run");
-  assert.deepEqual(run.map((entry) => entry.id), RUN_COMMANDS.map((entry) => entry.id));
-  assert.deepEqual(run.map((entry) => entry.text), RUN_COMMANDS.map((entry) => entry.label));
+  const items = run.filter((entry) => entry.text !== "-");
+
+  assert.deepEqual(items.map((entry) => entry.id), RUN_COMMANDS.map((entry) => entry.id));
+  assert.deepEqual(items.map((entry) => entry.text), RUN_COMMANDS.map((entry) => entry.label));
+});
+
+test("running part of a file, all of it, and debugging it are three groups", () => {
+  // The only thing a menu can say about which items belong together. Nine flat
+  // entries say nothing.
+  const debugging = [
+    { id: "debug.start", label: "Debug File" },
+    { id: "debug.stepOver", label: "Step Over" },
+    { id: "debug.continue", label: "Continue" },
+  ];
+  const run = submenu(menu("Linux", { runCommands: [...RUN_COMMANDS, ...debugging] }), "menu.run");
+
+  assert.deepEqual(run.map((entry) => entry.id ?? "-"), [
+    "run.cell", "run.cell.stay", "run.selectionOrLine",
+    "-",
+    "run.file",
+    "-",
+    "debug.start", "debug.stepOver", "debug.continue",
+  ]);
+});
+
+test("a command the groups do not mention is appended rather than dropped", () => {
+  // This table and keys.js are two lists that have to agree. The failure worth
+  // preventing is a new command that silently never appears.
+  const run = submenu(
+    menu("Linux", { runCommands: [...RUN_COMMANDS, { id: "run.later", label: "Later" }] }),
+    "menu.run",
+  );
+
+  assert.equal(run.at(-1).id, "run.later");
 });
 
 // --- roles ---
@@ -228,4 +262,37 @@ test("Settings shows as Command-comma on macOS and Ctrl + , elsewhere", () => {
   // character - and macOS in particular takes the character literally.
   assert.equal(menuShortcut("Darwin", parseChord("mod+comma")), ",");
   assert.equal(menuShortcut("Windows", parseChord("mod+comma")), "Ctrl + ,");
+});
+
+// --- what macOS cannot be told through the shortcut field ---
+
+test("a chord macOS cannot bind is written into the label instead", () => {
+  // The field there is not a display string: it binds Command plus one
+  // character, so Shift-Enter and F5 cannot go through it and a value picked to
+  // look right would bind a chord nobody asked for.
+  const built = menu("Darwin", { chordFor: (id) => parseChord(CHORDS[id] ?? null) });
+  const runCell = find(submenu(built, "menu.run"), "run.cell");
+
+  assert.equal(runCell.shortcut, undefined, "nothing is bound");
+  assert.match(runCell.text, /^Run Cell {2}\(\u21e7\u21a9\)$/);
+});
+
+test("a chord it can bind stays in the accelerator column", () => {
+  // Cmd plus one character is the one thing that works there, and it must not
+  // also be written into the label - that would show the same chord twice.
+  const built = menu("Darwin", {
+    chordFor: (id) => (id === "file.save" ? parseChord("mod+s") : null),
+  });
+  const save = find(submenu(built, "menu.file"), "file.save");
+
+  assert.equal(save.shortcut, "s");
+  assert.equal(save.text, "Save");
+});
+
+test("Windows and Linux keep the real display shortcut and a plain label", () => {
+  const built = menu("Linux", { chordFor: (id) => parseChord(CHORDS[id] ?? null) });
+  const runCell = find(submenu(built, "menu.run"), "run.cell");
+
+  assert.equal(runCell.shortcut, "Shift + Enter");
+  assert.equal(runCell.text, "Run Cell");
 });

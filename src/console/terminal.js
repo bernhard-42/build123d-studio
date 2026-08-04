@@ -17,6 +17,10 @@ import { onThemeChange } from "../theme.js";
 
 let terminal = null;
 let fitAddon = null;
+// Whether the console process has produced anything yet. Module-level because
+// writeProgress is called from outside initTerminal, and the answer decides
+// whether this pane is a status area or somebody's transcript.
+let consoleSpoke = false;
 
 const encoder = new TextEncoder();
 
@@ -62,6 +66,11 @@ export function initConsole() {
   // plus connecting to the kernel - during which the pty produces nothing at
   // all. An empty black pane in a window where everything else is already alive
   // reads as broken, so say what is happening.
+  //
+  // And keep saying it: writeProgress below adds each thing the sidecar reports
+  // while this is waiting. One static line for five seconds on a slow machine
+  // is indistinguishable from a hang, and the sidecar is already narrating -
+  // the kernel starting, the language server, the two warm-ups.
   terminal.write("\x1b[2mInitializing console…\x1b[0m\r\n");
 
   terminal.onData((data) => {
@@ -74,6 +83,7 @@ export function initConsole() {
   ipc.onBinary(ipc.KIND_CONSOLE, (payload) => {
     if (firstOutput) {
       firstOutput = false;
+      consoleSpoke = true;
       // Drop the placeholder so the transcript starts at the real banner
       // rather than below a stale status line.
       terminal.reset();
@@ -101,6 +111,7 @@ export function initConsole() {
     terminal.reset();
     terminal.write("\x1b[2mRestarting the Python backend…\x1b[0m\r\n");
     firstOutput = true;
+    consoleSpoke = false;
   });
 
   ipc.on("kernel.restarted", () => {
@@ -114,10 +125,7 @@ export function initConsole() {
     terminal.write("\r\n\x1b[31m[console exited]\x1b[0m\r\n");
   });
 
-  onPaneResize(() => {
-    fitAddon.fit();
-    sendSize();
-  });
+  onPaneResize(refit);
 
   return {
     focus: () => terminal.focus(),
@@ -125,6 +133,38 @@ export function initConsole() {
     // first prompt wraps at the wrong column.
     syncSize: sendSize,
   };
+}
+
+/**
+ * Show one line of the sidecar's startup progress, until the console speaks.
+ *
+ * Stops at the first byte from the pty, because from then on the pane is a
+ * transcript of a real session and anything else written into it is something
+ * the user did not type and cannot scroll away from.
+ */
+export function writeProgress(line) {
+  if (terminal === null || terminal === undefined || consoleSpoke) {
+    return;
+  }
+  terminal.write(`\x1b[2m  ${line}\x1b[0m\r\n`);
+}
+
+/**
+ * Re-measure and tell the pty, unless the pane is hidden.
+ *
+ * The guard is the whole point. A debug session hides this pane, and xterm's fit
+ * addon measures its container: on a display:none box that is zero, so a
+ * splitter dragged while debugging resized the terminal to nothing and the
+ * console came back with a broken geometry. Hidden panes are simply not
+ * measured, and the pane is refitted when it reappears.
+ */
+export function refit() {
+  const pane = document.getElementById("pane-console");
+  if (fitAddon === null || fitAddon === undefined || pane === null || pane.offsetParent === null) {
+    return;
+  }
+  fitAddon.fit();
+  sendSize();
 }
 
 /** Whether the caret is in the console, for routing clipboard commands. */

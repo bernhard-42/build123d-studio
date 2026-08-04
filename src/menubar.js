@@ -28,6 +28,7 @@
 // the menu could not express them anyway. The Run items are there so the
 // commands are discoverable and reachable with a mouse.
 
+import { isDebugging } from "./debug/session.js";
 import { events, window as neuWindow } from "@neutralinojs/lib";
 
 import { COMMANDS, parseChord } from "./keys.js";
@@ -41,6 +42,14 @@ import * as log from "./log.js";
 // project - and the menu is rebuilt whenever either changes.
 const NEEDS_TABS = new Set([MENU.SAVE_ALL, MENU.CLOSE, MENU.CLOSE_ALL]);
 const NEEDS_FOLDER = new Set([MENU.CLOSE_FOLDER, MENU.TOGGLE_SIDEBAR]);
+
+// Stepping means nothing without something stopped to step. Greyed rather than
+// hidden, so the Run menu keeps one shape and somebody can see what debugging
+// will offer before they start it.
+const NEEDS_SESSION = new Set([
+  "debug.continue", "debug.stepOver", "debug.stepInto", "debug.stepOut",
+  "debug.restart", "debug.stop",
+]);
 
 // Chords the menu shows for the File items. Only macOS binds them, and only as
 // Command plus a letter; elsewhere they are a label. They are not registered
@@ -163,6 +172,9 @@ export async function refreshMenu() {
       }
       if (NEEDS_FOLDER.has(id)) {
         return hasFolder();
+      }
+      if (NEEDS_SESSION.has(id)) {
+        return isDebugging();
       }
       return true;
     },

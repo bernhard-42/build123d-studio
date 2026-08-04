@@ -17,6 +17,14 @@ import {
 } from "./bootstrap/splash.js";
 import { NEW_FILE_TEMPLATE_KEY, newFileTemplate } from "./editor/files.js";
 import { DEFAULT_NEW_FILE_TEMPLATE } from "./editor/starters.js";
+import {
+  JUST_MY_CODE_KEY,
+  ON_STOP_BREAKPOINTS_ONLY_KEY,
+  ON_STOP_KEY,
+  justMyCode,
+  onStopBreakpointsOnly,
+  onStopExpression,
+} from "./debug/settings.js";
 import { setSetting } from "./store.js";
 import * as ipc from "./ipc.js";
 import * as log from "./log.js";
@@ -212,6 +220,31 @@ export async function showSettings() {
           Restore default
         </button>
 
+        <h2 class="info-heading">Debugging</h2>
+        <p class="info-note">
+          With this on, Step Into stays inside your own file. Off, it follows
+          the call into build123d - useful for seeing what a shape operation did
+          with your arguments, and a longer way round when you did not mean it.
+        </p>
+        <label class="settings-check">
+          <input type="checkbox" id="settings-just-my-code" />
+          <span>Step into my code only</span>
+        </label>
+
+        <p class="info-note">
+          Run an expression every time execution stops.
+          <code>show_all(locals())</code> draws whatever the current frame
+          holds, so stepping through a model is watching it being built. It
+          costs a tessellation per stop, which on a large assembly is seconds -
+          clear the field to switch it off.
+        </p>
+        <input class="settings-line" id="settings-on-stop" type="text" spellcheck="false"
+               placeholder="empty — nothing runs at a stop" />
+        <label class="settings-check">
+          <input type="checkbox" id="settings-on-stop-breakpoints" />
+          <span>Only at breakpoints, not at every step</span>
+        </label>
+
         <div class="settings-actions">
           <button class="settings-btn" id="settings-cancel">Cancel</button>
           <button class="settings-btn settings-btn-primary" id="settings-apply">Apply</button>
@@ -234,6 +267,12 @@ export async function showSettings() {
     document.getElementById("settings-new-template").value = DEFAULT_NEW_FILE_TEMPLATE;
   });
 
+  document.getElementById("settings-just-my-code").checked = justMyCode();
+  document.getElementById("settings-on-stop").value = onStopExpression();
+  document.getElementById("settings-on-stop-breakpoints").checked =
+    onStopBreakpointsOnly();
+
+
   document.getElementById("settings-apply").addEventListener("click", async () => {
     // Saved whether or not the package sources changed, and before the branch
     // below: the two settings share a dialog but nothing else, and rebuilding
@@ -242,6 +281,26 @@ export async function showSettings() {
     const template = document.getElementById("settings-new-template").value;
     if (template !== newFileTemplate()) {
       await setSetting(NEW_FILE_TEMPLATE_KEY, template);
+    }
+
+    // Read by the next session rather than the one running, which is honest:
+    // the adapter is told at attach and there is no way to change its mind.
+    const stepIntoMine = document.getElementById("settings-just-my-code").checked;
+    if (stepIntoMine !== justMyCode()) {
+      await setSetting(JUST_MY_CODE_KEY, stepIntoMine);
+    }
+
+    // Takes effect at the next stop rather than the next session: it is
+    // evaluated when execution pauses, so there is nothing to reconfigure.
+    const onStop = document.getElementById("settings-on-stop").value.trim();
+    if (onStop !== onStopExpression()) {
+      await setSetting(ON_STOP_KEY, onStop);
+    }
+
+    const atBreakpointsOnly =
+      document.getElementById("settings-on-stop-breakpoints").checked;
+    if (atBreakpointsOnly !== onStopBreakpointsOnly()) {
+      await setSetting(ON_STOP_BREAKPOINTS_ONLY_KEY, atBreakpointsOnly);
     }
 
     const chosen = {};

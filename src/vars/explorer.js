@@ -1,5 +1,6 @@
 import { getSetting, setSetting } from "../store.js";
 import { columnWidths, isUnder, pageInfo, pathKey, resized } from "./tree.js";
+import { detailFor, reset as resetFrames, scopeRows } from "./frames.js";
 import * as ipc from "../ipc.js";
 import * as log from "../log.js";
 
@@ -27,6 +28,12 @@ const pages = new Map();
 
 let rows = [];
 let widths = columnWidths(null);
+
+// Which world the pane is describing. The kernel's namespace, or the frame a
+// debug session is stopped in - never both, and never a mixture, which is the
+// whole point of the swap: while a session runs every pane in the window
+// answers about the debugged process.
+let source = "kernel";
 
 function paneElement() {
   return document.getElementById("pane-vars");
@@ -57,12 +64,77 @@ function cell(className, text, { colSpan } = {}) {
   return td;
 }
 
-/** Ask for a row's contents, unless the same question is already outstanding. */
+/** Ask for a row's contents, from whichever world the pane is describing. */
 function request(path, offset) {
+  if (source === "debug") {
+    detailFor(path)
+      .then((detail) => accept(detail))
+      .catch((error) => log.warn("Could not read a frame variable:", error));
+    return;
+  }
   try {
     ipc.send("vars.detail", { path, offset });
   } catch (error) {
     log.warn("Could not request variable detail:", error);
+  }
+}
+
+/**
+ * Take one answer, from either source.
+ *
+ * A reply for a row that has since been closed is dropped rather than stored:
+ * paging, closing and stepping all happen while a request is in flight, and
+ * holding the answer would reopen the row on the next render.
+ */
+function accept(detail) {
+  const key = pathKey(detail.path ?? []);
+  if (!expanded.has(key)) {
+    return;
+  }
+  details.set(key, detail);
+  render();
+}
+
+/**
+ * Point the pane at the kernel or at the paused frame.
+ *
+ * Everything open is dropped on the way through. The two worlds share no
+ * addresses - a path into the kernel's namespace means nothing in a stack frame
+ * - so carrying state across would be carrying a question to somewhere that
+ * cannot answer it.
+ */
+/** A new stop: same tree, new frame. */
+export function refreshDebugFrame() {
+  if (source === "debug") {
+    void refreshFrame();
+  }
+}
+
+export function setVariableSource(kind) {
+  source = kind;
+  expanded.clear();
+  details.clear();
+  pages.clear();
+  resetFrames();
+
+  if (kind === "debug") {
+    rows = [];
+    // Locals open, Globals shut. Locals is what somebody stepping through a
+    // function is reading; Globals is a hundred names they did not ask about.
+    expanded.add(pathKey(["Locals"]));
+    render();
+    void refreshFrame();
+    return;
+  }
+
+  // Back to the kernel. Asked for rather than waited for: the next refresh
+  // would otherwise not come until something ran.
+  rows = [];
+  render();
+  try {
+    ipc.send("vars.refresh");
+  } catch {
+    // The sidecar is gone; the next idle will catch up.
   }
 }
 
@@ -352,6 +424,38 @@ function toggle(path) {
   }
 }
 
+/**
+ * Re-read the paused frame, keeping open whatever the user opened.
+ *
+ * Called on every stop. The expansion state survives and the *references* do
+ * not: DAP addresses a nested value by an opaque number that belongs to one
+ * stop, so each level has to be fetched again, and top-down - a child's
+ * reference does not exist until its parent has been read.
+ *
+ * Rebuilt rather than reset, because a debugger whose variable pane collapses
+ * on every step is a debugger you cannot watch a value in.
+ */
+async function refreshFrame() {
+  const scopes = await scopeRows();
+  if (source !== "debug") {
+    return;
+  }
+  rows = scopes;
+
+  // Shallowest first, so every path's parent has been read before it is asked
+  // for. Sorting by depth is what makes that true whatever order they were
+  // opened in.
+  const open = [...expanded].map((key) => JSON.parse(key)).sort((a, b) => a.length - b.length);
+  for (const path of open) {
+    const detail = await detailFor(path);
+    if (source !== "debug") {
+      return;
+    }
+    details.set(pathKey(path), detail);
+  }
+  render();
+}
+
 /** Ask again for everything open, because the namespace has changed. */
 function refreshOpenRows() {
   for (const key of expanded) {
@@ -365,6 +469,11 @@ export function initVariables() {
   widths = columnWidths(getSetting(COLUMNS_KEY));
 
   ipc.on("vars.data", (frame) => {
+    if (source === "debug") {
+      // The kernel still goes idle while a session runs - the console is live
+      // throughout - and its refresh must not overwrite the frame.
+      return;
+    }
     rows = frame.variables ?? [];
     // A name that has gone, or been rebound, must not show stale detail - and
     // neither must anything that was open underneath it.
@@ -381,17 +490,10 @@ export function initVariables() {
   });
 
   ipc.on("vars.detail", (frame) => {
-    const detail = frame.detail;
-    const path = detail.path ?? [];
-    const key = pathKey(path);
-    // A reply for a row that has since been closed is dropped rather than
-    // stored: paging and closing both happen while a request is in flight, and
-    // holding the answer would reopen the row on the next render.
-    if (!expanded.has(key)) {
+    if (source !== "kernel") {
       return;
     }
-    details.set(key, detail);
-    render();
+    accept(frame.detail);
   });
 
   // The namespace these rows describe died with the backend. Showing them until
