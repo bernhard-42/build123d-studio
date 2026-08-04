@@ -32,12 +32,18 @@ and passes --env-root to the sidecar.
 
 Quit the application before running this. The harness deliberately uses the real
 environment root, because an environment built for a test is a different
-environment from the one that breaks - but that means it shares `kernel.json`
-with any running instance, and a kernel started here will fight one started
-there. Observed: a run that failed once and passed immediately afterwards, with
-two app instances open at the time. That is the same collision the instance
-model in requs.md exists to remove, and until it is removed this file is subject
-to it too.
+environment from the one that breaks.
+
+That used to be worse than an inconvenience: the environment root held a single
+`kernel.json`, so a kernel started here fought one started by a running app -
+observed as a run that failed once and passed immediately afterwards, with two
+instances open at the time. Phase 4 group 4 removed it. The sidecar this harness
+spawns claims an instance directory of its own and writes its connection file
+inside it, exactly as the application's does, so the two no longer collide.
+
+Quitting first is still the rule, for the reasons that remain: both would drive
+the same environment, and a `uv sync` from one while the other is starting is not
+something this file should have to reason about.
 """
 
 import argparse

@@ -13,6 +13,7 @@ code.
 """
 
 import itertools
+import os
 import queue
 import tempfile
 import threading
@@ -185,6 +186,9 @@ class TestableKernel(Kernel):
             super().__init__(
                 env_root=env_root,
                 app_dir=env_root,
+                # Never opened: new_manager below replaces the process, so
+                # nothing here writes or reads a connection file.
+                connection_file=os.path.join(env_root, "kernel.json"),
                 model_port=0,
                 model_token="token",
                 on_iopub=on_iopub,

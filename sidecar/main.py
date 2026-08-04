@@ -25,6 +25,7 @@ import appinfo
 from channel import KIND_CONSOLE, KIND_MODEL, Channel, log
 from completer import Completer
 from debugger import DebugSession, debug_python
+from instance import Instance, remove_legacy_connection_file, sweep
 from kernel import Kernel
 from measure_service import MeasurementService
 from modelsock import ModelSocket
@@ -84,9 +85,13 @@ STARTUP_WATCHDOG = 120
 
 
 class Sidecar:
-    def __init__(self, env_root, app_dir):
+    def __init__(self, env_root, app_dir, instance):
         self.env_root = env_root
         self.app_dir = app_dir
+        # This process's own directory under the shared environment root, with
+        # its lock already held - claimed in main() before anything could start
+        # a kernel. Everything per-instance hangs off it; see instance.py.
+        self.instance = instance
         self.sidecar_dir = os.path.dirname(os.path.abspath(__file__))
 
         self.channel = Channel()
@@ -301,6 +306,7 @@ class Sidecar:
         self.kernel = Kernel(
             env_root=self.env_root,
             app_dir=self.app_dir,
+            connection_file=self.instance.connection_file,
             model_port=self.models.port,
             model_token=self.models.token,
             on_iopub=self.on_iopub,
@@ -964,6 +970,17 @@ class Sidecar:
         if self.models is not None:
             self.models.stop()
         self.channel.close()
+        # Last, and after the kernel: releasing the lock is what tells the next
+        # instance's sweep that this directory can go, and the connection file
+        # inside it is meaningless once the kernel it describes has stopped.
+        #
+        # The lock always goes; the directory may not, because on Windows a
+        # kernel process that has been asked to stop but has not yet stopped
+        # still holds the connection file open. Logged rather than swallowed -
+        # the next instance's sweep is what finishes the job.
+        self.instance.release(
+            on_error=lambda directory, exc: log(f"Could not remove {directory}: {exc}")
+        )
 
 
 def main():
@@ -990,7 +1007,27 @@ def main():
     # files with everything else.
     faulthandler.dump_traceback_later(STARTUP_WATCHDOG, file=sys.stderr)
 
-    sidecar = Sidecar(env_root=args.env_root, app_dir=args.app_dir)
+    # Claimed before anything can start a kernel, because the connection file
+    # lives inside it. Fatal if it fails: a kernel started without a directory of
+    # its own is the collision this exists to remove.
+    instance = Instance(args.env_root)
+    instance.claim()
+    log(f"Instance {instance.id}, directory {instance.directory}")
+
+    # Instances that were killed, crashed, or lost power never released their
+    # own. Swept here rather than by a timer, so the tidying is done by something
+    # a user can point at - starting the application again.
+    removed = sweep(
+        args.env_root,
+        keep_id=instance.id,
+        on_error=lambda directory, exc: log(f"Could not remove {directory}: {exc}"),
+    )
+    if len(removed) > 0:
+        log(f"Swept {len(removed)} instance director{'y' if len(removed) == 1 else 'ies'}")
+    if remove_legacy_connection_file(args.env_root):
+        log("Removed the pre-instance kernel.json from the environment root")
+
+    sidecar = Sidecar(env_root=args.env_root, app_dir=args.app_dir, instance=instance)
     sidecar.channel.bind()
 
     try:

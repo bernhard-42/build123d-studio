@@ -272,8 +272,8 @@ class ShellChannel:
 class Kernel:
     """Owns the kernel process and the sidecar's client to it."""
 
-    def __init__(self, env_root, app_dir, model_port, model_token, on_iopub, on_died,
-                 isolation_port):
+    def __init__(self, env_root, app_dir, connection_file, model_port, model_token,
+                 on_iopub, on_died, isolation_port):
         self.env_root = env_root
         self.app_dir = app_dir
         self.model_port = model_port
@@ -288,7 +288,12 @@ class Kernel:
 
         # A stable, discoverable location: an external `jupyter console
         # --existing <path>` can attach to the very same namespace.
-        self.connection_file = os.path.join(env_root, "kernel.json")
+        #
+        # Owned by this instance rather than by the environment root, which is
+        # shared. See instance.py: the name used to be a single hardcoded
+        # kernel.json, and a second instance overwrote it - after which one of
+        # the two kernels read the other's ports and died binding them.
+        self.connection_file = connection_file
 
         # Where the kernel runs. Follows the open file; home until there is one,
         # and whenever the buffer has never been saved anywhere.

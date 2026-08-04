@@ -213,41 +213,93 @@ export async function ensureUv(envRoot) {
   setStatus("Fetching uv, the Python environment manager…");
   appendLog(`Downloading ${archive} (uv ${wanted})`);
 
-  const work = `${envRoot}/uv-download`;
-  await filesystem.remove(work).catch(() => {});
+  // A scratch directory of this instance's own, rather than one shared name.
+  //
+  // It used to be `<envRoot>/uv-download`, removed and recreated on entry. Two
+  // instances reaching this at once therefore deleted each other's download
+  // mid-flight - and this is the one path where that is likely rather than
+  // theoretical, because it runs only when uv is missing or the wrong version:
+  // first start, or straight after an app upgrade, which is exactly when
+  // somebody is most likely to double-click twice.
+  //
+  // Named rather than locked, which is the same answer the connection file gets
+  // in the sidecar: the fix for a shared name is a name that is not shared. Two
+  // downloads then proceed side by side, each verified against the pinned
+  // checksum independently, and both install the identical binary.
+  //
+  // randomUUID needs a secure context, and so does the crypto.subtle digest
+  // above - which has shipped in this file since Phase 1. If one works the other
+  // does.
+  const work = `${envRoot}/uv-download-${crypto.randomUUID()}`;
   await filesystem.createDirectory(work);
 
-  const archivePath = `${work}/${archive}`;
-  await download(`${REPOSITORY}/releases/download/${wanted}/${archive}`, archivePath);
+  try {
+    const archivePath = `${work}/${archive}`;
+    await download(`${REPOSITORY}/releases/download/${wanted}/${archive}`, archivePath);
 
-  // Verified before anything is done with it: this binary is about to be
-  // executed, and it is what installs everything else.
-  const actual = await sha256(archivePath);
-  if (actual !== expected) {
+    // Verified before anything is done with it: this binary is about to be
+    // executed, and it is what installs everything else.
+    const actual = await sha256(archivePath);
+    if (actual !== expected) {
+      throw new Error(
+        `Checksum mismatch for ${archive}: expected ${expected}, got ${actual}. ` +
+          "The download does not match the uv this version of build123d Studio was built against.",
+      );
+    }
+    appendLog(`Checksum verified against the pinned uv ${wanted}`);
+    log.info(`uv ${wanted} verified against the pinned checksum for ${triple}`);
+
+    // bsdtar handles both .tar.gz and .zip, and ships with Windows 10 and later.
+    // The unix archives nest everything under uv-<triple>/; the zip does not.
+    const { tar } = await systemTools();
+    const extract = isWindows
+      ? `${quote(tar)} -xf ${quote(archivePath)} -C ${quote(work)}`
+      : `${quote(tar)} -xzf ${quote(archivePath)} -C ${quote(work)} --strip-components=1`;
+    const code = await run(extract, { onLine: appendLog });
+    if (code !== 0) {
+      throw new Error(`Could not extract ${archive} (tar exit ${code})`);
+    }
+
+    await filesystem.createDirectory(`${envRoot}/uv`).catch(() => {});
+    await filesystem.remove(binary).catch(() => {});
+    await install(`${work}/${isWindows ? "uv.exe" : "uv"}`, binary, wanted);
+  } finally {
+    // Every exit path, which is what a per-instance name costs: nothing else
+    // will ever clean this directory up, because no later run can tell a
+    // leftover from a download still in progress. Only a hard kill mid-download
+    // leaves one behind now, where before every failed extraction did.
     await filesystem.remove(work).catch(() => {});
-    throw new Error(
-      `Checksum mismatch for ${archive}: expected ${expected}, got ${actual}. ` +
-        "The download does not match the uv this version of build123d Studio was built against.",
-    );
-  }
-  appendLog(`Checksum verified against the pinned uv ${wanted}`);
-  log.info(`uv ${wanted} verified against the pinned checksum for ${triple}`);
-
-  // bsdtar handles both .tar.gz and .zip, and ships with Windows 10 and later.
-  // The unix archives nest everything under uv-<triple>/; the zip does not.
-  const { tar } = await systemTools();
-  const extract = isWindows
-    ? `${quote(tar)} -xf ${quote(archivePath)} -C ${quote(work)}`
-    : `${quote(tar)} -xzf ${quote(archivePath)} -C ${quote(work)} --strip-components=1`;
-  const code = await run(extract, { onLine: appendLog });
-  if (code !== 0) {
-    throw new Error(`Could not extract ${archive} (tar exit ${code})`);
   }
 
-  await filesystem.createDirectory(`${envRoot}/uv`).catch(() => {});
-  await filesystem.remove(binary).catch(() => {});
-  await filesystem.move(`${work}/${isWindows ? "uv.exe" : "uv"}`, binary);
-  if (!isWindows) {
+  log.info(`uv ${wanted} ready at`, binary);
+  return binary;
+}
+
+/**
+ * Move the extracted binary into place, tolerating another instance winning.
+ *
+ * The scratch directories no longer collide, but the destination is one path and
+ * two first-start instances can reach it together. Losing that race is not a
+ * failure worth reporting: what the loser wanted was the pinned uv at this path,
+ * and that is precisely what the winner just put there. So the move is attempted
+ * and, if it fails, the outcome is checked rather than the cause diagnosed.
+ *
+ * Deliberately re-checking the version rather than mere existence. A move can
+ * also fail because the destination is held or unwritable, and "something is
+ * there" would then declare success over whatever was already broken.
+ */
+async function install(staged, binary, wanted) {
+  try {
+    await filesystem.move(staged, binary);
+  } catch (error) {
+    const have = (await exists(binary)) ? await installedVersion(binary) : null;
+    if (have !== wanted) {
+      throw error;
+    }
+    log.info(`Another instance installed uv ${wanted} first; using it`);
+    return;
+  }
+  if (NL_OS !== "Windows") {
     // ADD rather than REPLACE: we only need the execute bits, and REPLACE would
     // mean spelling out every permission correctly.
     await filesystem.setPermissions(
@@ -256,8 +308,4 @@ export async function ensureUv(envRoot) {
       "ADD",
     );
   }
-  await filesystem.remove(work).catch(() => {});
-
-  log.info(`uv ${wanted} ready at`, binary);
-  return binary;
 }
