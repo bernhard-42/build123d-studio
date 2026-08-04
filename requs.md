@@ -165,7 +165,7 @@ Done. What changed, and why it was worth doing.
 
 - Open Folder should work as in VS Code with a left sidebar and with tabs for files. tab label is filename with full path on hover
 
-Before the instance model, but not because it replaces it - see group 4, the two are orthogonal. It comes first because it is the smaller and safer piece: it is self-contained, every project needs it whether or not a second window is ever opened, and it touches none of the shared state the instance work has to make safe.
+Before the instance model, but not because it replaces it - the two are orthogonal, and V2 says why. It comes first because it is the smaller and safer piece: it is self-contained, every project needs it whether or not a second window is ever opened, and it touches none of the shared state the instance work has to make safe.
 
 **Size.** The largest group so far and laborious rather than risky - unlike Phase 3, where the danger was a race nobody could see, the danger here is forgetting a case. Two things make it smaller than it looks. The single-buffer assumption is concentrated rather than spread: nineteen call sites in `editor/files.js`, fourteen in `editor/monaco.js`, four in `toolbar.js`, and nowhere else. And nothing needs inventing - Monaco holds many models natively (`createModel` and `setModel` against one editor), `filesystem` has `readDirectory` and `createWatcher`, and `os.showFolderDialog` is the Open Folder dialog.
 
@@ -279,7 +279,7 @@ Done, in five commits. What changed, and what it cost to find out.
     # %%
   ```
 
-Landed so far: the uv pin, the New File template, and the whole of the language support - completion, signatures, diagnostics and hover. Debugging and the variable explorer are what remain.
+Done: the uv pin, the New File template, the language support - completion, signatures, diagnostics and hover - the variable explorer, and debugging. Two of its settings ship without a dialog to reach them, the New File template and `justMyCode`, and group 5's tabs are where they land.
 
 **There was no completion of any kind before this, and not for the reason above.** `registerCompletionItemProvider` is part of `editor.api.js`; the widget that displays what a provider returns is a separate contribution and was never imported, so a provider would have been registered and never asked - not even the word-based suggestions the editor worker has always computed could appear. Three more contributions have been imported since for the same reason, one per feature: the suggestion widget, the parameter hints popup and the hover tooltip. Assume it again for anything added later - go-to-definition and rename each need their own. Together they cost 104 kB gzipped and Monaco's 141 kB codicon font.
 
@@ -287,7 +287,7 @@ Landed so far: the uv pin, the New File template, and the whole of the language 
 
 **basedpyright ships as a pinned dependency rather than a downloaded runtime**, which is the only reason a Node program is admissible here at all. It is Pyright with Node bundled as a Python wheel, so it locks in `uv.lock` like everything else and has wheels for all seven platform targets - macOS arm64 and x86_64, Linux glibc and musl on both arches, Windows amd64 and arm64. 271 MB, in the per-user environment that already holds the interpreters and uv's cache, not in the 4 MB bundle. The PyPI `pyright` package was rejected for the opposite property: it fetches Node on first use, which is exactly the floating, machine-dependent version that `pins.json` exists to prevent.
 
-**The kernel half stays and is worth its keep.** It is the only source that knows a variable built in the console or an object whose type nothing annotates. It is skipped outright while the kernel is busy rather than asked with a short timeout: the kernel serves shell requests serially, so during a cell the live answer is not late, it is unavailable, and waiting to discover that would delay the static half, which is sitting ready and needs no kernel at all. That also means completion keeps working while a long tessellation runs - which the kernel path cannot do, and which group 7's subshells would fix for it.
+**The kernel half stays and is worth its keep.** It is the only source that knows a variable built in the console or an object whose type nothing annotates. It is skipped outright while the kernel is busy rather than asked with a short timeout: the kernel serves shell requests serially, so during a cell the live answer is not late, it is unavailable, and waiting to discover that would delay the static half, which is sitting ready and needs no kernel at all. That also means completion keeps working while a long tessellation runs - which the kernel path cannot do, and which group 6's subshells would fix for it.
 
 **IPython's own completer was returning nothing for the objects this application is about.** It is jedi-backed by default, and with a `Box` in the namespace `part.` gives 0 matches through jedi and 126 through `dir()`, including the `center` and `volume` someone would actually reach for. Builders complete either way; shapes did not. The warm-up now sets `Completer.use_jedi = False`, and the console shares the setting.
 
@@ -299,13 +299,13 @@ Landed so far: the uv pin, the New File template, and the whole of the language 
 
 **And the kernel indicator stopped flickering.** Every shell request publishes busy and idle, not only the ones that execute something, and the console asks several as a matter of course - an `is_complete_request` per line at its prompt, a `complete_request` per Tab, `history_request` at startup. One session's log had 41 pairs against 3 Runs, every one of them one to four milliseconds. The indicator answers "is the kernel running my code", so status now forwards only for an `execute_request` - the gate the variable explorer's refresh has always used - and the log line names the request it was answering, because "Kernel busy" alone could not be accounted for afterwards.
 
-### 4. Instance Model (decided: multi-instance)
+### 4. A second instance must not corrupt the first
 
-Multi-instance, deliberately, and it is not an alternative to multi-file above - the two are orthogonal. Multi-file is one project with many files; multi-instance is several projects open at once. A build123d project is normally a hierarchy of files under one root, and the workflow that matters is a large assembly open beside the self-contained components it is built from. Tabs do not serve that, and neither does one window.
+Multi-instance is the decided direction, and the feature half of it - the command line tool, `--list`, opening a file or folder in a new window - is in V2. This group is only the half that is a defect today: **a second instance already starts happily and quietly corrupts what the first one owns.** It is reachable without anyone asking for multi-instance at all - double-clicking the application twice, or opening a `.py` from the file manager while it is already running.
 
-It is also what an editor is expected to do: browsers and VS Code both do it, and today a second instance already starts happily - it just quietly corrupts what the first one owns.
+It is first because it is the smallest remaining piece and the only one that is a defect rather than a missing feature. Nothing in it needs designing or measuring; both are done below.
 
-**Nothing about that is fundamental.** Every port is already OS-assigned, so the sidecar socket, the model socket and the kernel's ZMQ ports never contend. What collides is four places written when there was only ever going to be one:
+**Nothing about the corruption is fundamental.** Every port is already OS-assigned, so the sidecar socket, the model socket and the kernel's ZMQ ports never contend. What collides is four places written when there was only ever going to be one:
 
 - `envRoot/kernel.json` is a single hardcoded name, so the second kernel overwrites the first and either restart rewrites it under the other. Reproduced on macOS by starting two instances in the same millisecond, and the failure is worse than "the file is wrong": the kernel process is launched with `-f {connection_file}` and reads its ports _from that file_, so instance A writes ports P, instance B overwrites with ports Q, B's kernel binds Q, and A's kernel then reads Q and dies on a zmq bind because B already holds them. A's client then waits sixty seconds for a kernel that never existed and the sidecar exits. A per-instance file removes the second step and the whole chain with it
 - `settings.json` is rewritten whole from an in-memory copy, so layout, theme and package sources are last-writer-wins
@@ -330,11 +330,11 @@ Measured on all three platforms before committing to it, because "reasonable on 
 
 Two of the checks exist only because Windows differs. Its locks cover a byte range from the current position, so a zero-length lock file is an edge case that would fail there and nowhere else - the file needs a byte written into it before it can be locked. And a file held open by a live process cannot be deleted at all, which is a property worth having rather than working around: a sweep with a bug in it fails loudly on Windows instead of quietly removing a running instance's connection file. Release on process death holds everywhere, including abnormal termination.
 
-The remaining three are ordinary work: read-merge-write settings under a lock, one lock around the environment bootstrap, and an append-only log. **The log fix belongs in Phase 3, not here** - it is small, and until it is done the primary diagnostic artefact corrupts itself precisely when two instances are doing something interesting. Measured: of fifteen launches on one machine, four looked broken in the log and only one actually was; the rest were lines another instance had truncated, which made the log actively misleading.
+The remaining three are ordinary work: read-merge-write settings under a lock, one lock around the environment bootstrap, and an append-only log. **The log is already done** - it was pulled forward into Phase 3 on the grounds that the primary diagnostic artefact must not corrupt itself precisely when two instances are doing something interesting, which is the situation this group is about. Measured before the fix: of fifteen launches on one machine, four looked broken in the log and only one actually was; the rest were lines another instance had truncated. So two remain.
 
-Not needed, but worth recording so nobody rediscovers it: a single-instance guard was written and reverted rather than deleted, in case this decision ever goes the other way.
+Not needed, but worth recording so nobody rediscovers it: a single-instance guard was written and reverted rather than deleted, in case this decision ever goes the other way. Refusing the second instance is the other way to close this defect, and it is rejected for the same reason it was reverted: it makes a double-click do nothing, which is a worse answer than the one the directory gives.
 
-**Command line tool.** `studio <file>` and `studio <folder>` open a new instance on that file or folder, installable from a menu entry. `studio --list` names the live instances and their connection files, which is where a user would ask the "which namespace" question. This is also the natural entry point for the desktop integration that makes double-clicking a `.py` file open it here.
+**What this group deliberately does not build.** The sweep leaves the directory tidy and the lock makes liveness answerable, but nothing yet asks the question out loud - `studio --list` is what reads this, and it is V2 along with the rest of the command line tool. The About dialog naming this instance's own connection file is in scope here, because that is the Phase 1 promise being kept rather than a new feature.
 
 ### 5. Config dialog: extra packages, and editing the shortcuts
 
@@ -346,22 +346,42 @@ Not needed, but worth recording so nobody rediscovers it: a single-instance guar
 
 Its own group rather than a usability quick win, because it is the first place free user text reaches a command line. Everything interpolated into a command already goes through quote(), which on Windows now refuses a value containing a double quote outright rather than escaping it - that refusal exists for this field, before the field does. It wants the same care as a security item: what happens to a malformed entry, what a failed sync leaves behind, and whether the custom section survives an "upgrade packages".
 
-### 6. OCP VS Code integration
+### 6. Inspecting while the kernel is busy
 
-- show_clear, show_object, push_object, show_objects, show_all, set_defaults, get_defaults, set_default, workspace_cofig, combined_config, status, ... need to work (Note in a separate project ocp_vscode needs to be restructured to better work with jupyter-cadquery and build123d studio)
-- every show should first get the tree status (see "status" in ocp_vscode) and apply it after show to keep the user intent on what to show. At the end, this is what viewer.html in ocp-vscode does. We need to understand what it does and what and how to replicate it.
+The smallest remaining piece, and the one whose answer is already measured. It buys two things rather than one, which is what moved it ahead of the OCP work: the variable explorer stops lying while a cell runs, and completion's kernel half stops going dark - group 3 skips it outright while the kernel is busy, so a long tessellation currently costs the live namespace half of every suggestion. Both are the same defect seen from two panes.
 
-### 7. Inspecting while the kernel is busy
-
-Last, and deliberately so - it is a real defect but not a pressing one, and it wants the rest of this phase settled first.
-
-Expanding a variable while a cell is running shows "Loading..." until the cell finishes. The kernel serves shell requests serially and the variable explorer inspects with a silent execute*request, so the inspection waits in the \_kernel's* queue. Measured on a ten second loop: 13.32 s before Phase 3c and 13.43 s after, so it is not the sidecar's doing and 3c neither caused nor could fix it. Past EVALUATE_TIMEOUT it is worse than slow - the row reports "could not be read in time", which is untrue: the value was readable and the kernel was busy.
+Expanding a variable while a cell is running shows "Loading..." until the cell finishes. The kernel serves shell requests serially and the variable explorer inspects with a silent `execute_request`, so the inspection waits in the _kernel's_ queue. Measured on a ten second loop: 13.32 s before Phase 3c and 13.43 s after, so it is not the sidecar's doing and 3c neither caused nor could fix it. Past EVALUATE_TIMEOUT it is worse than slow - the row reports "could not be read in time", which is untrue: the value was readable and the kernel was busy.
 
 ipykernel 7 subshells (JEP 91) are the answer, and they work: a `create_subshell_request` on the control channel returns an id, a request carrying that id in its header is served by a separate thread with the same namespace, and a probe against the pinned ipykernel 7.3.0 answered in **0.01 s** while the main shell was six seconds from finishing. Route inspections there and leave Run, the chdir and the warm-up on the main shell - the chdir in particular must stay ordered with respect to Runs.
 
 Two things already known about the shape of it. Building the message by hand (`session.msg` plus `shell_channel.send`) is needed because jupyter_client's `execute()` cannot set a subshell id, and that incidentally closes the internal-request window for good rather than locking it, since the msg_id is known before the send. And the inspector already snapshots with `list(namespace.items())`, so inspecting a namespace that running code is mutating does not iterate a dict as it changes. It must degrade to the main shell when the kernel has no subshell support, or the application stops working against anything but ipykernel 7.
 
-- Write comprehensive feature test suite: the panes, the editor, the viewer and the workflows, as distinct from Phase 3's ipc, communication and threading
+### 7. OCP VS Code integration
+
+Last, and deliberately so. It is the only group whose scope leaves this repository - ocp_vscode has to be restructured, in its own project, to serve jupyter-cadquery and build123d Studio both - so it wants a base that has stopped moving under it.
+
+- show_clear, show_object, push_object, show_objects, show_all, set_defaults, get_defaults, set_default, workspace_cofig, combined_config, status, ... need to work (Note in a separate project ocp_vscode needs to be restructured to better work with jupyter-cadquery and build123d studio)
+- every show should first get the tree status (see "status" in ocp_vscode) and apply it after show to keep the user intent on what to show. At the end, this is what viewer.html in ocp-vscode does. We need to understand what it does and what and how to replicate it.
+
+## Phase 5 "Feature test suite"
+
+Write a comprehensive feature test suite: the panes, the editor, the viewer and the workflows, as distinct from Phase 3's ipc, communication and threading.
+
+Its own phase, and after the whole of Phase 4, which is the rhythm this project already has: Phase 1 built, Phase 2 reviewed what it had built, Phase 3 tested the layer everything else is diagnosed through. A feature suite wants the features to have stopped moving, and the last thing Phase 4 does is change what `show` means.
+
+The alternative considered and rejected: writing the half that does not touch the viewer - editor, panes, workflows - before group 7, as a regression net for the restructure. It reads well and does not survive the detail. Group 7 changes the viewer's semantics *deliberately* - every `show` reading the tree status first and reapplying it afterwards - so tests written against today's behaviour would be updated by design rather than catching anything, and a suite that has to be rewritten to go green teaches everyone to rewrite it.
+
+What this phase has to reach that nothing does today is the part Phase 3 explicitly left out. Phase 3's harnesses drive the sidecar over its WebSocket, which is the right layer for ipc and threading and the wrong one for "the dirty dot appeared on the tab". Several of Phase 4's defects were found only because the application was built and used by hand - a splitter with no width, a chevron with no glyph, a dirty mark a tick early - and deciding which of those a suite can honestly reach, and which stay a human test script, is the first question this phase answers rather than assumes.
+
+## V2
+
+### Multi-instance, as a feature
+
+Group 4 makes a second instance safe; this makes it something anyone would ask for. It is not an alternative to multi-file - the two are orthogonal, and multi-file landing in group 2 is what lets this wait. Multi-file is one project with many files; multi-instance is several projects open at once. A build123d project is normally a hierarchy of files under one root, and the workflow that matters is a large assembly open beside the self-contained components it is built from. Tabs do not serve that, and neither does one window. It is also what an editor is expected to do: browsers and VS Code both do it.
+
+What is left once group 4 has landed is a way in from outside the application, and it is packaging work on three platforms rather than design.
+
+**Command line tool.** `studio <file>` and `studio <folder>` open a new instance on that file or folder, installable from a menu entry. `studio --list` names the live instances and their connection files, which is where a user would ask the "which namespace" question - group 4's per-instance directory and lock file are exactly what it reads, so the answer is already true by then. This is also the natural entry point for the desktop integration that makes double-clicking a `.py` file open it here.
 
 ## BUGS:
 
