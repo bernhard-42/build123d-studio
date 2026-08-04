@@ -10,8 +10,11 @@ The signatures mirror ocp_vscode's, so ``show(part)`` and the usual keyword
 arguments behave the way they do everywhere else in these tools.
 """
 
+import inspect
 import os
+import types
 import warnings
+from enum import Enum
 
 from ocp_vscode.comms import set_port
 
@@ -72,7 +75,8 @@ if _ISOLATION_PORT is not None and _ISOLATION_PORT.isdigit():
 warnings.filterwarnings("ignore", category=CommsWarning)
 warnings.filterwarnings("ignore", message="Unknown collapse value from viewer")
 
-__all__ = ["show", "show_object", "reset_show", "show_clear", "NotConnected"]
+__all__ = ["show", "show_all", "show_object", "reset_show", "show_clear",
+           "NotConnected"]
 
 
 def _require_ocp_vscode():
@@ -122,6 +126,49 @@ def show_object(obj, name=None, options=None, parent=None, clear=False, **kwargs
     _deliver(converted, mapping)
 
 
-# show_all() is deliberately absent for now. ocp_vscode's version walks the
-# caller's namespace with type checks that are worth reusing rather than
-# reinventing badly; it will be wired up the same way show() is.
+# Things a viewer cannot draw, and that a scope is always full of. The list is
+# short on purpose: everything past it goes to _convert, which is the authority
+# on what can be tessellated, and which says so with an error the user can read.
+_NOT_DRAWABLE = (str, bytes, int, float, complex, bool, dict, set, type(None))
+
+
+def _drawable(name, obj, exclude, classes):
+    """Whether a name in a scope is worth handing to the viewer."""
+    if name.startswith("_") or name in exclude:
+        return False
+    if isinstance(obj, (type, types.ModuleType, Enum)) or callable(obj):
+        return False
+    if isinstance(obj, _NOT_DRAWABLE):
+        return False
+    if classes is not None:
+        return isinstance(obj, tuple(classes))
+    return True
+
+
+def show_all(variables=None, exclude=None, classes=None, **kwargs):
+    """Show everything in a scope that the viewer can draw.
+
+    `show_all()` reads the caller's own locals, and `show_all(locals())` says the
+    same thing explicitly - which is the form that matters here, because the
+    debugger evaluates it in a paused frame where "the caller" is not what
+    anybody means.
+
+    Objects keep their variable names in the viewer's tree, which is most of the
+    point: a scope full of unnamed shapes is a scope you cannot navigate.
+    """
+    _require_ocp_vscode()
+    if variables is None:
+        # The frame that called this one. Its locals are what "all" means.
+        variables = inspect.currentframe().f_back.f_locals
+    exclude = [] if exclude is None else exclude
+
+    names, objects = [], []
+    for name, obj in variables.items():
+        if _drawable(str(name), obj, exclude, classes):
+            names.append(str(name))
+            objects.append(obj)
+
+    if len(objects) == 0:
+        return
+    converted, mapping = _convert(*objects, names=names, **kwargs)
+    _deliver(converted, mapping)

@@ -601,6 +601,145 @@ def main():
           and len(tail.get("children", [])) == 43,
           f"offset {tail.get('offset')}, {len(tail.get('children', []))} children")
 
+    # --- debugging: a second world, driven over the relay ---
+    #
+    # The sidecar understands none of this. It spawns the process, holds the
+    # socket debugpy dials into and frames messages both ways; every DAP request
+    # below is composed here, exactly as the frontend will compose it.
+
+    script = os.path.join(tempfile.gettempdir(), "b123d-debug-check.py")
+    with open(script, "w") as handle:
+        handle.write(
+            "from build123d import *\n"
+            "from build123d_studio import show, show_all\n"
+            "\n"
+            "def make(size):\n"
+            "    b = Box(size, size, size)\n"
+            "    return b\n"
+            "\n"
+            "part = make(3)\n"
+            "print('script finished')\n"
+        )
+
+    dap_seq = [0]
+
+    def dap(command, **arguments):
+        dap_seq[0] += 1
+        side.send("debug.send", message={
+            "seq": dap_seq[0], "type": "request",
+            "command": command, "arguments": arguments,
+        })
+        return dap_seq[0]
+
+    def dap_reply(seq, timeout=ACTION_TIMEOUT, since=0):
+        _, frame = side.wait_frame_where(
+            "debug.message",
+            lambda f: f["message"].get("type") == "response"
+            and f["message"].get("request_seq") == seq,
+            timeout, since=since)
+        return None if frame is None else frame["message"]
+
+    def dap_event(name, timeout=ACTION_TIMEOUT, since=0):
+        _, frame = side.wait_frame_where(
+            "debug.message",
+            lambda f: f["message"].get("type") == "event"
+            and f["message"].get("event") == name,
+            timeout, since=since)
+        return None if frame is None else frame["message"]
+
+    before = len(side.frames)
+    side.send("debug.start", path=script)
+    _, started = side.wait_frame("debug.started", ACTION_TIMEOUT, since=before)
+    check("a debug session starts", started is not None,
+          "no debug.started" if started is None else started["path"])
+
+    if started is not None:
+        dap_reply(dap("initialize", clientID="integration", adapterID="debugpy",
+                      pathFormat="path", linesStartAt1=True, columnsStartAt1=True))
+        dap("attach")
+        check("the adapter reports itself initialized",
+              dap_event("initialized", ACTION_TIMEOUT, since=before) is not None)
+
+        # Line 6 is "return b", in the real file at its real line number. That
+        # is what debugging a file on disk buys: there is no mapping to be
+        # wrong about.
+        seq = dap("setBreakpoints", source={"path": script}, breakpoints=[{"line": 6}])
+        reply = dap_reply(seq, since=before)
+        verified = [] if reply is None else [
+            b.get("verified") for b in reply["body"]["breakpoints"]]
+        check("a breakpoint binds to the file on disk", verified == [True], str(verified))
+        dap_reply(dap("configurationDone"), since=before)
+
+        stopped = dap_event("stopped", ACTION_TIMEOUT, since=before)
+        check("execution stops on the breakpoint",
+              stopped is not None and stopped["body"].get("reason") == "breakpoint",
+              "never stopped" if stopped is None else str(stopped["body"].get("reason")))
+
+        if stopped is not None:
+            thread_id = stopped["body"]["threadId"]
+            reply = dap_reply(dap("stackTrace", threadId=thread_id), since=before)
+            frames = [] if reply is None else reply["body"]["stackFrames"]
+            check("the stack names the real file and line",
+                  len(frames) > 0
+                  and os.path.basename(frames[0]["source"]["path"]) ==
+                  "b123d-debug-check.py" and frames[0]["line"] == 6,
+                  str([(f["name"], f["line"]) for f in frames[:2]]))
+
+            frame_id = frames[0]["id"]
+            reply = dap_reply(dap("evaluate", expression="size * 10",
+                                  frameId=frame_id, context="repl"), since=before)
+            check("the debug console evaluates in the paused frame",
+                  reply is not None and reply["body"]["result"] == "30",
+                  "no reply" if reply is None else str(reply["body"].get("result")))
+
+            # The whole reason the debuggee is given the kernel's environment:
+            # a shape drawn in a paused frame reaches the same viewer.
+            at_models = len(side.binary)
+            dap_reply(dap("evaluate", expression="show_all(locals())",
+                          frameId=frame_id, context="repl"), since=before)
+            at_model = side.wait_binary(KIND_MODEL, ACTION_TIMEOUT, since=at_models)
+            check("show_all in a paused frame reaches the viewer", at_model is not None,
+                  "no model frame" if at_model is None else f"at {at_model:.2f}s")
+
+            dap("continue", threadId=thread_id)
+
+        # stdout is not carried by DAP - measured - so the relay pipes it.
+        _, output = side.wait_frame_where(
+            "debug.output", lambda f: "script finished" in f.get("text", ""),
+            ACTION_TIMEOUT, since=before)
+        check("the script's own output is relayed", output is not None,
+              "nothing" if output is None else output["text"].strip())
+
+        _, exited = side.wait_frame("debug.exited", ACTION_TIMEOUT, since=before)
+        check("the session reports the process exiting", exited is not None,
+              "silent" if exited is None else f"code {exited.get('code')}")
+
+    # The kernel is untouched by all of it, which is the whole point of two
+    # worlds. Asked by path rather than off the listing: by now the namespace
+    # holds the eleven hundred names the truncation check made, so anything
+    # sorting late is past the five-hundred-row cut and absent for a reason
+    # that has nothing to do with debugging.
+    before = len(side.frames)
+    side.send("vars.detail", path=["part"], offset=0)
+    _, leaked = side.wait_frame_where(
+        "vars.detail", lambda f: f["detail"].get("path") == ["part"],
+        ACTION_TIMEOUT, since=before)
+    check("nothing the debugged file defined reached the kernel",
+          leaked is not None and "error" in leaked["detail"],
+          "no reply" if leaked is None else str(leaked["detail"])[:60])
+
+    # And the positive half, so the check above cannot pass by the namespace
+    # having been emptied. `solid` rather than integration_marker, which was
+    # defined before the restart check and is legitimately gone.
+    before = len(side.frames)
+    side.send("vars.detail", path=["solid"], offset=0)
+    _, survived = side.wait_frame_where(
+        "vars.detail", lambda f: f["detail"].get("path") == ["solid"],
+        ACTION_TIMEOUT, since=before)
+    check("and the namespace it had before is still there",
+          survived is not None and "error" not in survived["detail"],
+          "no reply" if survived is None else str(survived["detail"])[:60])
+
     # --- the measurement backend indexes the model that is on screen ---
     #
     # Activating a measure tool is what triggers indexing, and indexing is the

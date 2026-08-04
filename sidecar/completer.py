@@ -51,7 +51,6 @@ is. It runs here rather than in the kernel, so it also answers while a cell is
 running - the kernel serves shell requests serially and cannot.
 """
 
-import json
 import os
 import pathlib
 import subprocess
@@ -60,6 +59,7 @@ import threading
 import time
 
 from channel import log
+from framing import encode, read_message
 
 # How long to wait for one answer. Generous next to the measured 0.0-0.3 s,
 # because the number that matters is not this one: main.py holds a single
@@ -270,13 +270,12 @@ class LanguageServer:
         self._write({"jsonrpc": "2.0", "method": method, "params": params})
 
     def _write(self, message):
-        body = json.dumps(message).encode("utf-8")
-        header = f"Content-Length: {len(body)}\r\n\r\n".encode("ascii")
+        framed = encode(message)
         with self._send_lock:
             if not self.alive():
                 return False
             try:
-                self._process.stdin.write(header + body)
+                self._process.stdin.write(framed)
                 self._process.stdin.flush()
             except (OSError, ValueError) as exc:
                 log(f"basedpyright stopped listening: {exc}")
@@ -294,7 +293,7 @@ class LanguageServer:
         process = self._process
         stream = process.stdout
         while True:
-            message = _read_message(stream)
+            message = read_message(stream)
             if message is None:
                 break
             if "method" in message and "id" in message:
@@ -675,35 +674,6 @@ def _initialize_params():
             },
         },
     }
-
-
-def _read_message(stream):
-    """One LSP message: a header block, then exactly Content-Length bytes."""
-    length = None
-    while True:
-        try:
-            line = stream.readline()
-        except (OSError, ValueError):
-            return None
-        if line == b"":
-            return None
-        if line in (b"\r\n", b"\n"):
-            break
-        if line.lower().startswith(b"content-length:"):
-            try:
-                length = int(line.split(b":", 1)[1])
-            except ValueError:
-                return None
-    if length is None:
-        return None
-    try:
-        body = stream.read(length)
-    except (OSError, ValueError):
-        return None
-    try:
-        return json.loads(body)
-    except ValueError:
-        return None
 
 
 def _items_of(result):

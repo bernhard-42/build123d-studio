@@ -24,6 +24,7 @@ import threading
 import appinfo
 from channel import KIND_CONSOLE, KIND_MODEL, Channel, log
 from completer import Completer
+from debugger import DebugSession, debug_python
 from kernel import Kernel
 from measure_service import MeasurementService
 from modelsock import ModelSocket
@@ -55,6 +56,12 @@ EXECUTE = "execute"
 # would queue behind an expansion that can legitimately take fifteen seconds,
 # and on the execute lane behind a Run.
 COMPLETE = "complete"
+
+# Debugging gets a lane of its own because starting a session blocks: the
+# process is spawned and then dialled back to, which is under a second when it
+# works and up to thirty when it does not. Neither belongs in front of a
+# keystroke, and neither belongs behind a fifteen-second inspection.
+DEBUG = "debug"
 
 # The most suggestions one reply carries. `import ` alone offers 394 on this
 # machine, and every one of them crosses the socket on a keystroke. Two hundred
@@ -131,6 +138,17 @@ class Sidecar:
         # and the half that works on a kernel that has never run anything.
         self.completer = Completer(env_root, app_dir, on_diagnostics=self.on_diagnostics)
 
+        # The debugged file's own process, when there is one. Two worlds: the
+        # kernel is not touched by any of it, so nothing here reaches into the
+        # kernel's state and nothing in the kernel's state changes because a
+        # session ran.
+        self.debug = DebugSession(
+            python=debug_python(env_root),
+            on_message=lambda message: self.channel.send("debug.message", message=message),
+            on_output=lambda text: self.channel.send("debug.output", text=text),
+            on_exit=lambda code: self.channel.send("debug.exited", code=code),
+        )
+
         # Whether the kernel is part-way through something. Completion asks the
         # kernel only when it is not: it serves shell requests serially, so a
         # request sent during a cell waits for the cell, and a suggestion list
@@ -206,6 +224,13 @@ class Sidecar:
         # refresh when somebody happened to open the suggestion list.
         self.channel.on("editor.sync", self.on_sync, lane=COMPLETE)
         self.channel.on("editor.close", self.on_close, lane=COMPLETE)
+
+        # Starting and stopping block; relaying does not. A DAP message is a
+        # socket write, and the frontend sends one per step - so it goes inline,
+        # where a step cannot queue behind the session that is starting.
+        self.channel.on("debug.start", self.on_debug_start, lane=DEBUG)
+        self.channel.on("debug.stop", self.on_debug_stop, lane=DEBUG)
+        self.channel.on("debug.send", self.on_debug_send)
 
         # Keystrokes arrive as raw bytes - no base64, no JSON escaping, on what
         # is the hottest path in the UI.
@@ -793,6 +818,45 @@ class Sidecar:
         """
         self.channel.send("editor.diagnostics", path=path, key=key, diagnostics=diagnostics)
 
+    # --- debugging ---
+
+    def on_debug_start(self, message):
+        """Run a file under the debugger, in a process of its own.
+
+        The environment is the kernel's, which is the whole reason show() works
+        from a paused frame: the debuggee gets the model socket's port and token
+        and this application's kernel-side package, so a shape it draws arrives
+        in the same viewer. Measured - 0.02 s from the evaluate to the model.
+        """
+        path = message.get("path")
+        error = self.debug.start(
+            path,
+            env=self.kernel.kernel_environment(),
+            # Where a relative path in the script resolves, and the same answer
+            # the kernel gives: the project root when a folder is open, the
+            # file's own directory otherwise.
+            cwd=self.kernel.working_dir,
+        )
+        if error is None:
+            self.channel.send("debug.started", path=path)
+        else:
+            log(f"Debug session failed to start: {error}")
+            self.channel.send("debug.failed", path=path, message=error)
+
+    def on_debug_stop(self, _message):
+        self.debug.stop()
+        self.channel.send("debug.stopped")
+
+    def on_debug_send(self, message):
+        """Relay one DAP message, verbatim.
+
+        Nothing here reads it. Request ids, breakpoints, frames and the current
+        thread all live in the frontend, because that is where the UI needs
+        them and a second copy here would be a second thing to keep in step.
+        """
+        if not self.debug.send(message.get("message")):
+            self.channel.send("debug.exited", code=None)
+
     def on_hover(self, message):
         self.channel.send(
             "editor.hover",
@@ -880,6 +944,8 @@ class Sidecar:
             self._warm_timer.cancel()
         if self.completer is not None:
             self.completer.stop()
+        if self.debug is not None:
+            self.debug.stop()
         if self.console is not None:
             self.console.stop()
         if self.kernel is not None:
