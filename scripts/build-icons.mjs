@@ -68,9 +68,24 @@ const STAMP = join(ICONS, "logo.sha256");
 
 const CANVAS = 1024;
 
-/** What the logo hashes to now. */
+/**
+ * What the logo hashes to now.
+ *
+ * The image, not the bytes it happened to arrive in. Git on Windows checks text
+ * files out with CRLF by default, and an SVG is text as far as Git is
+ * concerned - so the same logo hashed to be08d677 on macOS and Linux and
+ * 8d7c3e27 on Windows, and --ensure refused a build it should have waved
+ * through. It cost a Windows release: every other job in the run passed.
+ *
+ * .gitattributes now keeps SVGs at LF, which fixes it at the source. This
+ * normalises anyway, because the question the stamp answers is "were the
+ * committed icons built from this picture" and a line ending is not part of the
+ * picture. A checkout with different settings, or a file touched by an editor
+ * that rewrites endings, must not be able to make this lie.
+ */
 function sourceHash() {
-  return createHash("sha256").update(readFileSync(SOURCE)).digest("hex");
+  const text = readFileSync(SOURCE, "utf8").replace(/\r\n/g, "\n");
+  return createHash("sha256").update(text, "utf8").digest("hex");
 }
 
 /** What it hashed to when the committed icons were built, or "" if unrecorded. */

@@ -1,0 +1,8 @@
+# Git on Windows checks text files out with CRLF unless told otherwise, and an
+# SVG counts as text. That is not harmless here: scripts/build-icons.mjs hashes
+# logo.svg to prove the committed icons were generated from it, so the same
+# logo hashed differently on Windows and `--ensure` refused to package. Every
+# other job in that run passed; only win32-x64 failed, which is the signature.
+#
+# Line endings carry no meaning in an image. Keep them as committed.
+*.svg text eol=lf
