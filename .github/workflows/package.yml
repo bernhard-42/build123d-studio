@@ -224,6 +224,28 @@ jobs:
             sudo apt install libwebkit2gtk-4.1-0    # or libwebkit2gtk-4.0-37 on older releases
             ```
 
+            ### Opening projects from a terminal
+
+            Each package carries a `studio` launcher beside the application. Copy it somewhere on your PATH — it does not have to stay where it came from, and nothing needs installing with a password:
+
+            ```
+            cp "/Applications/build123d Studio.app/Contents/MacOS/studio" ~/bin/studio   # macOS
+            cp /path/to/build123d-studio/studio ~/bin/studio                             # Linux
+            copy C:\path\to\build123d-studio\studio.cmd %USERPROFILE%\bin\studio.cmd     # Windows
+            ```
+
+            Then, from any project directory:
+
+            ```
+            studio                  # open this directory as the project
+            studio /path/to/folder  # open that folder as the project
+            studio main.py          # open main.py, with its folder as the project
+            ```
+
+            Every form starts a new instance, so several projects can be open at once. That matters most on macOS, where double-clicking an already-running application activates the existing window rather than starting a second one — `studio` is the only way to get two there.
+
+            Start the application once before using it. The launcher finds the application by reading a location the application records on each start, which is what lets you copy it anywhere.
+
             ### Verifying what you downloaded
 
             ```

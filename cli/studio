@@ -1,0 +1,92 @@
+#!/bin/sh
+#
+# build123d Studio from the command line.
+#
+#   studio                  open the current directory as the project
+#   studio .                the same, said explicitly
+#   studio /path/to/folder  open that folder as the project
+#   studio main.py          open main.py, with its folder as the project
+#
+# Every form starts a NEW instance. That is the point of it on macOS, where
+# double-clicking an already-running application activates the existing window
+# instead of starting a second one, so this is the only way to get two projects
+# open at once.
+#
+# Copy it somewhere on your PATH:
+#
+#   cp "/Applications/build123d Studio.app/Contents/MacOS/studio" ~/bin/studio
+#
+# It does not need to stay inside the application, and it deliberately does not
+# work out where the application is from its own location - once copied it has
+# no relationship to the bundle it came from. The application records its
+# location on every start instead, and this reads that. So run build123d Studio
+# once before using this.
+
+set -eu
+
+APP_NAME="build123d-studio"
+
+case "$(uname -s)" in
+  Darwin) DATA_DIR="$HOME/Library/Application Support/$APP_NAME" ;;
+  *)      DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/$APP_NAME" ;;
+esac
+
+LOCATION_FILE="$DATA_DIR/app-location"
+
+if [ ! -r "$LOCATION_FILE" ]; then
+  echo "studio: cannot find build123d Studio." >&2
+  echo "studio: expected its location in $LOCATION_FILE" >&2
+  echo "studio: start the application once and try again." >&2
+  exit 1
+fi
+
+APP_DIR=$(cat "$LOCATION_FILE")
+if [ ! -d "$APP_DIR" ]; then
+  echo "studio: build123d Studio was last seen at $APP_DIR, which is gone." >&2
+  echo "studio: start it once from where it is installed now." >&2
+  exit 1
+fi
+
+# Resolve before launching, and this is not a nicety.
+#
+# "studio ." and "studio main.py" mean something only relative to the shell's
+# working directory, and the application will not have it: on macOS `open`
+# launches through LaunchServices, which starts the process from / rather than
+# from here. An unresolved "." would open the wrong folder silently.
+TARGET=${1:-.}
+if [ -d "$TARGET" ]; then
+  TARGET=$(cd "$TARGET" && pwd)
+elif [ -e "$TARGET" ]; then
+  TARGET_DIR=$(cd "$(dirname "$TARGET")" && pwd)
+  TARGET="$TARGET_DIR/$(basename "$TARGET")"
+else
+  echo "studio: no such file or directory: $TARGET" >&2
+  exit 1
+fi
+
+if [ "$(uname -s)" = "Darwin" ]; then
+  # APP_DIR is Contents/MacOS inside the bundle, because that is where the
+  # payload lives and NL_PATH is the binary's own directory. `open` wants the
+  # .app itself, which is two levels up.
+  BUNDLE=$(cd "$APP_DIR/../.." && pwd)
+  # -n forces a new instance; without it this activates the running one and the
+  # argument is ignored, which is the whole failure this command exists to avoid.
+  exec open -n -a "$BUNDLE" --args "--open=$TARGET"
+fi
+
+# Linux. The AppImage records itself here rather than the staged resource
+# directory, because that staging is rebuilt per launch and its symlinks point
+# into a mount that is gone once the application exits.
+IMAGE_FILE="$DATA_DIR/app-image"
+if [ -r "$IMAGE_FILE" ]; then
+  LAUNCH=$(cat "$IMAGE_FILE")
+else
+  LAUNCH="$APP_DIR/$APP_NAME"
+fi
+
+if [ ! -x "$LAUNCH" ]; then
+  echo "studio: $LAUNCH is not executable." >&2
+  exit 1
+fi
+
+exec "$LAUNCH" "--open=$TARGET"

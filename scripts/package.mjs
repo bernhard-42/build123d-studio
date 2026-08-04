@@ -96,6 +96,22 @@ function assemblePayload(destination) {
 
   cpSync(join(DIST, APP_SLUG, "resources.neu"), join(destination, "resources.neu"));
 
+  // The command line launcher, for the user to copy onto their PATH. It ships
+  // beside the binary rather than being installed by the application, which
+  // would mean writing outside our own directory and, on the paths people
+  // actually have on PATH, asking for a password.
+  //
+  // It resolves the application through the location file the app writes on
+  // every start, not through its own path - see recordAppLocation. That is what
+  // lets it be copied anywhere.
+  if (target.kind === "windows") {
+    cpSync(join(ROOT, "cli", "studio.cmd"), join(destination, "studio.cmd"));
+  } else {
+    const studio = join(destination, "studio");
+    cpSync(join(ROOT, "cli", "studio"), studio);
+    chmodSync(studio, 0o755);
+  }
+
   for (const directory of ["sidecar", "kernel"]) {
     cpSync(join(ROOT, directory), join(destination, directory), {
       recursive: true,
@@ -250,11 +266,19 @@ function packageLinux() {
   writeFileSync(appRun, `#!/bin/sh
 set -e
 HERE=$(dirname "$(readlink -f "$0")")
-STAGE="\${XDG_DATA_HOME:-$HOME/.local/share}/${APP_SLUG}/app"
+DATA="\${XDG_DATA_HOME:-$HOME/.local/share}/${APP_SLUG}"
+STAGE="$DATA/app"
 mkdir -p "$STAGE"
 for entry in "$HERE"/usr/bin/*; do
   ln -sfn "$entry" "$STAGE/$(basename "$entry")"
 done
+# Where the \`studio\` script should launch us from. It cannot use the staged
+# directory above: those are symlinks into a mount that disappears when this
+# process exits, and \$APPIMAGE is the only durable name this application has on
+# Linux. Written here because AppRun is the only part that knows it.
+if [ -n "\${APPIMAGE:-}" ]; then
+  printf '%s' "$APPIMAGE" > "$DATA/app-image" || true
+fi
 exec "$HERE/usr/bin/${binaryName}" --path="$STAGE" "$@"
 `);
   chmodSync(appRun, 0o755);

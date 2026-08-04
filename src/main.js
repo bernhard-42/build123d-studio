@@ -1,9 +1,10 @@
-import { app, events, init, window as neuWindow } from "@neutralinojs/lib";
+import { app, events, filesystem, init, window as neuWindow } from "@neutralinojs/lib";
 import "./styles.css";
 import "./icons.css";
 
 import { ensureEnvironment } from "./bootstrap/setup.js";
-import { appDir } from "./bootstrap/envroot.js";
+import { appDir, recordAppLocation } from "./bootstrap/envroot.js";
+import { openTarget } from "./args.js";
 import {
   acknowledge,
   appendLog,
@@ -53,6 +54,7 @@ import {
   saveFile,
   saveWorkspace,
   selectTab,
+  showFolderAt,
   syncKernelDirectory,
 } from "./editor/files.js";
 import { initTabStrip } from "./editor/tabstrip.js";
@@ -281,6 +283,48 @@ function installBackendRecovery(console_) {
   });
 }
 
+/**
+ * Open what the command line asked for, or restore the previous session.
+ *
+ * A directory becomes the project. A file becomes the project's *containing*
+ * directory plus that one open tab, which is what makes `studio main.py` put
+ * the kernel where the command was typed: group 2 decided the working directory
+ * is the project root when there is a project, so opening the folder is how a
+ * file argument gets the behaviour rather than a third rule about working
+ * directories being invented for it.
+ *
+ * A path that has gone falls back to the restore. Someone who typed the name of
+ * a deleted file should get their editor, not an empty window and a dialog.
+ */
+async function openRequestedOrRestore() {
+  const requested = openTarget(NL_ARGS);
+  if (requested === null) {
+    await restoreWorkspace();
+    return;
+  }
+
+  let stats;
+  try {
+    stats = await filesystem.getStats(requested);
+  } catch (error) {
+    log.warn(`Cannot open ${requested}:`, error);
+    await restoreWorkspace();
+    return;
+  }
+
+  if (stats.isDirectory) {
+    await showFolderAt(requested);
+    return;
+  }
+
+  // The containing directory first, so the tree is populated and the kernel is
+  // told about the project before the tab appears - the same order
+  // restoreWorkspace uses, and for the same reason.
+  const parts = await filesystem.getPathParts(requested);
+  await showFolderAt(parts.parentPath);
+  await openPath(requested);
+}
+
 async function main() {
   // Both write into the app-data directory rather than the application's own,
   // so they only need os.getPath - no environment, nothing to bootstrap. Doing
@@ -289,6 +333,16 @@ async function main() {
   await initStore();
 
   log.info("Starting up", { NL_OS, NL_ARCH: typeof NL_ARCH === "string" ? NL_ARCH : "?" });
+
+  // Where the `studio` script looks to find this application. Failing is not
+  // worth interrupting startup for: the only casualty is a command line tool
+  // the user may never have copied.
+  try {
+    log.info("Recorded the application location at", await recordAppLocation());
+  } catch (error) {
+    log.warn("Could not record the application location:", error);
+  }
+
   await neuWindow.setTitle("build123d Studio");
   await neuWindow.show();
 
@@ -449,7 +503,13 @@ async function main() {
   // Before the splash lifts, so the window is revealed already showing the
   // files rather than the sample being replaced a moment later. Files that have
   // gone are left closed - see restoreWorkspace.
-  await restoreWorkspace();
+  //
+  // An argument replaces the restore rather than joining it, and that is the
+  // whole rule: `studio .` says what this window is for, so restoring five
+  // files from last time and then opening a folder - which closes them all
+  // again, because a folder is a context reset - would be silly. No argument
+  // means a double-click, which has nothing to go on but the previous session.
+  await openRequestedOrRestore();
   // A restored folder enables Close Folder and Toggle Sidebar, and the menu was
   // built before the workspace was read.
   await refreshMenu();

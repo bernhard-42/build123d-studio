@@ -248,7 +248,7 @@ Done, in five commits. What changed, and what it cost to find out.
 
   **Stepping is line by line and there is no switch for it.** DAP's `next` takes a `granularity` of `statement`, `line` or `instruction`, and debugpy ignores it: `base -= Cylinder(a, b, c)` written over five lines stops six times - the call line, each argument line, then the call line again as it executes - identically for all three values. So the hook is gated on the `stopped` reason instead, drawing at breakpoints only by default, which is one tessellation per place somebody deliberately stopped.
 
-  Two smaller things worth not rediscovering. The Neutralino `shortcut` field on macOS *binds* Command plus one character rather than displaying a string, so `Shift-Enter`, `F5` and `Shift-F5` cannot be expressed through it at all and a value chosen to look right would bind a chord nobody asked for - the chords are written into the label there instead. And `* { box-sizing: border-box }` was quietly re-laying out three-cad-viewer, whose tree rows are `height: 16px; padding: 2px 0`: 20px under content-box and 16px under border-box, which took four pixels off every row and squeezed the icons. Found by screenshotting the library's own dev page beside ours.
+  Two smaller things worth not rediscovering. The Neutralino `shortcut` field on macOS _binds_ Command plus one character rather than displaying a string, so `Shift-Enter`, `F5` and `Shift-F5` cannot be expressed through it at all and a value chosen to look right would bind a chord nobody asked for - the chords are written into the label there instead. And `* { box-sizing: border-box }` was quietly re-laying out three-cad-viewer, whose tree rows are `height: 16px; padding: 2px 0`: 20px under content-box and 16px under border-box, which took four pixels off every row and squeezed the icons. Found by screenshotting the library's own dev page beside ours.
 
 - The variable explorer needs to get multilevel for iterables (`a = dict(a=12, b="wert", c=[1,2,3,4,5,6], d=dict(x=dict(aa=1, bb="sdfg"), y=2))`)
 - the variable explorer needs to support paging to avoid showing hundreds of objects for arrays
@@ -354,6 +354,26 @@ None of which needs fixing, and that is a decision rather than an omission. The 
 
 **Two smaller things.** The env root arrives from the frontend written with forward slashes even on Windows, so `os.path.join` produced `C:/Users/.../runtime\instances\<uuid>\kernel.json` - accepted by Windows, and wrong in the one field that exists to be copied into a `jupyter console --existing` command. And the pre-instance `envRoot/kernel.json` is deleted when found, because every environment root built before this has one and nothing writes it any more: left alone it is the path Phase 1 told people to attach to, now naming a kernel that stopped days ago.
 
+#### The `studio` command
+
+Multi-instance is not an alternative to multi-file - the two are orthogonal. Multi-file is one project with many files; multi-instance is several projects open at once. A build123d project is normally a hierarchy of files under one root, and the workflow that matters is a large assembly open beside the self-contained components it is built from. Tabs do not serve that, and neither does one window. Group 4 made a second instance safe, and that turned out to be the whole of it - every port has been OS-assigned since Phase 1, so nothing else was in the way.
+
+What was left was a way in from outside the application. It was written down as a V2 item and turned out to be small enough to do here, once `--list` and desktop integration were dropped from it - see the end of this section for why each went.
+
+**One rule, and the command line collapses into it: open this path, defaulting to the current directory.** `studio` and `studio .` are the same thing. `studio /path/to/folder` opens that folder. `studio main.py` opens the file *and its containing folder as the project*, which is what makes the kernel's working directory the one the command was typed in - group 2 already decided the working directory is the project root, so opening the folder is how a file argument gets that behaviour rather than a third rule about working directories being invented for it. Every form starts a new instance, so there are never tabs to discard and the context-reset semantics of Open Folder cost nothing here.
+
+**No argument means a double-click, which restores the previous session.** That falls out rather than being detected: the script always passes an absolute path, so the frontend's whole rule is "a path in `NL_ARGS` means open it, no path means restore". An argument replaces the restore instead of joining it, because restoring five files and then opening a folder - which closes them all again - would be silly.
+
+**The script resolves the path before launching, and that is not a nicety.** `studio .` means something only relative to the shell's working directory, and the application will not have it: on macOS `open` launches through LaunchServices, which starts the process from `/`. An unresolved `.` opens the wrong folder silently.
+
+**It is copied onto the user's PATH, not installed.** Installing from the UI would mean writing outside our own directory and, on the directories people actually have on PATH, asking for a password - for a convenience. So the launcher ships beside the binary and the release notes say to copy it.
+
+That is also why it cannot find the application from its own location: once copied it has no relationship to the bundle it came from. Searching the usual install locations works on macOS and nowhere else - a Windows package is unzipped wherever the user felt like it, and an AppImage lives anywhere at all. **So the application records its own location on every start and the script reads that**, which means it must be run once first. Recording on every start rather than once is what makes moving the application fix itself; two installations disagree, and the most recently started wins, which is the only answer available without asking the user which one they meant. On Linux it is AppRun that records the path, because `$APPIMAGE` is the only durable name the application has there - the staged resource directory is symlinks into a mount that is gone once the process exits.
+
+**Not built, and each for a reason.** `studio --list` would name the live instances and their connection files, and the data is all there - group 4's per-instance directory and lock file are exactly what it would read. It is out because liveness means taking each lock, which is awkward from a shell script, and the About dialog already names this instance's connection file. Desktop integration, so double-clicking a `.py` opens it here, is out until somebody asks: it is per-platform registration work, and the command above already covers opening a project deliberately.
+
+**One gap that stays.** On Windows and Linux, running the executable again gives a second instance. On macOS it does not - LaunchServices activates the existing window - so `studio` is the only route to a second instance there. Which raises its value on macOS rather than lowering it, but it does mean the platforms differ in how a second window is reached.
+
 ### 5. Config dialog: extra packages, and editing the shortcuts
 
 - Rename from Packages to Settings
@@ -387,19 +407,9 @@ Write a comprehensive feature test suite: the panes, the editor, the viewer and 
 
 Its own phase, and after the whole of Phase 4, which is the rhythm this project already has: Phase 1 built, Phase 2 reviewed what it had built, Phase 3 tested the layer everything else is diagnosed through. A feature suite wants the features to have stopped moving, and the last thing Phase 4 does is change what `show` means.
 
-The alternative considered and rejected: writing the half that does not touch the viewer - editor, panes, workflows - before group 7, as a regression net for the restructure. It reads well and does not survive the detail. Group 7 changes the viewer's semantics *deliberately* - every `show` reading the tree status first and reapplying it afterwards - so tests written against today's behaviour would be updated by design rather than catching anything, and a suite that has to be rewritten to go green teaches everyone to rewrite it.
+The alternative considered and rejected: writing the half that does not touch the viewer - editor, panes, workflows - before group 7, as a regression net for the restructure. It reads well and does not survive the detail. Group 7 changes the viewer's semantics _deliberately_ - every `show` reading the tree status first and reapplying it afterwards - so tests written against today's behaviour would be updated by design rather than catching anything, and a suite that has to be rewritten to go green teaches everyone to rewrite it.
 
 What this phase has to reach that nothing does today is the part Phase 3 explicitly left out. Phase 3's harnesses drive the sidecar over its WebSocket, which is the right layer for ipc and threading and the wrong one for "the dirty dot appeared on the tab". Several of Phase 4's defects were found only because the application was built and used by hand - a splitter with no width, a chevron with no glyph, a dirty mark a tick early - and deciding which of those a suite can honestly reach, and which stay a human test script, is the first question this phase answers rather than assumes.
-
-## V2
-
-### Multi-instance, as a feature
-
-Group 4 makes a second instance safe; this makes it something anyone would ask for. It is not an alternative to multi-file - the two are orthogonal, and multi-file landing in group 2 is what lets this wait. Multi-file is one project with many files; multi-instance is several projects open at once. A build123d project is normally a hierarchy of files under one root, and the workflow that matters is a large assembly open beside the self-contained components it is built from. Tabs do not serve that, and neither does one window. It is also what an editor is expected to do: browsers and VS Code both do it.
-
-What is left once group 4 has landed is a way in from outside the application, and it is packaging work on three platforms rather than design.
-
-**Command line tool.** `studio <file>` and `studio <folder>` open a new instance on that file or folder, installable from a menu entry. `studio --list` names the live instances and their connection files, which is where a user would ask the "which namespace" question - group 4's per-instance directory and lock file are exactly what it reads, so the answer is already true by then. This is also the natural entry point for the desktop integration that makes double-clicking a `.py` file open it here.
 
 ## BUGS:
 

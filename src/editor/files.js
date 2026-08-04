@@ -129,13 +129,27 @@ export async function openFolder() {
   if (!(await closeEveryTab())) {
     return false;
   }
+  await showFolderAt(chosen);
+  return true;
+}
+
+/**
+ * Make a known folder the project, with no chooser and no discard prompt.
+ *
+ * Split out of openFolder for the command line, where the path is already
+ * decided and there is nothing to discard - `studio` always launches a new
+ * instance, so the window it opens has no tabs to ask about. Deliberately does
+ * not prompt: a function that silently skips confirmation is fine only because
+ * every caller reaching it has already established there is nothing to lose,
+ * and openFolder above still asks before it gets here.
+ */
+export async function showFolderAt(chosen) {
   folder = chosen;
   await showFolder(chosen);
   syncKernelDirectory();
   await setSetting(LAST_FOLDER_KEY, chosen);
   await saveWorkspace();
   log.info("Opened folder", chosen);
-  return true;
 }
 
 /** Close the project: the tree, the tabs and the working directory with it. */

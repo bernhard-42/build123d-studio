@@ -24,6 +24,10 @@ import pins from "./pins.json";
 
 const APP_DIR_NAME = "build123d-studio";
 
+// Read by the `studio` script, which cannot find the application any other way
+// once it has been copied onto the user's PATH. See recordAppLocation.
+const APP_LOCATION_FILE = "app-location";
+
 let appDirCache = null;
 let appDataCache = null;
 let envRootCache = null;
@@ -68,6 +72,29 @@ export async function appDataDir() {
     appDataCache = root;
   }
   return appDataCache;
+}
+
+/**
+ * Record where this application is installed, for the `studio` command.
+ *
+ * The script is meant to be copied onto the user's PATH, which is exactly what
+ * stops it working out the application's location from its own: once copied it
+ * has no relationship to the bundle it came from. Searching the usual install
+ * locations would work on macOS and nowhere else - a Windows package is
+ * unzipped wherever the user felt like it, and an AppImage lives anywhere at
+ * all - so the application says where it is instead, on every start, and the
+ * script reads that.
+ *
+ * Written on every start rather than once, so moving the application fixes
+ * itself the next time it runs. Two instances write the same value; the last
+ * one wins and they agree. Two *different* installations do not agree, and the
+ * most recently started wins, which is the only answer that can be given
+ * without asking the user which one they meant.
+ */
+export async function recordAppLocation() {
+  const path = `${await appDataDir()}/${APP_LOCATION_FILE}`;
+  await filesystem.writeFile(path, await appDir());
+  return path;
 }
 
 /**
