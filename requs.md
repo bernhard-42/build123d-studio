@@ -413,9 +413,11 @@ Recording uses `event.code` rather than `event.key`, because `key` carries the *
 
 Saving disposes the editor's actions and registers them again, because Monaco cannot alter a keybinding in place and without the dispose a *moved* shortcut leaves the old chord live alongside the new one, which looks like the dialog did nothing. A command returned to its defaults is stored as absent rather than as a copy, so a later release that changes a default still moves it for anyone who never touched it.
 
-**Not built, deliberately.** Conflict detection against Monaco's own built-in bindings, which requs.md asked for: it means reading a keybinding registry that is version-dependent internals rather than a documented API, and the answer changes with every Monaco upgrade. Our own conflicts are detected properly instead.
+**Not built, and decided rather than deferred.** Conflict detection against Monaco's own built-in bindings, which the bullets above asked for, is not wanted: it means reading a keybinding registry that is version-dependent internals rather than a documented API, and the answer would change with every Monaco upgrade. Our own conflicts are detected properly instead.
 
-**Left open.** A local checkout installs as a built copy rather than an editable one. `{ path = "…", editable = true }` would make edits take effect without Re-install, which is probably what anyone developing build123d wants; Re-install stays useful either way, and the choice has not been made.
+**A local checkout is installed editable**, both for build123d and for a path in the additional-packages field, because that is what choosing a working copy means - what you edit is what runs. Verified rather than assumed: uv records it as `source = { editable = "…" }` in the lock, and an edit to the source is live in the environment with no further command. `editable` has to be written as a bare TOML boolean; `editable = "true"` is a string and uv rejects it. Re-install keeps its purpose, which narrows to metadata changes - a new dependency or entry point - rather than ordinary code edits.
+
+**A relative path in that field is refused.** It is a dialog, not a shell, so there is no working directory it could be relative to; uv resolves one against the project root, which is the environment under the per-user app-data directory. Measured on a real entry: `../../Development/CAD/bd_warehouse` resolves under `Application Support` and does not exist. Refused rather than left to uv, because the case that fails is not the dangerous one - the dangerous one is a relative path that finds a different directory of the same name.
 
 ### 6. Inspecting while the kernel is busy
 

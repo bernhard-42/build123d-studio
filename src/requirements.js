@@ -41,6 +41,11 @@ function looksLikePath(text) {
   );
 }
 
+/** Whether a path needs a working directory or a home directory to make sense. */
+function relative(text) {
+  return text.startsWith("./") || text.startsWith("../") || text.startsWith("~/");
+}
+
 function looksLikeGit(text) {
   return (
     text.startsWith("git+") ||
@@ -111,7 +116,22 @@ export function parseRequirements(text) {
       const { name } = inferName(raw);
       at.name = name;
       at.requirement = name;
-      at.source = { path: raw };
+      // A relative path has nothing to be relative to here.
+      //
+      // This is a field in a dialog, not a shell, so there is no working
+      // directory the user could mean. uv resolves it against the project root,
+      // which is the environment under the per-user app-data directory - so
+      // "../../src/mylib" points somewhere nobody intended. Refused rather than
+      // left to fail, because the dangerous case is not the one that fails: it
+      // is the one that resolves to a directory which happens to exist.
+      if (relative(raw)) {
+        at.error = "give the full path - a relative one has nothing to be relative to here";
+      }
+      // Editable, because a folder is a working copy: pointing at one and then
+      // having to re-install after every edit is not what anybody means by it.
+      // uv records this as `source = { editable = "…" }` and the checkout is
+      // live in the environment.
+      at.source = { path: raw, editable: true };
     } else if (looksLikeGit(raw)) {
       const { name, ref } = inferName(raw);
       at.name = name;
@@ -126,7 +146,7 @@ export function parseRequirements(text) {
     if (at.name === null || at.name === "") {
       at.error = "cannot tell which package this is";
       at.name = null;
-    } else {
+    } else if (at.error === null) {
       at.key = normalizeName(at.name);
     }
     entries.push(at);
@@ -263,7 +283,11 @@ export function renderRequirements(entries) {
       continue;
     }
     const fields = Object.entries(entry.source)
-      .map(([key, value]) => `${key} = ${tomlString(value)}`)
+      .map(([key, value]) =>
+        // A TOML boolean is bare; only strings are quoted. `editable = "true"`
+        // is a string and uv rejects it.
+        typeof value === "boolean" ? `${key} = ${value}` : `${key} = ${tomlString(value)}`,
+      )
       .join(", ");
     sources.push(`${entry.name} = { ${fields} }`);
   }

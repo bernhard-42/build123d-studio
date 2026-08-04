@@ -34,13 +34,19 @@ test("a local path becomes a named dependency plus a path source", () => {
   const [entry] = parseRequirements("/Users/bernhard/Development/CAD/mylib");
   assert.equal(entry.name, "mylib");
   assert.equal(entry.requirement, "mylib");
-  assert.deepEqual(entry.source, { path: "/Users/bernhard/Development/CAD/mylib" });
+  assert.deepEqual(entry.source, {
+    path: "/Users/bernhard/Development/CAD/mylib",
+    editable: true,
+  });
 });
 
 test("a Windows path is recognised as a path, not a requirement", () => {
   const [entry] = parseRequirements("C:\\Users\\bernhard\\src\\mylib");
   assert.equal(entry.name, "mylib");
-  assert.deepEqual(entry.source, { path: "C:\\Users\\bernhard\\src\\mylib" });
+  assert.deepEqual(entry.source, {
+    path: "C:\\Users\\bernhard\\src\\mylib",
+    editable: true,
+  });
 });
 
 test("a git URL becomes a named dependency plus a git source", () => {
@@ -155,7 +161,7 @@ test("rendering produces dependency lines and source entries", () => {
     '    "other",',
   ]);
   assert.deepEqual(sources, [
-    'mylib = { path = "/Users/me/src/mylib" }',
+    'mylib = { path = "/Users/me/src/mylib", editable = true }',
     'other = { git = "git+https://github.com/someone/other", rev = "main" }',
   ]);
 });
@@ -222,4 +228,36 @@ test("a file with no dependencies array is refused rather than mangled", () => {
 test("normalizeName follows PEP 503", () => {
   assert.equal(normalizeName("OCP_Tessellate"), "ocp-tessellate");
   assert.equal(normalizeName("a.._-.b"), "a-b");
+});
+
+test("a relative path is refused, because nothing here is relative to anything", () => {
+  // uv resolves it against the project root, which is the environment under the
+  // app-data directory. The dangerous case is not the one that fails - it is
+  // "../../src/mylib" resolving to a directory that happens to exist.
+  for (const path of ["./mylib", "../mylib", "../../Development/CAD/bd_warehouse", "~/src/mylib"]) {
+    const [entry] = parseRequirements(path);
+    assert.notEqual(entry.error, null, `${path} must be refused`);
+    assert.match(entry.error, /full path/);
+  }
+});
+
+test("an absolute path is still fine, on both platforms", () => {
+  for (const path of ["/Users/me/src/mylib", "C:\\Users\\me\\src\\mylib"]) {
+    const [entry] = parseRequirements(path);
+    assert.equal(entry.error, null, `${path} must be accepted`);
+    assert.equal(entry.source.editable, true);
+  }
+});
+
+test("a refused path contributes nothing to the file", () => {
+  const { dependencies, sources } = renderRequirements(parseRequirements("../mylib\n/tmp/other"));
+  assert.deepEqual(dependencies, ['    "other",']);
+  assert.deepEqual(sources, ['other = { path = "/tmp/other", editable = true }']);
+});
+
+test("editable is written as a TOML boolean, not a string", () => {
+  // `editable = "true"` is a string and uv rejects it.
+  const { sources } = renderRequirements(parseRequirements("/tmp/mylib"));
+  assert.match(sources[0], /editable = true\b/);
+  assert.equal(sources[0].includes('"true"'), false);
 });

@@ -194,7 +194,12 @@ export async function renderPyproject(selection = sources, extras = customPackag
       // A local choice with no path chosen yet is not an error worth failing a
       // start over - it simply has nothing to redirect, so the declared version
       // applies as it would on PyPI.
-      return path === "" ? [] : [`${p.name} = { path = ${tomlString(path)} }`];
+      // Editable: a local checkout is a working copy, and the whole point of
+      // choosing one is that what you edit is what runs. Re-install is still
+      // there for the times metadata changes rather than code.
+      return path === ""
+        ? []
+        : [`${p.name} = { path = ${tomlString(path)}, editable = true }`];
     }
     return [];
   });

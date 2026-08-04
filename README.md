@@ -29,7 +29,7 @@ Upgrade        [ Upgrade packages ]
 | --- | --- |
 | **Apply** | Saves every field and closes. Touches nothing else — no uv, no kernel restart. |
 | **Install packages** | Saves, then makes the environment match what is declared: `uv lock` then `uv sync`. Adds what is new and leaves every already-locked package where it is. |
-| **Re-install build123d** | Saves, then `uv sync --reinstall-package build123d`. For a local checkout: uv installs a `path` source as a built copy, so editing your source tree changes nothing until it is installed again — and since the lock has not changed, an ordinary Install is a no-op. This is the only thing that picks up your edits. |
+| **Re-install build123d** | Saves, then `uv sync --reinstall-package build123d`. A local checkout is installed *editable*, so ordinary code edits are already live and this is not needed for them — it is for when the package's own metadata changes, such as a new dependency or entry point. |
 | **Upgrade packages** | Saves, then `uv lock --upgrade` then `uv sync`. Every package moves as far as its own version range allows. Anything pinned to an exact version cannot move, which is what holds the viewer's packages still. |
 
 Saving without installing is coherent: the application runs `uv sync` on every launch, so a change that was applied but not installed simply lands at the next start.
@@ -40,10 +40,12 @@ One requirement per line. The line itself says where the package comes from — 
 
 ```
 ocp-widgets>=0.3                              PyPI, with or without a version range
-/Users/me/src/mylib                           a local checkout
+/Users/me/src/mylib                           a local checkout, installed editable
 git+https://github.com/someone/mylib@main     a git repository
 mylib @ git+https://github.com/x/python-lib   named explicitly
 ```
+
+A local checkout is installed editable, so what you edit is what runs. Give the full path: this is a dialog rather than a shell, so `../src/mylib` has nothing to be relative to and is refused — uv would resolve it against the environment directory, and the bad case is not the one that fails but the one that finds a different directory of the same name.
 
 The name is taken from the last path segment when it is not given, which is right for most repositories and wrong whenever the distribution is not named after its folder — `python-foo` shipping `foo`. The `name @ source` form is the way to say so.
 
