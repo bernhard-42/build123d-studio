@@ -36,9 +36,9 @@ class CompletionTest(unittest.TestCase):
         """Not as an execute_request, which would run the line being typed.
 
         The failure this excludes is not subtle in its consequences: the shell
-        channel's only send used to be client.execute, so a completion routed
-        through it would execute "part.appen" - or, with a half-typed line,
-        whatever that happens to mean.
+        channel only ever built execute_requests, so a completion routed through
+        it would execute "part.appen" - or, with a half-typed line, whatever
+        that happens to mean.
         """
         content = self.kernel.complete("part.appen", 10, timeout=ANSWER_TIMEOUT)
 

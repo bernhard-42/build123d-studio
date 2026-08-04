@@ -17,6 +17,7 @@ at all before: expanding a row showed one level of reprs and stopped.
 
 import json
 import sys
+import threading
 import unittest
 
 from build123d_studio import inspector
@@ -79,7 +80,14 @@ class _Assembly:
         return len(self._topology)
 
 
-class InspectorTest(unittest.TestCase):
+class NamespaceFixture:
+    """__main__'s namespace, lent to a test and given back.
+
+    A mixin rather than a base test case: subclassing one TestCase from another
+    re-runs every test in the parent, which is how 44 duplicate results appeared
+    the first time the concurrency tests were added.
+    """
+
     def setUp(self):
         # The inspector reads __main__'s namespace, which under unittest is the
         # runner's. Restored afterwards so one test cannot leak into another.
@@ -100,6 +108,8 @@ class InspectorTest(unittest.TestCase):
     def variables(self):
         return {row["name"]: row for row in json.loads(inspector.variables())}
 
+
+class InspectorTest(NamespaceFixture, unittest.TestCase):
     # --- what can be opened ---
 
     def test_only_rows_that_lead_somewhere_offer_to_open(self):
@@ -575,6 +585,93 @@ class InspectorTest(unittest.TestCase):
 
     def test_an_empty_path_is_answered_rather_than_raised(self):
         self.assertIn("error", self.detail([]))
+
+
+class ConcurrentMutationTest(NamespaceFixture, unittest.TestCase):
+    """Reading a namespace that the kernel is writing at the same time.
+
+    New in kind with subshells. Until an inspection could overtake the code the
+    kernel is running, this module only ever saw a namespace standing still -
+    the kernel was idle by definition, because the request that woke it was the
+    inspection. Now a cell binding a name or appending to a dict is genuinely
+    concurrent, and CPython raises RuntimeError for exactly that.
+
+    Race widening, the technique Phase 3 used, in the one form available here.
+    A thread that merely mutates loses nothing at all - measured, 0 out of 300 -
+    because between two steps of the read the interpreter has no reason to
+    switch threads. sys.setswitchinterval at a microsecond gives it one on
+    almost every bytecode, which turns a window of microseconds into something
+    lost about a third of the time. The churn also has to *grow* the container
+    rather than add and remove: CPython compares the size now against the size
+    when the iterator was made, so an add paired with a pop restores it and the
+    check passes. Both of those were wrong in the first version of this test,
+    and it passed against the unfixed code because of it.
+
+    What is asserted is that no call returns a *wrong* answer - either it reads
+    the dict, or it says the dict is changing. Silently reporting a dict that is
+    being filled as having no children is the failure this excludes, and it is
+    what the code did before.
+    """
+
+    ROUNDS = 300
+
+    # Small enough that a page is one page, large enough that reading it takes
+    # long enough to be interrupted.
+    SIZE = 2000
+
+    def churn(self, target):
+        """Grow something until told to stop."""
+        stop = threading.Event()
+
+        def run():
+            counter = 0
+            while not stop.is_set():
+                counter += 1
+                target(counter)
+
+        original = sys.getswitchinterval()
+        sys.setswitchinterval(1e-6)
+        self.addCleanup(sys.setswitchinterval, original)
+        worker = threading.Thread(target=run, name="churn", daemon=True)
+        worker.start()
+        self.addCleanup(worker.join)
+        self.addCleanup(stop.set)
+
+    def test_expanding_a_dict_being_filled_says_so_rather_than_saying_empty(self):
+        """The wrong answer this excludes is "no children", which is a lie."""
+        filling = {f"n{i}": i for i in range(self.SIZE)}
+        self.given(filling=filling)
+        self.churn(lambda counter: filling.__setitem__(f"g{counter}", counter))
+
+        lost = 0
+        for _ in range(self.ROUNDS):
+            answer = self.detail(["filling"])
+            if answer.get("error") == inspector.MUTATING:
+                lost += 1
+                continue
+            # Read cleanly, so it must actually carry children rather than
+            # having quietly decided the dict has none.
+            self.assertIn("children", answer, "a dict with entries reported none")
+        # The widening is what makes this assertable. Without a loss the run
+        # proves nothing, and a run that proves nothing must say so rather than
+        # pass: that is precisely how the first version of this test came to
+        # certify code it never exercised.
+        self.assertGreater(lost, 0, "the race was never lost, so nothing was tested")
+
+    def test_an_object_that_raises_a_runtime_error_of_its_own_is_not_called_a_mutation(self):
+        """The discrimination is by type, and this is why it has to be.
+
+        A hostile __getitem__ raising RuntimeError already had an answer - that
+        it could not be read - and calling that "changing while the kernel runs"
+        would be a worse message than the one it replaced, not a better one.
+        """
+        class Hostile(list):
+            def __getitem__(self, index):
+                raise RuntimeError("changed size during iteration")
+
+        self.given(hostile=Hostile([1, 2, 3]))
+
+        self.assertNotEqual(self.detail(["hostile", 0]).get("error"), inspector.MUTATING)
 
 
 if __name__ == "__main__":

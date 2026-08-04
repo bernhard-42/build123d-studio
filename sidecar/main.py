@@ -154,12 +154,14 @@ class Sidecar:
             on_exit=lambda code: self.channel.send("debug.exited", code=code),
         )
 
-        # Whether the kernel is part-way through something. Completion asks the
-        # kernel only when it is not: it serves shell requests serially, so a
-        # request sent during a cell waits for the cell, and a suggestion list
-        # that arrives thirty seconds late is worse than one built from the file
-        # alone. Known exactly rather than guessed at - the same busy and idle
-        # this class already forwards to the toolbar.
+        # Whether the kernel is part-way through something. Read by completion,
+        # which against a kernel with no subshell asks only when it is not: one
+        # shell serves requests serially, so a request sent during a cell waits
+        # for the cell, and a suggestion list that arrives thirty seconds late
+        # is worse than one built from the file alone. Where there is a subshell
+        # the question can be asked regardless - see _live_completions. Known
+        # exactly rather than guessed at, from the same busy and idle this class
+        # already forwards to the toolbar.
         self._kernel_busy = threading.Event()
 
         # The fallback timer that warms the kernel if the console never speaks.
@@ -490,9 +492,10 @@ class Sidecar:
             if parent_type != "execute_request":
                 return
 
-            # Read by completion, which asks the kernel only when it is idle.
-            # Set from the same messages the toolbar is driven by, so what
-            # completion believes and what the user is looking at cannot differ.
+            # Read by completion, which without a subshell asks the kernel only
+            # when it is idle. Set from the same messages the toolbar is driven
+            # by, so what completion believes and what the user is looking at
+            # cannot differ.
             if state == "busy":
                 self._kernel_busy.set()
             elif state == "idle":
@@ -770,17 +773,27 @@ class Sidecar:
     def _live_completions(self, source, line, column):
         """What the kernel knows, or nothing when it is in no position to say.
 
-        Skipped outright while the kernel is busy rather than asked with a short
-        timeout. The kernel serves shell requests serially, so during a cell the
-        answer is not late, it is unavailable - and waiting to discover that
-        would delay the static half, which is sitting ready.
+        A busy kernel used to be skipped outright rather than asked with a short
+        timeout: it serves shell requests serially, so during a cell the answer
+        was not late, it was unavailable - and waiting to discover that would
+        have delayed the static half, which is sitting ready. The cost was that
+        a long tessellation took the live half of every suggestion list with it,
+        which is most of the value on the objects this application is about.
+
+        A subshell answers from a thread of its own, so the question can now be
+        asked while a cell runs - measured at 0.01 s against a kernel ten
+        seconds from finishing, with 127 matches for "b." on a live Box. The
+        gate stays for the kernel that has none, where the old reasoning is
+        still exactly right.
 
         The kernel is asked about the line rather than the file: it completes
         against a namespace, not a syntax tree, and IPython completes a line at
         its own prompt. It also bounds what a keystroke costs on a path where
         the file does not.
         """
-        if self.kernel is None or self._kernel_busy.is_set():
+        if self.kernel is None:
+            return []
+        if self._kernel_busy.is_set() and not self.kernel.has_subshell():
             return []
 
         lines = source.split("\n")

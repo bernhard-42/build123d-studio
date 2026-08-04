@@ -35,7 +35,12 @@ from channel import log
 
 # What one kernel's worth of state looks like to the thread that reads it. See
 # Kernel._generation.
-Generation = collections.namedtuple("Generation", "manager client stop shell")
+#
+# ``subshell`` is this kernel's subshell id, or None where there is none. It
+# belongs here rather than on Kernel for the same reason the client does: a
+# retired thread holding an old generation must not be able to route a request
+# to an id that belonged to a kernel which no longer exists.
+Generation = collections.namedtuple("Generation", "manager client stop shell subshell")
 
 # How long a restart waits for the previous pump to notice it should stop. The
 # pump polls iopub in half-second slices, so it normally exits well inside this;
@@ -75,6 +80,17 @@ COMPLETE_TIMEOUT = 5
 KIND_EXECUTE = "execute"
 KIND_COMPLETE = "complete"
 
+# How long the kernel is given to answer create_subshell_request at startup.
+# Generous for a round trip that is milliseconds in practice, and paid once per
+# kernel: ipykernel serves the control channel on a thread of its own that
+# nothing is allowed to block, so a kernel which has just answered kernel_info
+# and does not answer this has no subshells rather than a slow control channel.
+SUBSHELL_TIMEOUT = 5
+
+# How long each poll for that reply waits. Only the granularity of the deadline
+# above; the control channel is quiet at this point in startup.
+SUBSHELL_TICK = 0.2
+
 
 class KernelUnavailable(RuntimeError):
     """Raised when there is no kernel to send to, and waiting will not help."""
@@ -99,15 +115,24 @@ class Request:
     complete_request, on the same socket, answered on the same channel and
     routed by the same msg_id. The kind is carried rather than inferred because
     the only place that may act on it is the owning thread.
+
+    ``subshell_id`` says which shell inside the kernel serves it - a subshell,
+    or None for the main one. Resolved at submit time from the current
+    generation rather than read off self when the message is built, so a request
+    carries the kernel it was meant for.
     """
 
-    __slots__ = ("kind", "code", "kwargs", "internal", "msg_id", "sent", "reply")
+    __slots__ = (
+        "kind", "code", "kwargs", "internal", "subshell_id", "msg_id", "sent", "reply",
+    )
 
-    def __init__(self, code, kwargs, internal, want_reply, kind=KIND_EXECUTE):
+    def __init__(self, code, kwargs, internal, want_reply, kind=KIND_EXECUTE,
+                 subshell_id=None):
         self.kind = kind
         self.code = code
         self.kwargs = kwargs
         self.internal = internal
+        self.subshell_id = subshell_id
         self.msg_id = None
         self.sent = concurrent.futures.Future()
         self.reply = concurrent.futures.Future() if want_reply else None
@@ -329,15 +354,15 @@ class Kernel:
         # Bounded: only recent ids can still be referenced by in-flight traffic.
         self._internal_requests = collections.deque(maxlen=64)
 
-        # Guards the deque above, and it is the ordering rather than the deque
-        # that needs guarding.
+        # Guards the deque above: the shell thread appends to it and the iopub
+        # pump reads it.
         #
-        # The id used to be recorded after the send returned, which leaves a gap
-        # the kernel can answer inside: it publishes busy for a request the pump
-        # then fails to recognise as ours, because the id is not in the deque
-        # yet. The refresh that follows every idle is the one that hits it, and
-        # a leaked pair is visible in any Windows log of the period as a busy
-        # and an idle a millisecond apart, right after the warm-up:
+        # The id used to be recorded after the send returned, which left a gap
+        # the kernel could answer inside: it publishes busy for a request the
+        # pump then fails to recognise as ours, because the id is not in the
+        # deque yet. The refresh that follows every idle is the one that hit it,
+        # and a leaked pair is visible in any Windows log of the period as a
+        # busy and an idle a millisecond apart, right after the warm-up:
         #
         #     17:41:38.520  Kernel busy
         #     17:41:38.521  Kernel idle
@@ -346,10 +371,12 @@ class Kernel:
         # activity and queues another - the exact loop the deque exists to
         # prevent, arrived at by losing a race rather than by forgetting.
         #
-        # The send and the record happen together, and is_internal takes this
-        # too, so the pump cannot read the deque in between. Held only by the
-        # shell thread while it sends, and by whoever asks - never across a wait
-        # for anything, because the pump is what tells the toolbar anything and
+        # That gap was first closed by holding this lock across the send as well
+        # as the record, so the pump could not read the deque in between. It is
+        # now closed by there being no gap: the message is built before it is
+        # sent, so the id is known and recorded while the request is still in
+        # this process. The lock covers the deque and nothing else, and is never
+        # held across a send - the pump is what tells the toolbar anything, and
         # parking it stops the application saying what it is doing.
         self._internal_lock = threading.Lock()
 
@@ -363,6 +390,42 @@ class Kernel:
         self._warm_msg_id = None
         self._warm_started = None
 
+    def _build_message(self, client, request):
+        """One shell message, built rather than asked for.
+
+        jupyter_client's ``execute()`` and ``complete()`` do exactly this - the
+        content dict below mirrors KernelClient.execute field for field,
+        allow_stdin included, because user code calling input() has to keep
+        working - and then keep the message to themselves, handing back only the
+        msg_id once it is on the wire.
+
+        Building it here changes nothing about what goes out and buys two
+        things. The msg_id exists before anything is sent, which is what closes
+        the internal-request window in _send_and_record. And there is somewhere
+        to put a header field, which is what routing a request to a subshell
+        needs and what no argument in jupyter_client 8.9.1 offers.
+        """
+        if request.kind == KIND_COMPLETE:
+            content = {"code": request.code, "cursor_pos": request.kwargs["cursor_pos"]}
+            message = client.session.msg("complete_request", content)
+        else:
+            content = {
+                "code": request.code,
+                "silent": request.kwargs.get("silent", False),
+                "store_history": request.kwargs.get("store_history", True),
+                "user_expressions": request.kwargs.get("user_expressions") or {},
+                "allow_stdin": client.allow_stdin,
+                "stop_on_error": True,
+            }
+            message = client.session.msg("execute_request", content)
+        if request.subshell_id is not None:
+            # The header field is the whole of the routing, and its absence is
+            # the whole of the fallback: no field means the main shell, which is
+            # what every request got before subshells existed and what they all
+            # get again against a kernel that has none.
+            message["header"]["subshell_id"] = request.subshell_id
+        return message
+
     def _send_and_record(self, client, request):
         """Put one request on the shell socket, and claim it if it is ours.
 
@@ -373,13 +436,22 @@ class Kernel:
 
         ``internal`` marks a request this class makes on its own behalf, and
         recording it is part of sending it rather than something a caller
-        remembers to do afterwards. The record is inside the same critical
-        section as the send because the kernel can answer in between: it
-        publishes busy for a request the pump then fails to recognise as ours,
-        the variable explorer treats its own refresh as user activity and queues
-        another, and the toolbar flickers a busy and an idle a millisecond
-        apart. Reproduced in tests/sidecar/test_kernel_restart.py, which
-        measured 100 misreadings in 100 attempts without this.
+        remembers to do afterwards. The kernel can answer the instant the
+        message is on the wire: it publishes busy for a request the pump then
+        fails to recognise as ours, the variable explorer treats its own refresh
+        as user activity and queues another, and the toolbar flickers a busy and
+        an idle a millisecond apart. Reproduced in
+        tests/sidecar/test_kernel_restart.py, which measured 100 misreadings in
+        100 attempts without this.
+
+        The record used to be made inside the same critical section as the send,
+        because the msg_id did not exist until the send returned. Now the
+        message is built first, so the id is known before anything is on the
+        wire and the record simply happens earlier: there is no window to hold a
+        lock across. _internal_lock still guards the deque itself, which is read
+        by the pump and written here, and nothing is held across a send any
+        more - parking the pump behind one is what stopped the application
+        saying what it was doing.
 
         Completions are internal for exactly that reason, and it is not a
         formality: the kernel publishes busy and idle for a complete_request the
@@ -388,17 +460,30 @@ class Kernel:
         matching note - the refresh it used to trigger is already gone, because
         that now waits for an idle whose parent was an execute_request.
         """
-        with self._internal_lock:
-            if request.kind == KIND_COMPLETE:
-                msg_id = client.complete(request.code, **request.kwargs)
-            else:
-                msg_id = client.execute(request.code, **request.kwargs)
-            if request.internal:
+        message = self._build_message(client, request)
+        msg_id = message["header"]["msg_id"]
+        if request.internal:
+            with self._internal_lock:
                 self._internal_requests.append(msg_id)
+        client.shell_channel.send(message)
         return msg_id
 
-    def _submit(self, code, internal=False, want_reply=False, kind=KIND_EXECUTE, **kwargs):
-        """Hand one execute_request to the current shell thread, or say there is none.
+    def _submit(self, code, internal=False, want_reply=False, kind=KIND_EXECUTE,
+                concurrent_ok=False, **kwargs):
+        """Hand one shell request to the current shell thread, or say there is none.
+
+        ``concurrent_ok`` says this request must not queue behind the user's
+        code - which, when the kernel has a subshell, is what routes it there.
+        It states the requirement rather than the mechanism, because the two
+        things that need it need it for the same reason and neither cares how it
+        is arranged: an inspection and a completion both answer a question about
+        a namespace, and neither changes anything.
+
+        Everything else stays on the main shell, and one of them has to. A Run,
+        the warm-up import and the chdir are ordered with respect to each other
+        by being served serially, and os.chdir is process-wide - moving it to a
+        subshell would change the working directory underneath a cell that is
+        already running.
 
         Refused rather than held, and that is a deliberate simplification. An
         earlier version waited out a restart so that a Run pressed a moment
@@ -425,7 +510,22 @@ class Kernel:
         generation = self._generation
         if generation is None:
             raise KernelUnavailable("there is no kernel")
-        return generation.shell.submit(Request(code, kwargs, internal, want_reply, kind=kind))
+        return generation.shell.submit(
+            Request(
+                code, kwargs, internal, want_reply, kind=kind,
+                subshell_id=generation.subshell if concurrent_ok else None,
+            )
+        )
+
+    def has_subshell(self):
+        """Whether inspecting this kernel can overtake the code it is running.
+
+        Read by completion, which asks the kernel only when an answer can
+        actually arrive. Against a kernel with no subshell that is "while it is
+        idle", exactly as before.
+        """
+        generation = self._generation
+        return generation is not None and generation.subshell is not None
 
     def _send_execute(self, code, internal=False, **kwargs):
         """Send, and wait only for it to have gone. Returns the msg_id.
@@ -505,6 +605,64 @@ class Kernel:
         manager.start_kernel(env=self.kernel_environment(), cwd=self.working_dir)
         return manager
 
+    def _create_subshell(self, client):
+        """Ask the kernel for a second thread over the same namespace.
+
+        JEP 91, and the reason the variable explorer stops lying while a cell
+        runs. The kernel serves one shell serially, so an inspection sent while
+        code is running waits in the kernel's own queue - measured against the
+        pinned ipykernel 7.3.0 with a ten second cell in flight: 9.57 s on the
+        main shell against 0.01 s on a subshell, for the identical silent
+        execute_request carrying user_expressions that the explorer sends.
+
+        On the control channel, which is where the messaging spec puts it and
+        which ipykernel serves on a thread that nothing else may block. This is
+        the only thing in the sidecar that uses that channel - KernelManager's
+        shutdown opens a control socket of its own - and it is used only from
+        start(), which restart() serialises, so the one-owning-thread rule that
+        ShellChannel exists for holds here without a thread to own it.
+
+        None for every failure, and None is not a failure mode so much as the
+        other configuration: no subshell id means no header field, which means
+        the main shell, which is what this application did until now. The
+        reasons are logged individually because "the explorer was slow again"
+        has to be answerable afterwards from the log alone.
+
+        Deliberately never deleted. delete_subshell_request exists, and there is
+        nothing for it to do here: a restart shuts the kernel process down
+        completely rather than reusing it, so the subshell goes with the process
+        it lived in, and asking would only add a call that can fail on the way
+        out.
+        """
+        message = client.session.msg("create_subshell_request", {})
+        try:
+            client.control_channel.send(message)
+        except Exception as exc:  # noqa: BLE001 - a kernel without subshells is not a crash
+            log(f"No subshell: create_subshell_request could not be sent: {exc}")
+            return None
+
+        deadline = time.monotonic() + SUBSHELL_TIMEOUT
+        while time.monotonic() < deadline:
+            try:
+                reply = client.get_control_msg(timeout=SUBSHELL_TICK)
+            except queue.Empty:
+                continue
+            except Exception as exc:  # noqa: BLE001
+                log(f"No subshell: the control channel could not be read: {exc}")
+                return None
+            if reply["parent_header"].get("msg_id") != message["header"]["msg_id"]:
+                continue
+            content = reply.get("content", {})
+            if content.get("status") != "ok":
+                log(f"No subshell: the kernel refused with {content.get('status')!r}")
+                return None
+            subshell_id = content.get("subshell_id")
+            log(f"Kernel subshell {subshell_id} created for inspection and completion")
+            return subshell_id
+
+        log(f"No subshell: the kernel did not answer within {SUBSHELL_TIMEOUT}s")
+        return None
+
     def start(self):
         self.manager = self.new_manager()
         self.client = self.manager.client()
@@ -518,6 +676,10 @@ class Kernel:
             client=self.client,
             stop=threading.Event(),
             shell=shell,
+            # Before the generation is published rather than after, so there is
+            # no window in which a request could be routed to the main shell
+            # only because the answer had not arrived yet.
+            subshell=self._create_subshell(self.client),
         )
         self._generation = generation
         shell.start()
@@ -711,6 +873,7 @@ class Kernel:
                 "",
                 internal=True,
                 want_reply=True,
+                concurrent_ok=True,
                 silent=True,
                 store_history=False,
                 user_expressions={"value": expression},
@@ -783,6 +946,7 @@ class Kernel:
                 internal=True,
                 want_reply=True,
                 kind=KIND_COMPLETE,
+                concurrent_ok=True,
                 cursor_pos=cursor_pos,
             )
         except KernelUnavailable as exc:
@@ -795,13 +959,15 @@ class Kernel:
             request.sent.result(timeout=SEND_TIMEOUT)
             reply = request.reply.result(timeout=timeout)
         except concurrent.futures.TimeoutError:
-            # Not an error, and deliberately not logged as one. The ordinary way
-            # here is a kernel part-way through a cell: it serves shell requests
-            # serially, so a completion asked while code is running waits for the
-            # code. That is the defect group 7 is about, and subshells are the
-            # answer to it; until then the suggestion list stays empty rather
-            # than arriving after the moment it was for.
-            log(f"Completion timed out after {timeout}s; the kernel is busy")
+            # Not an error, and deliberately not logged as one. This used to be
+            # the ordinary way here - a kernel part-way through a cell serves
+            # shell requests serially, so a completion asked while code was
+            # running waited for the code - and a subshell is what took that
+            # away: it answers from a thread of its own, in a hundredth of a
+            # second, whatever the main shell is doing. What is left is a kernel
+            # that has genuinely stopped answering, where an empty suggestion
+            # list is still better than a late one.
+            log(f"Completion timed out after {timeout}s")
             return None
         except KernelUnavailable as exc:
             log(f"Completion abandoned: {exc}")

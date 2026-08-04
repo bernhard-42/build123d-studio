@@ -70,6 +70,19 @@ KIND_MODEL = 2
 READY_TIMEOUT = 180
 ACTION_TIMEOUT = 120
 
+# How long the cell that holds the kernel busy runs for. Long enough that an
+# inspection queued behind it would be unmistakable - before subshells the same
+# read took 9.57 s against a cell of this length - and short enough not to
+# dominate the suite.
+BUSY_SECONDS = 10
+
+# What "answered while the kernel is busy" is allowed to cost. The measurement
+# is 0.01 s; this is loose by two orders of magnitude on purpose, because the
+# thing being separated is milliseconds from the whole length of a cell, and a
+# bound that reads as a performance target would fail on a loaded CI machine for
+# a reason that has nothing to do with the defect.
+BUSY_ANSWER_SECONDS = 3.0
+
 results = []
 
 
@@ -147,6 +160,28 @@ class Sidecar:
 
     def send(self, message_type, **payload):
         self.ws.send(json.dumps({"type": message_type, **payload}))
+
+    def run_and_settle(self, code, timeout=ACTION_TIMEOUT):
+        """Run a cell, and wait for the kernel to finish it.
+
+        A sleep used to do, and the reason it did is exactly what group 6
+        removed. The kernel served one shell serially, so an inspection sent
+        after a Run queued behind it and could not see a half-finished namespace
+        however early it was sent - the sleep was covering the frame's flight
+        time, not the cell's. Inspections go to a subshell now and overtake the
+        cell, so anything that wants the namespace *after* a cell has to say so
+        rather than assume it.
+
+        Found by this suite rather than reasoned about: the eleven-hundred-name
+        listing came back with 0 rows, because the refresh answered while the
+        cell that was creating them had barely started.
+        """
+        since = len(self.frames)
+        self.send("kernel.execute", code=code)
+        at, _ = self.wait_frame_where(
+            "kernel.status", lambda frame: frame["state"] == "idle", timeout, since=since
+        )
+        return at
 
     def wait_frame(self, message_type, timeout, since=0):
         deadline = time.monotonic() + timeout
@@ -322,8 +357,7 @@ def main():
 
     # --- the variable explorer ---
 
-    side.send("kernel.execute", code="integration_marker = 12345\n")
-    time.sleep(1.0)
+    side.run_and_settle("integration_marker = 12345\n")
     before = len(side.frames)
     side.send("vars.refresh")
     _, variables = side.wait_frame("vars.data", ACTION_TIMEOUT, since=before)
@@ -507,8 +541,7 @@ def main():
     # refused it inside channel.send, on every idle, for ever - the explorer
     # froze on its last good state and said nothing. `from sympy import *` is
     # enough to reach it.
-    side.send("kernel.execute", code="\n".join(f"n{i} = {i}" for i in range(1100)) + "\n")
-    time.sleep(1.0)
+    side.run_and_settle("\n".join(f"n{i} = {i}" for i in range(1100)) + "\n")
     before = len(side.frames)
     side.send("vars.refresh")
     _, big = side.wait_frame("vars.data", ACTION_TIMEOUT, since=before)
@@ -544,12 +577,11 @@ def main():
     #
     # The plan's example, through the real kernel: a dict of a dict of a dict.
     # Addressed by ordinal, so ["nested", 3, 0] is the first entry of the fourth.
-    side.send("kernel.execute", code=(
+    side.run_and_settle(
         "nested = dict(a=12, b='wert', c=[1,2,3,4,5,6], "
         "d=dict(x=dict(aa=1, bb='sdfg'), y=2))\n"
         "points = list(range(5043))\n"
-    ))
-    time.sleep(1.0)
+    )
 
     before = len(side.frames)
     side.send("vars.detail", path=["nested", 3, 0], offset=0)
@@ -578,13 +610,12 @@ def main():
     # A shape is Iterable and Sized, so it unrolls - and it still has the counts
     # this pane has always shown for one. Choosing between them would mean that
     # making shapes iterable quietly took the faces away.
-    side.send("kernel.execute", code=(
+    side.run_and_settle(
         "from build123d import BuildPart, Box\n"
         "with BuildPart() as _bd:\n"
         "    Box(10, 10, 10)\n"
         "solid = _bd.part\n"
-    ))
-    time.sleep(1.0)
+    )
     before = len(side.frames)
     side.send("vars.detail", path=["solid"], offset=0)
     _, shape = side.wait_frame("vars.detail", ACTION_TIMEOUT, since=before)
@@ -599,11 +630,10 @@ def main():
     # than off the listing, because by now the namespace holds the eleven
     # hundred names the truncation check above made and anything sorting late is
     # past the five-hundred-row cut.
-    side.send("kernel.execute", code=(
+    side.run_and_settle(
         "solid.label = 'housing'\n"
         "_assembly = [solid]\n"
-    ))
-    time.sleep(1.0)
+    )
     before = len(side.frames)
     side.send("vars.detail", path=["_assembly"], offset=0)
     _, labelled = side.wait_frame("vars.detail", ACTION_TIMEOUT, since=before)
@@ -617,6 +647,92 @@ def main():
           and [c["name"] for c in tail.get("children", [])][:1] == ["5000"]
           and len(tail.get("children", [])) == 43,
           f"offset {tail.get('offset')}, {len(tail.get('children', []))} children")
+
+    # --- inspecting while the kernel is busy ---
+    #
+    # The kernel serves one shell serially, so an inspection sent during a cell
+    # used to wait in the kernel's own queue: 9.57 s against a ten second cell,
+    # measured on the pinned ipykernel, and past the fifteen second budget the
+    # row said "could not be read in time" - which was untrue, because the value
+    # was readable and the kernel was busy. A subshell answers from a thread of
+    # its own over the same namespace.
+    #
+    # This is the check that fails against the code before group 6, and it is
+    # asserted as a *duration* rather than as a subshell id, because how it is
+    # arranged is not the promise. The promise is that the pane answers while
+    # code runs.
+
+    _, subshell_line = side.wait_log("Kernel subshell", 5)
+    check("the kernel has a subshell", subshell_line is not None,
+          subshell_line if subshell_line is not None else "no subshell line in the log")
+
+    side.send("kernel.execute", code=(
+        "busy_marker = list(range(20))\n"
+        "import time as _t\n"
+        f"for _i in range({BUSY_SECONDS}):\n"
+        "    _t.sleep(1)\n"
+    ))
+
+    # Far enough in that the cell is unambiguously running, and long enough
+    # before the end that a reply arriving after it would be obvious.
+    time.sleep(2.0)
+
+    # Both reads happen after this mark, so the indicator check below covers
+    # the pair of them rather than only the later one.
+    quiet_from = len(side.frames)
+
+    before = len(side.frames)
+    started = time.monotonic()
+    side.send("vars.detail", path=["busy_marker"], offset=0)
+    _, busy_detail = side.wait_frame("vars.detail", ACTION_TIMEOUT, since=before)
+    inspect_seconds = time.monotonic() - started
+    children = [] if busy_detail is None else busy_detail["detail"].get("children", [])
+    check("a row expands while a cell is running",
+          busy_detail is not None and len(children) == 20
+          and inspect_seconds < BUSY_ANSWER_SECONDS,
+          f"{inspect_seconds:.2f}s, {len(children)} children"
+          if busy_detail is not None else "no answer at all")
+
+    # The other pane the same defect showed in. Completion's kernel half was
+    # skipped outright while the kernel was busy, so a long tessellation took
+    # the live namespace out of every suggestion list - and the live half is
+    # most of the value on the objects this application is about.
+    before = len(side.frames)
+    started = time.monotonic()
+    side.send("editor.complete", id="complete-busy", source="busy_mar",
+              line=1, column=8, path=None, key="buffer-busy")
+    _, busy_reply = side.wait_frame("editor.complete", ACTION_TIMEOUT, since=before)
+    complete_seconds = time.monotonic() - started
+    matches = [] if busy_reply is None else busy_reply.get("matches", [])
+    check("completion answers from the live namespace while a cell is running",
+          "busy_marker" in matches and complete_seconds < BUSY_ANSWER_SECONDS,
+          f"{complete_seconds:.2f}s, {len(matches)} matches"
+          if busy_reply is not None else "no reply")
+
+    # And the kernel is still busy, which is what makes the two above mean
+    # anything: an answer that arrived because the cell had finished early would
+    # prove nothing at all.
+    statuses = [f for _, f in side.frames if f["type"] == "kernel.status"]
+    check("the kernel was still busy while both were answered",
+          len(statuses) > 0 and statuses[-1]["state"] == "busy",
+          "no status frames" if len(statuses) == 0 else statuses[-1]["state"])
+
+    # Neither of them may look like user activity. Both go out as internal
+    # requests, and the kernel publishes busy and idle for each exactly as it
+    # does for a Run - so without the record the toolbar would flicker mid-cell
+    # and the explorer would treat its own reads as a reason to read again.
+    during = [f for _, f in side.frames[quiet_from:] if f["type"] == "kernel.status"]
+    check("neither of them moves the indicator",
+          len(during) == 0, f"{len(during)} status frames during the reads")
+
+    # The cell's own output has to be untouched by any of it. ipykernel keeps
+    # the shell parent header in a ContextVar, so a subshell's request should
+    # not steal it - if it did, a print() from the running cell would be
+    # attributed to a silent inspection and vanish from the console.
+    _, done = side.wait_frame_where(
+        "kernel.status", lambda f: f["state"] == "idle", BUSY_SECONDS + 10, since=before)
+    check("the cell finishes and reports itself idle", done is not None,
+          "still busy" if done is None else done["state"])
 
     # --- debugging: a second world, driven over the relay ---
     #

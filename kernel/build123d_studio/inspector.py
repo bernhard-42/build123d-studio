@@ -71,6 +71,54 @@ MAX_ROWS = 500
 # channel to clear.
 DETAIL_BUDGET = 8.0
 
+# How many times a read of a container is tried again after it changed while it
+# was being read.
+#
+# New with subshells, and new in kind rather than in degree. Until an inspection
+# could overtake the code the kernel is running, this module only ever ran
+# against objects that were standing still - the kernel was idle by definition,
+# because the request that woke it was the inspection itself. Now a cell
+# appending to a dict is genuinely concurrent with the read, and CPython says
+# so: iterating one while it changes size raises RuntimeError.
+#
+# Which reads can actually lose it was measured rather than assumed, against a
+# dict growing continuously in another thread with sys.setswitchinterval at a
+# microsecond. Anything that is one C call cannot lose - list(d.items()) is 0
+# out of 900, and variables() keeps its bare list() because of that. Anything
+# that runs bytecode between items can and does: the comprehension over
+# islice(d.items()) in _page loses about a third of the time, and the one-step
+# walk in _child_at a percent or two.
+#
+# Retried rather than locked, because there is nothing to lock - the objects are
+# the user's and so is the code mutating them. A retry is right for what this
+# is, a window of microseconds inside a loop doing something else between
+# iterations. Three, because a read that loses three times running is not a
+# window any more, and saying so is better than spinning.
+MUTATION_RETRIES = 3
+
+# What the pane says when it lost that race. Phrased as a state rather than a
+# failure, because it is one: the code is still running, the next idle refreshes
+# this row anyway, and there is nothing for the reader to do.
+MUTATING = "changing while the kernel runs"
+
+# Containers whose RuntimeError while being read can only be CPython's own
+# "changed size during iteration". The exact type rather than isinstance,
+# because a subclass may override __iter__ or __getitem__ with anything at all -
+# and a hostile one raising RuntimeError already had an answer, which is that it
+# could not be read. Calling that a mutation would be a worse message than the
+# one it replaced, not a better one.
+BUILTIN_CONTAINERS = (dict, set, frozenset, list, tuple, bytearray)
+
+
+class Mutating(RuntimeError):
+    """A container changed while this module was reading it.
+
+    Its own type rather than the bare RuntimeError CPython raises, so that the
+    one case it means cannot be confused with an object whose __iter__ or
+    __getitem__ raises a RuntimeError of its own - which is a different answer
+    and already had one.
+    """
+
 # Counts a shape of this kind cannot tell you anything by. A Face has one face
 # and that is what makes it a Face; an Edge has one edge, two vertices and no
 # faces, all three fixed by its definition. Printing them is not wrong, it is
@@ -280,16 +328,26 @@ def _child_at(value, index):
     value = _elements(value)
     if not _unrolls(value):
         raise LookupError("nothing to index")
-    try:
-        if isinstance(value, Mapping):
-            return next(islice(value.values(), index, index + 1))
-        if isinstance(value, Sequence):
-            return value[index]
-        return next(islice(iter(value), index, index + 1))
-    except StopIteration:
-        # Ran off the end, which is the same thing an index error says and
-        # should read the same way to whoever asked.
-        raise LookupError("no longer defined") from None
+    for attempt in range(MUTATION_RETRIES):
+        try:
+            if isinstance(value, Mapping):
+                return next(islice(value.values(), index, index + 1))
+            if isinstance(value, Sequence):
+                return value[index]
+            return next(islice(iter(value), index, index + 1))
+        except StopIteration:
+            # Ran off the end, which is the same thing an index error says and
+            # should read the same way to whoever asked.
+            raise LookupError("no longer defined") from None
+        except RuntimeError:
+            # The same race _children retries, on the walk down to a nested row
+            # rather than on the page itself. Same reasoning, same discrimination
+            # by type: only a builtin container's RuntimeError is CPython's.
+            if type(value) not in BUILTIN_CONTAINERS:
+                raise
+            if attempt == MUTATION_RETRIES - 1:
+                raise Mutating(type(value).__name__) from None
+    raise Mutating(type(value).__name__)
 
 
 def _children(value, offset, limit):
@@ -315,20 +373,24 @@ def _children(value, offset, limit):
     except Exception:  # noqa: BLE001
         return None, 0
 
-    try:
-        if isinstance(value, Mapping):
-            page = islice(value.items(), offset, offset + limit)
-            pairs = [(str(key), item) for key, item in page]
-        elif isinstance(value, Sequence):
-            pairs = [
-                (str(offset + i), item)
-                for i, item in enumerate(value[offset:offset + limit])
-            ]
-        else:
-            page = islice(iter(value), offset, offset + limit)
-            pairs = [(str(offset + i), item) for i, item in enumerate(page)]
-    except Exception:  # noqa: BLE001 - somebody else's __iter__ or __getitem__
-        return None, 0
+    pairs = None
+    for attempt in range(MUTATION_RETRIES):
+        try:
+            pairs = _page(value, offset, limit)
+            break
+        except RuntimeError:
+            # Changed size while it was being walked, which means the code the
+            # kernel is running is writing to it. Raised as Mutating on the last
+            # attempt so that detail() can say so, rather than swallowed into
+            # the "no children" answer below - a container being appended to is
+            # the opposite of an empty one, and reporting them the same way is
+            # how a pane comes to be quietly wrong.
+            if type(value) not in BUILTIN_CONTAINERS:
+                return None, 0
+            if attempt == MUTATION_RETRIES - 1:
+                raise Mutating(type(value).__name__) from None
+        except Exception:  # noqa: BLE001 - somebody else's __iter__ or __getitem__
+            return None, 0
 
     children = [
         {
@@ -342,6 +404,25 @@ def _children(value, offset, limit):
         for name, item in pairs
     ]
     return children, total
+
+
+def _page(value, offset, limit):
+    """One page of (name, item) pairs, by whatever means the container offers.
+
+    Separated from _children so the retry above has one expression to repeat.
+    Raises whatever the container raises, including the RuntimeError that says
+    it changed while it was being read.
+    """
+    if isinstance(value, Mapping):
+        page = islice(value.items(), offset, offset + limit)
+        return [(str(key), item) for key, item in page]
+    if isinstance(value, Sequence):
+        return [
+            (str(offset + i), item)
+            for i, item in enumerate(value[offset:offset + limit])
+        ]
+    page = islice(iter(value), offset, offset + limit)
+    return [(str(offset + i), item) for i, item in enumerate(page)]
 
 
 def _walk(namespace, path):
@@ -443,6 +524,12 @@ def variables():
     """
     namespace = sys.modules["__main__"].__dict__
     rows = []
+    # list() over the namespace stays a bare list() even though an inspection
+    # can now run while a cell is binding names. Measured rather than assumed,
+    # because it looks exactly like the race _children has to retry: 0 out of
+    # 900, against a dict growing continuously in another thread with the switch
+    # interval at a microsecond - which loses that other race a third of the
+    # time. list(d.items()) is one C call and no Python thread runs inside it.
     for name, value in list(namespace.items()):
         # str(), because a namespace key need not be one: globals()[42] = x is
         # legal and made name.startswith("_") raise, which killed the refresh
@@ -565,6 +652,8 @@ def detail(path, offset=0):
         value = _walk(namespace, path)
     except LookupError:
         return json.dumps({"path": path, "error": "no longer defined"})
+    except Mutating:
+        return json.dumps({"path": path, "error": MUTATING})
     except Exception as exc:  # noqa: BLE001 - somebody else's __getitem__
         return json.dumps({"path": path, "error": f"could not be read: {exc.__class__.__name__}"})
 
@@ -578,7 +667,13 @@ def detail(path, offset=0):
     if not isinstance(value, CONTAINERS):
         result["attributes"] = _build123d_details(value)
 
-    children, total = _children(value, offset, PAGE)
+    try:
+        children, total = _children(value, offset, PAGE)
+    except Mutating:
+        # Being written by the code the kernel is running. Said out loud, and
+        # said as something that will pass: the next idle refreshes this pane
+        # anyway, so "keep changing" is the whole of what the reader has to do.
+        return json.dumps({"path": path, "error": MUTATING})
     if children is not None:
         result["children"] = children
         result["offset"] = offset

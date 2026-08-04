@@ -209,8 +209,8 @@ class RestartRaceTest(unittest.TestCase):
         what makes it worth having: it is stated in terms of what must be true
         rather than of the mechanism that happened to be true at the time.
 
-        Widened by blocking inside client.execute, which is where the real one
-        is inside a zmq send.
+        Widened by blocking inside the shell channel's send, which is where the
+        real one is inside a zmq send.
         """
         in_send = threading.Event()
         release = threading.Event()
@@ -261,8 +261,8 @@ class InternalRequestRecordTest(unittest.TestCase):
     queues another: the exact loop the deque exists to prevent, arrived at by
     losing a race rather than by forgetting.
 
-    Widened by asking the question from inside client.execute - which is to say,
-    at the precise moment the kernel would be answering. That turns a
+    Widened by asking the question from inside the shell channel's send - which
+    is to say, at the precise moment the kernel would be answering. That turns a
     microsecond window into every single iteration.
     """
 

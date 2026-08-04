@@ -188,7 +188,7 @@ class ShellRetirementTest(unittest.TestCase):
         """The guarantee the shell lock used to give, now given by a join.
 
         A restart that did not wait would tear the client down with the shell
-        thread still inside client.execute(), and then start a second shell
+        thread still inside a send on the shell channel, and then start a second
         thread beside the first - two senders, which is the fault one owning
         thread exists to make impossible.
         """
