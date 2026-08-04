@@ -358,3 +358,134 @@ export function usableChords(commandId, configured) {
   }
   return { chords, rejected };
 }
+
+// --- recording a chord, and checking the result ----------------------------
+
+/**
+ * DOM `KeyboardEvent.code` values, mapped to the tokens above.
+ *
+ * `code` rather than `key`, because `key` carries the *result* of the
+ * modifiers: Shift-2 reports "@" on a US layout and `"` on a German one, and
+ * Alt-something reports whatever character the layout produces. `code` names
+ * the physical key, so a chord recorded here means the same thing that
+ * `monacoBinding` will later register.
+ *
+ * Built rather than listed for the ranges, so it cannot drift from NAMED_KEYS.
+ */
+const CODES = {
+  Enter: "enter",
+  NumpadEnter: "enter",
+  Escape: "escape",
+  Space: "space",
+  Tab: "tab",
+  Backspace: "backspace",
+  Delete: "delete",
+  Home: "home",
+  End: "end",
+  PageUp: "pageup",
+  PageDown: "pagedown",
+  ArrowUp: "up",
+  ArrowDown: "down",
+  ArrowLeft: "left",
+  ArrowRight: "right",
+  Comma: "comma",
+};
+for (let n = 1; n <= 12; n += 1) {
+  CODES[`F${n}`] = `f${n}`;
+}
+for (const letter of "abcdefghijklmnopqrstuvwxyz") {
+  CODES[`Key${letter.toUpperCase()}`] = letter;
+}
+for (const digit of "0123456789") {
+  CODES[`Digit${digit}`] = digit;
+}
+
+/**
+ * The chord a keydown represents, or null if it is not one yet.
+ *
+ * Null covers the two cases a recorder meets constantly and must not treat as
+ * input: a modifier pressed on its own, which is what happens while somebody is
+ * still assembling a chord, and a key this application has no token for.
+ *
+ * The platform split is the whole reason `mod` and `ctrl` are separate tokens.
+ * On macOS Command is `mod` and Control is `ctrl`; everywhere else Control is
+ * `mod`, and Meta is the Super key, which the window manager owns - so a chord
+ * recorded with it is refused rather than bound to something that will never
+ * arrive.
+ *
+ * @param {string} platform NL_OS: "Windows", "Darwin" or "Linux"
+ * @param {KeyboardEvent} event
+ */
+export function chordFromEvent(platform, event) {
+  const key = CODES[event.code];
+  if (key === undefined) {
+    return null;
+  }
+
+  const mac = platform === "Darwin";
+  if (!mac && event.metaKey) {
+    return null;
+  }
+
+  const descriptor = {
+    mod: mac ? event.metaKey : event.ctrlKey,
+    ctrl: mac ? event.ctrlKey : false,
+    shift: event.shiftKey,
+    alt: event.altKey,
+    key,
+  };
+  return formatChord(descriptor);
+}
+
+/**
+ * Why this chord should not be bound, or null if it is fine.
+ *
+ * Only the rule that a person would otherwise discover by losing the ability to
+ * type: a bare letter, digit or Enter swallows that key everywhere the action is
+ * registered. Function keys are exempt because they are not typing - F5 is a
+ * shipped default.
+ */
+export function chordProblem(chord) {
+  const descriptor = parseChord(chord);
+  if (descriptor === null) {
+    return "not a chord";
+  }
+  const bare = !MODIFIERS.some((modifier) => descriptor[modifier]);
+  if (bare && /^f\d+$/.test(descriptor.key) === false) {
+    return "needs a modifier, or it would swallow that key while typing";
+  }
+  return null;
+}
+
+/**
+ * Chords bound to more than one command.
+ *
+ * Reported rather than prevented: which of two commands a user meant to keep is
+ * theirs to decide, and refusing the second one silently would look like the
+ * dialog had ignored them.
+ *
+ * @param {object} bindings {commandId: [chord]}
+ * @returns {Array<{chord: string, commands: string[]}>}
+ */
+export function findChordConflicts(bindings) {
+  const owners = new Map();
+  for (const [commandId, chords] of Object.entries(bindings)) {
+    for (const chord of chords ?? []) {
+      const descriptor = parseChord(chord);
+      if (descriptor === null) {
+        continue;
+      }
+      // Canonical, so "shift+enter" and "enter+shift" are seen as one chord.
+      const canonical = formatChord(descriptor);
+      const existing = owners.get(canonical);
+      if (existing === undefined) {
+        owners.set(canonical, [commandId]);
+      } else if (!existing.includes(commandId)) {
+        existing.push(commandId);
+      }
+    }
+  }
+  return [...owners.entries()]
+    .filter(([, commands]) => commands.length > 1)
+    .map(([chord, commands]) => ({ chord, commands }));
+}

@@ -713,7 +713,7 @@ export function initEditor() {
   // squiggles at all.
   editor.onDidChangeModel(() => scheduleSync());
 
-  registerRunActions(editor);
+  runActions = registerRunActions(editor);
   registerLanguageFeatures();
   return editor;
 }
@@ -901,6 +901,28 @@ export function forgetBuffer(key, path) {
  * leaving both the old and the new chord live. Group 5's dialog is what will
  * call it a second time.
  */
+// What registerRunActions handed back last time, so a binding change can undo
+// the old chords instead of leaving both live.
+let runActions = [];
+
+/**
+ * Re-register the run and debug actions after their chords changed.
+ *
+ * Monaco has no way to alter an action's keybinding in place, so the old
+ * registration is disposed and a new one made. Without the dispose the previous
+ * chord keeps working alongside the new one, which looks like the dialog did
+ * nothing when a shortcut is *moved* rather than added.
+ */
+export function rebindRunActions() {
+  if (editor === null || editor === undefined) {
+    return;
+  }
+  for (const action of runActions) {
+    action.dispose();
+  }
+  runActions = registerRunActions(editor);
+}
+
 export function registerRunActions(target) {
   const actions = [
     { id: "run.cell", run: () => runCell() },

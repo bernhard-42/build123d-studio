@@ -1161,7 +1161,93 @@ html body {
   border-color: var(--ok-fg);
 }
 
-/* = = = Package settings = = = */
+/* = = = Settings dialog = = = */
+
+/* Anchored to the top rather than centred, unlike the About dialog it shares an
+   overlay with.
+
+   About has one panel and a fixed height, so centring it is right. Settings has
+   five of very different heights - a single Upgrade button against a
+   twelve-line template - and centred, the whole dialog moved every time a tab
+   was clicked, taking the tab row with it. Clicking through the tabs meant
+   chasing the strip down the screen. Pinned to the top, only the content below
+   the strip changes size. */
+#settings-dialog {
+  align-items: flex-start;
+}
+
+/* Tall enough that the shorter panels do not make the dialog collapse to a
+   sliver, short enough that the tallest still fits on a small window. The body
+   scrolls past it. */
+#settings-dialog .info-body {
+  min-height: 340px;
+}
+
+/* The tab strip. Sits between the header and the scrolling body rather than
+   inside it, so it stays put while a long panel - the New File template, or a
+   list of every shortcut - scrolls underneath. */
+.settings-tabs {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 2px;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.settings-tab {
+  padding: 7px 12px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  background: none;
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.settings-tab:hover {
+  color: var(--fg);
+}
+
+/* Underlined rather than filled: the strip sits directly on the panel it
+   selects, so a background would read as a second header. */
+.settings-tab-active {
+  border-bottom-color: var(--accent);
+  color: var(--fg);
+}
+
+/* What is wrong with the additional-packages field. Every bad line at once
+   rather than the first, because fixing them one Apply at a time is how a
+   five-line paste takes five rebuilds. */
+.settings-problem {
+  padding: 8px 10px;
+  border: 1px solid var(--error-fg);
+  border-radius: 4px;
+  color: var(--error-fg);
+}
+
+/* The buttons that act on the environment - Re-install, Install, Upgrade.
+   Set apart from Apply and Cancel in the footer, because these three do a
+   minute of work and restart the kernel, while those two only save and close.
+   Each sits directly under the thing it acts on. */
+.settings-action {
+  display: block;
+  margin: 10px 0 2px;
+}
+
+/* The folder for a local checkout, and the button that picks one. */
+.settings-local {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin: 4px 0 0 22px;
+}
+
+.settings-local .settings-line {
+  flex: 1 1 auto;
+  margin: 0;
+}
 
 .settings-package {
   margin: 14px 0;
@@ -1476,4 +1562,57 @@ html body {
 
 .splash-ok[hidden] {
   display: none;
+}
+
+/* One command and its chords. Grid rather than flex so the Record buttons line
+   up down the right regardless of how many chords a command carries. */
+.settings-shortcut {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.settings-shortcut:last-child {
+  border-bottom: none;
+}
+
+.settings-shortcut-name {
+  font-size: 13px;
+}
+
+.settings-shortcut-chords {
+  display: flex;
+  gap: 4px;
+  justify-content: flex-end;
+}
+
+/* A bound chord. It is a button because clicking it removes it - the affordance
+   should not have to be explained in prose. */
+/* The interface font, not a monospace one. These are symbols and words - ⌘⇧↩,
+   Ctrl+Shift+Enter - rather than columns to align, and the browser's default
+   monospace renders the Mac modifier glyphs noticeably smaller than the text
+   around them, which is what made these hard to read. */
+.settings-chord {
+  padding: 3px 9px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.3;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.settings-chord:hover {
+  border-color: var(--error-fg);
+  color: var(--error-fg);
+}
+
+.settings-record {
+  min-width: 108px;
 }

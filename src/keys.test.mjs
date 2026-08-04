@@ -23,7 +23,10 @@ import { test } from "node:test";
 
 import {
   COMMANDS,
+  chordFromEvent,
+  chordProblem,
   describeChord,
+  findChordConflicts,
   formatChord,
   monacoBinding,
   monacoBindings,
@@ -249,4 +252,99 @@ test("a chord-less command is menu-only rather than a mistake", () => {
       assert.notEqual(parseChord(chord), null, `${command.id}: ${chord} does not parse`);
     }
   }
+});
+
+// --- recording a chord -----------------------------------------------------
+
+const press = (code, modifiers = {}) => ({
+  code,
+  ctrlKey: false,
+  metaKey: false,
+  shiftKey: false,
+  altKey: false,
+  ...modifiers,
+});
+
+test("macOS: Command is mod, Control is ctrl", () => {
+  assert.equal(chordFromEvent("Darwin", press("Enter", { metaKey: true })), "mod+enter");
+  assert.equal(chordFromEvent("Darwin", press("Enter", { ctrlKey: true })), "ctrl+enter");
+  assert.equal(
+    chordFromEvent("Darwin", press("Enter", { metaKey: true, shiftKey: true })),
+    "mod+shift+enter",
+  );
+});
+
+test("elsewhere: Control is mod, and there is no ctrl token to reach", () => {
+  for (const platform of ["Windows", "Linux"]) {
+    assert.equal(chordFromEvent(platform, press("Enter", { ctrlKey: true })), "mod+enter");
+  }
+});
+
+test("elsewhere: a Super chord is refused rather than bound to nothing", () => {
+  // The window manager owns it, so a binding made with it would never fire.
+  assert.equal(chordFromEvent("Windows", press("KeyS", { metaKey: true })), null);
+});
+
+test("a modifier on its own is not a chord yet", () => {
+  // What a recorder sees constantly while somebody assembles a chord.
+  for (const code of ["ShiftLeft", "ControlLeft", "AltLeft", "MetaLeft"]) {
+    assert.equal(chordFromEvent("Darwin", press(code, { shiftKey: true })), null);
+  }
+});
+
+test("code is used rather than key, so the layout cannot change the meaning", () => {
+  // Shift-2 reports "@" on a US layout and a quote on a German one; the chord
+  // has to be the same either way, because that is what gets registered.
+  assert.equal(chordFromEvent("Darwin", press("Digit2", { shiftKey: true })), "shift+2");
+});
+
+test("a key with no token is not recorded", () => {
+  assert.equal(chordFromEvent("Darwin", press("IntlBackslash")), null);
+});
+
+test("every recorded chord parses back", () => {
+  for (const code of ["KeyA", "Digit7", "F5", "Enter", "Comma", "ArrowUp", "Space"]) {
+    const chord = chordFromEvent("Darwin", press(code, { metaKey: true }));
+    assert.notEqual(parseChord(chord), null, `${code} produced ${chord}`);
+  }
+});
+
+// --- what a chord may be ---------------------------------------------------
+
+test("a bare letter is refused, because it would swallow that key", () => {
+  assert.match(chordProblem("a"), /needs a modifier/);
+  assert.match(chordProblem("enter"), /needs a modifier/);
+});
+
+test("a bare function key is fine - F5 is a shipped default", () => {
+  assert.equal(chordProblem("f5"), null);
+  assert.equal(chordProblem("shift+f5"), null);
+});
+
+test("a modified letter is fine", () => {
+  assert.equal(chordProblem("mod+shift+p"), null);
+});
+
+// --- conflicts -------------------------------------------------------------
+
+test("a chord on two commands is reported with both", () => {
+  const found = findChordConflicts({ "run.cell": ["shift+enter"], "run.file": ["shift+enter"] });
+  assert.equal(found.length, 1);
+  assert.equal(found[0].chord, "shift+enter");
+  assert.deepEqual(found[0].commands.sort(), ["run.cell", "run.file"]);
+});
+
+test("order within a chord does not hide a conflict", () => {
+  const found = findChordConflicts({ a: ["shift+enter"], b: ["enter+shift"] });
+  assert.equal(found.length, 1, "the two spellings are one chord");
+});
+
+test("one command with two chords is not a conflict with itself", () => {
+  assert.deepEqual(findChordConflicts({ "run.cell.stay": ["ctrl+enter", "mod+enter"] }), []);
+});
+
+test("the shipped defaults do not conflict with each other", () => {
+  // The one that would be embarrassing to ship broken.
+  const defaults = Object.fromEntries(COMMANDS.map((c) => [c.id, c.chords]));
+  assert.deepEqual(findChordConflicts(defaults), []);
 });
