@@ -31,6 +31,9 @@ const HIDDEN_KEY = "sidebarHidden";
 let root = null;
 let openFile = null;
 let hidden = false;
+// Whether the tree pane was on screen after the last render, so that a change
+// in that - and only a change - re-measures the grid. See render().
+let visible = false;
 // The file the editor is showing, so the tree can say which one it is.
 let active = null;
 // Which directories are showing their contents, and what those contents are.
@@ -68,10 +71,9 @@ export function sidebarHidden() {
  */
 export async function toggleSidebar() {
   hidden = !hidden;
+  // render() re-measures the grid, because the tree appearing or going away
+  // changes how much width the panes beside it have.
   render();
-  // The panes are laid out in pixels from their container's width, so the grid
-  // has to be re-measured now that it is wider or narrower.
-  refreshLayout();
   await setSetting(HIDDEN_KEY, hidden);
   return hidden;
 }
@@ -183,6 +185,21 @@ function render() {
   // The splitter goes with it: a handle for dragging the width of something
   // that is not there is a five-pixel strip that does nothing.
   document.getElementById("splitter-tree").hidden = away;
+
+  // Re-measure whenever the tree comes or goes, whatever brought it.
+  //
+  // The panes are sized in pixels computed from their container's width, so a
+  // tree that appears after that measurement leaves both vertical splitters too
+  // far right - and nothing re-measures until something else is dragged, which
+  // is why dragging the console/explorer boundary used to snap the editor and
+  // viewer back into place. It lives here rather than in the callers because
+  // toggleSidebar remembered to do it and opening a folder did not: every route
+  // that changes this visibility goes through render.
+  if (visible === away) {
+    visible = !away;
+    refreshLayout();
+  }
+
   if (away) {
     body.replaceChildren();
     return;
