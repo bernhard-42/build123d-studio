@@ -11,6 +11,15 @@
  * `applyPackageSources`, `upgradePackages` and `reinstallPackage` are replaced
  * by the harness's bootstrap stub, so what is asserted is which one a button
  * asked for - not that uv did anything, which belongs nowhere near a browser.
+ *
+ * Proved by un-applying, once, when each case was written: the guard taken out
+ * of the shipped source, the suite run, the file put back. What was removed,
+ * and what went red:
+ *
+ * - src/settings.js, an installPackages() added to Apply - Apply saves and
+ *   closes, and touches nothing else
+ * - src/keys.js, chordProblem() answering null for everything - a bare letter
+ *   is refused with a reason
  */
 
 import { expect, test } from "@playwright/test";

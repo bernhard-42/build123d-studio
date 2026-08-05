@@ -15,6 +15,15 @@
  * - that it ran and printed In[n] - belongs to tests/integration.py, which has
  * a real kernel; this suite has a fake sidecar and can only speak for the
  * frontend's end. Both halves are worth having and neither substitutes.
+ *
+ * Proved by un-applying, once, when each case was written: the guard taken out
+ * of the shipped source, the suite run, the file put back. What was removed,
+ * and what went red:
+ *
+ * - src/keys.js, run.cell's shift+enter swapped for ctrl/mod+enter -
+ *   Shift-Enter runs the cell, Ctrl-Enter stays
+ * - src/editor/monaco.js, the `code.trim() === ""` guard - a buffer with
+ *   nothing but blank lines sends nothing
  */
 
 import { expect, test } from "@playwright/test";

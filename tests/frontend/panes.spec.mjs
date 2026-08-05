@@ -6,6 +6,17 @@
  * wrong is only visible once something has measured a real container. A unit
  * test of the arithmetic would have agreed with the code in every case below,
  * including the one that shipped broken.
+ *
+ * Proved by un-applying, once, when each case was written: the guard taken out
+ * of the shipped source, the suite run, the file put back. What was removed,
+ * and what went red:
+ *
+ * - src/editor/sidebar.js, the `if (visible === away)` re-measure - starting
+ *   with a folder open, and hiding the tree gives its width back
+ * - src/layout/splitter.js, clamp() returning its argument - an absurd stored
+ *   fraction is clamped
+ * - src/layout/splitter.js, the persist() after a drag - moves it, and is
+ *   remembered
  */
 
 import { expect, test } from "@playwright/test";

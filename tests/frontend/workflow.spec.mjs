@@ -11,6 +11,17 @@
  * place depending on what this application decided, and nothing on screen says
  * where. It is asserted through the `kernel.cwd` frame, which is exactly what
  * the sidecar acts on.
+ *
+ * Proved by un-applying, once, when each case was written: the guard taken out
+ * of the shipped source, the suite run, the file put back. What was removed,
+ * and what went red:
+ *
+ * - src/editor/files.js, the `folder ??` in the kernel.cwd frame - the cwd is
+ *   the project root however deep the file sits
+ * - src/editor/files.js, the closeEveryTab() gate before a folder opens - Open
+ *   Folder closes every tab, and asks about unsaved work
+ * - src/editor/files.js, the folder dialog's cancel check - cancelling the
+ *   chooser changes nothing at all
  */
 
 import { expect, test } from "@playwright/test";

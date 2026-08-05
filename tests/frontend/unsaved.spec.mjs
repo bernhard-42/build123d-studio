@@ -9,6 +9,13 @@
  * never as which function was called. "The file on disk has the edit in it" is
  * the only assertion that cannot be satisfied by a save path that reports
  * success and writes nothing, which is a defect this project has had.
+ *
+ * Proved by un-applying, once, when each case was written: the guard taken out
+ * of the shipped source, the suite run, the file put back. What was removed,
+ * and what went red:
+ *
+ * - src/editor/files.js, the confirmDiscardAll() gate - asks once and lists
+ *   them, Cancel cancels, Save writes
  */
 
 import { expect, test } from "@playwright/test";

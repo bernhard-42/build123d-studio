@@ -6,6 +6,15 @@
  * user is looking at agrees with the answer the application gives when it
  * matters, and whether Monaco's undo stack stays with the file it belongs to.
  * Both need a real Monaco and a real strip, which is what this suite has.
+ *
+ * Proved by un-applying, once, when each case was written: the guard taken out
+ * of the shipped source, the suite run, the file put back. What was removed,
+ * and what went red:
+ *
+ * - src/editor/monaco.js, the dirty check's deferral to the next tick - the
+ *   dirty mark goes away again, and the title agrees
+ * - src/editor/monaco.js, one model per buffer back to one shared model - each
+ *   tab shows its own file, the dirty mark, a clean tab closes
  */
 
 import { expect, test } from "@playwright/test";

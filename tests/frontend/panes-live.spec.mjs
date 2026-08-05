@@ -9,6 +9,17 @@
  * The frames are built with the shipped encoder, so the two ends cannot drift:
  * `src/frame.js` is what the sidecar's channel.py mirrors, and it is already
  * unit-tested on its own.
+ *
+ * Proved by un-applying, once, when each case was written: the guard taken out
+ * of the shipped source, the suite run, the file put back. What was removed,
+ * and what went red:
+ *
+ * - src/vars/explorer.js, the `row.expandable !== false` guard - only a row
+ *   that leads somewhere offers to open
+ * - src/vars/explorer.js, the icon-font chevron back to a character - the
+ *   chevron uses the icon font, and the two panes draw it the same way
+ * - src/console/terminal.js, the terminal.onData that forwards - a keystroke
+ *   in the console is sent back as input
  */
 
 import { expect, test } from "@playwright/test";

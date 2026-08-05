@@ -11,6 +11,13 @@
  *
  * The sidecar is a relay that understands no DAP, so every message below is one
  * the frontend composed - which is what makes them assertable here at all.
+ *
+ * Proved by un-applying, once, when each case was written: the guard taken out
+ * of the shipped source, the suite run, the file put back. What was removed,
+ * and what went red:
+ *
+ * - src/debug/start.js, NEEDS_PAUSE emptied - stepping is disabled between
+ *   stops
  */
 
 import { expect, test } from "@playwright/test";

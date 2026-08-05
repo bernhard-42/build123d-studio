@@ -17,6 +17,13 @@
  * ever prove that the test agrees with the test: rehydrate() reads dtypes,
  * offsets and lengths that ocp_tessellate chose, and inventing them is
  * inventing the thing under test.
+ *
+ * Proved by un-applying, once, when each case was written: the guard taken out
+ * of the shipped source, the suite run, the file put back. What was removed,
+ * and what went red:
+ *
+ * - src/viewer/viewer.js, the zero-length payload check - a model with no
+ *   geometry is refused rather than hanging
  */
 
 import { readFileSync } from "node:fs";

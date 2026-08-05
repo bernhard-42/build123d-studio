@@ -9,6 +9,15 @@
  * If a case here cannot be made to fail against the code without its fix, it is
  * reported as such rather than kept. A green test that never had the chance to
  * be red is worse than no test, because it gets believed.
+ *
+ * Proved by un-applying, once, when each case was written: the guard taken out
+ * of the shipped source, the suite run, the file put back. What was removed,
+ * and what went red:
+ *
+ * - src/styles.css, `flex: 0 0 var(--splitter)` off #splitter-tree - the tree
+ *   splitter has a width
+ * - src/editor/sidebar.js, the icon-font chevron back to a literal U+25B8 /
+ *   U+25BE - a folder row's chevron
  */
 
 import { expect, test } from "@playwright/test";

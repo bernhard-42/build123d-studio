@@ -13,6 +13,31 @@
  * What none of them can answer is whether Monaco then *shows* it. That is what
  * every case below asserts, and it is the one question that would have caught
  * the trap.
+ *
+ * Proved by un-applying, once, when each case was written: the guard taken out
+ * of the shipped source, the suite run, the file put back. What was removed,
+ * and what went red:
+ *
+ * - src/editor/monaco.js, each Monaco contribution import on its own:
+ *   suggestController, parameterHints, hoverContribution and quickCommand -
+ *   the suggestion widget, the parameter hints popup, the hover tooltip and
+ *   the command palette, one test each and no others
+ * - src/editor/monaco.js, the comment contribution - Cmd-/ comments the line,
+ *   and Monaco's own actions are in the palette
+ * - src/editor/monaco.js, find **and** multicursor together - Cmd-F opens the
+ *   find widget. One import at a time proves nothing here: multicursor imports
+ *   findController, so removing the find import alone leaves Cmd-F working
+ * - src/editor/monaco.js, folding **and** stickyScroll together - a block gets
+ *   a fold control. Same shape: stickyScrollController imports the folding
+ *   contribution, so folding survives its own import being taken out
+ * - src/editor/monaco.js, formatLineLength() in the format request replaced by
+ *   a literal - the line length from settings is what is asked for
+ *
+ * Not proved, and said here rather than left to look proved: nothing in this
+ * file can redden formatEdits' identity check. Monaco discards a no-op edit
+ * itself, so an edit replacing the text with the same text produces neither an
+ * undo stop nor a dirty mark. That property is asserted in format.test.mjs
+ * instead, where it fails properly; the case written for it here was deleted.
  */
 
 import { expect, test } from "@playwright/test";
