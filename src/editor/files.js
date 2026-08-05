@@ -22,7 +22,8 @@ import { refreshTabs } from "./tabstrip.js";
 import { chooseActive, readWorkspace } from "./workspace.js";
 import { unsavedPrompt } from "./unsaved.js";
 import { hideFolder, revealInTree, showFolder } from "./sidebar.js";
-import { askThreeWay, notifyFailure } from "../confirm.js";
+import { describeSize, isLarge, looksBinary, SNIFF_BYTES } from "./filetype.js";
+import { askThreeWay, askTwoWay, notifyFailure, notifyRefusal } from "../confirm.js";
 import { writeFileSafely } from "./safewrite.js";
 import { getSetting, setSetting } from "../store.js";
 import * as ipc from "../ipc.js";
@@ -548,6 +549,11 @@ export async function restoreWorkspace() {
     }
   }
 
+  // Not guarded by mayOpen, deliberately. Every one of these was opened once
+  // and answered for then, and a startup that stops to ask about a file the
+  // user has had open for a week - before the window is usable, several times
+  // over - would be the guard doing harm. A binary file cannot be here at all,
+  // because it could never have been opened to be saved in the workspace.
   for (const tab of saved === null ? [] : saved.tabs) {
     try {
       const content = await filesystem.readFile(tab.path);
@@ -591,6 +597,68 @@ export async function openFile() {
 }
 
 /**
+ * Whether this file should go in the editor at all, asked before it is read.
+ *
+ * Two questions with two different answers. Something that is not text is
+ * refused outright, because a PNG in a Monaco buffer is not a thing anybody
+ * wanted and saving it would destroy the file. Something merely large is asked
+ * about, because a big file is still a file somebody may mean to open - it is
+ * only worth knowing first.
+ *
+ * Both are decided from a prefix and a stat rather than from the extension. A
+ * build123d project is full of files whose names promise nothing: an export
+ * with no suffix, a .dat somebody wrote, a .step that is text and a .3mf that
+ * is a zip. The bytes know and the name does not.
+ *
+ * A file that cannot be stat'd or sniffed is allowed through, deliberately. The
+ * read below is about to fail in the same way and report it properly, and a
+ * guard that turns "I could not look" into "I refuse" would make an unreadable
+ * file indistinguishable from a rejected one.
+ */
+async function mayOpen(path) {
+  let size = null;
+  let head = null;
+  try {
+    const stats = await filesystem.getStats(path);
+    size = stats.size;
+    // Not on an empty file: there is nothing to sniff, and a zero-length read
+    // is the kind of edge a platform is entitled to have an opinion about.
+    if (size > 0) {
+      head = await filesystem.readBinaryFile(path, { pos: 0, size: Math.min(SNIFF_BYTES, size) });
+    }
+  } catch (error) {
+    log.info(`Could not examine ${path} before opening it: ${error?.message ?? error}`);
+    return true;
+  }
+
+  if (head !== null && looksBinary(new Uint8Array(head))) {
+    log.info(`Refused to open ${path}: not a text file`);
+    await notifyRefusal(
+      "Not a text file",
+      `${path}\n\nThe editor has nothing useful to show for it, and saving what it`
+        + " showed would destroy the file.",
+    );
+    return false;
+  }
+
+  if (!isLarge(size)) {
+    return true;
+  }
+  const answer = await askTwoWay({
+    title: "This is a large file",
+    detail: `${path}\n\n${describeSize(size)}. The whole of it goes to the language`
+      + " server when it opens and after every edit, so the editor may be slow to keep up.",
+    confirm: "Load",
+    cancel: "Cancel",
+  });
+  if (answer !== "confirm") {
+    log.info(`Did not open ${path}: ${describeSize(size)}, and the load was cancelled`);
+    return false;
+  }
+  return true;
+}
+
+/**
  * Open one known path, which is what the tree's rows do.
  *
  * The failure is reported rather than logged, because the tree can be showing a
@@ -599,6 +667,14 @@ export async function openFile() {
  * clicked is a worse answer than a sentence saying why.
  */
 export async function openPath(path) {
+  // A file already in a tab skips the questions, and not only to save the
+  // reading. It was answered for when it was opened, and being asked again
+  // about a file that is on screen - or refused one that is - would be the
+  // application arguing with itself.
+  if (bufferForPath(path) === null && !(await mayOpen(path))) {
+    return null;
+  }
+
   let content;
   try {
     content = await filesystem.readFile(path);

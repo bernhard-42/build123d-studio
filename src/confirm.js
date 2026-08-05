@@ -41,6 +41,25 @@ function build() {
  * @returns {Promise<"save"|"discard"|"cancel">}
  */
 export function askThreeWay({ title, detail, save, discard, cancel }) {
+  return ask({ title, detail, save, discard, cancel });
+}
+
+/**
+ * Ask a two-way question, the middle button left out.
+ *
+ * The same overlay rather than a second one, because the reason for building
+ * this one by hand applies unchanged: a question whose buttons say what they do
+ * cannot be misread, and "OK / Cancel" over a file that may take a while is
+ * exactly the pair that gets clicked without being read.
+ *
+ * @returns {Promise<"confirm"|"cancel">}
+ */
+export async function askTwoWay({ title, detail, confirm, cancel }) {
+  const answer = await ask({ title, detail, save: confirm, discard: null, cancel });
+  return answer === "save" ? "confirm" : "cancel";
+}
+
+function ask({ title, detail, save, discard, cancel }) {
   // One question at a time, and a second asker is told no rather than shown a
   // dialog.
   //
@@ -65,7 +84,12 @@ export function askThreeWay({ title, detail, save, discard, cancel }) {
   overlay.querySelector("#confirm-title").textContent = title;
   overlay.querySelector("#confirm-detail").textContent = detail;
   for (const [answer, label] of [["save", save], ["discard", discard], ["cancel", cancel]]) {
-    overlay.querySelector(`[data-answer="${answer}"]`).textContent = label;
+    const button = overlay.querySelector(`[data-answer="${answer}"]`);
+    // A label of null is a button this question does not have. Hidden rather
+    // than removed, because the overlay is built once and reused, and a button
+    // taken out of it would not come back for the next three-way question.
+    button.hidden = label === null || label === undefined;
+    button.textContent = button.hidden ? "" : label;
   }
   overlay.hidden = false;
 
@@ -119,10 +143,26 @@ export function askThreeWay({ title, detail, save, discard, cancel }) {
  * the window closes is the same as not reporting it.
  */
 export async function notifyFailure(title, detail) {
+  await showBox(title, detail, "ERROR");
+}
+
+/**
+ * Say that something will not be done, and wait until they have seen it.
+ *
+ * Separate from notifyFailure only in what it claims. Refusing to put a PNG in
+ * the editor is the application working, and an error icon over it would say
+ * that something went wrong with a file the user is perfectly entitled to have
+ * in their project.
+ */
+export async function notifyRefusal(title, detail) {
+  await showBox(title, detail, "WARNING");
+}
+
+async function showBox(title, detail, kind) {
   try {
-    await os.showMessageBox(title, detail, "OK", "ERROR");
+    await os.showMessageBox(title, detail, "OK", kind);
   } catch (error) {
-    // The dialog itself failing must not replace the failure being reported.
+    // The dialog itself failing must not replace what it was reporting.
     log.error("Could not show a message box:", error, "- the message was:", title, detail);
   }
 }

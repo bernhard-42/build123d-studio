@@ -157,15 +157,23 @@ export const filesystem = {
     return files.get(path);
   },
 
-  async readBinaryFile(path) {
-    record("readBinaryFile", [path]);
+  // Honours { pos, size }, because the application uses it to look at the front
+  // of a file without reading the rest - and a stub that quietly returned the
+  // whole thing would let a guard that reads too much pass.
+  async readBinaryFile(path, options = null) {
+    record("readBinaryFile", [path, options]);
     if (!files.has(path)) {
       missing(path);
     }
     const contents = files.get(path);
-    return typeof contents === "string"
+    const bytes = typeof contents === "string"
       ? new TextEncoder().encode(contents).buffer
       : contents;
+    if (options === null) {
+      return bytes;
+    }
+    const pos = options.pos ?? 0;
+    return bytes.slice(pos, pos + (options.size ?? bytes.byteLength - pos));
   },
 
   async writeFile(path, contents) {
@@ -214,7 +222,13 @@ export const filesystem = {
     return {
       isFile: true,
       isDirectory: false,
-      size: typeof contents === "string" ? contents.length : contents.byteLength,
+      // Bytes, as the real one reports, rather than the string's length - the
+      // two differ the moment a file has a character outside ASCII in it, and a
+      // size threshold measured in the wrong unit is a threshold in the wrong
+      // place.
+      size: typeof contents === "string"
+        ? new TextEncoder().encode(contents).byteLength
+        : contents.byteLength,
     };
   },
 
