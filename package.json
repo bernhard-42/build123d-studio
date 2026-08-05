@@ -15,6 +15,7 @@
     "test": "node --test \"src/**/*.test.mjs\"",
     "test:sidecar": "node scripts/sidecar-test.mjs",
     "test:integration": "node scripts/integration-test.mjs",
+    "test:frontend": "node scripts/frontend-test.mjs",
     "dev": "vite build --watch",
     "build": "node scripts/build-icons.mjs --ensure && vite build && node scripts/copy-client-lib.mjs",
     "start": "yarn build && node scripts/ensure-neutralino.mjs && neu run -- --window-enable-inspector=true",
@@ -32,6 +33,7 @@
   },
   "devDependencies": {
     "@neutralinojs/neu": "11.7.2",
+    "@playwright/test": "1.62.1",
     "eslint": "10.8.0",
     "vite": "8.1.5"
   }
