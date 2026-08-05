@@ -470,9 +470,54 @@ Write a comprehensive feature test suite: the panes, the editor, the viewer and 
 
 Its own phase, and after the whole of Phase 4, which is the rhythm this project already has: Phase 1 built, Phase 2 reviewed what it had built, Phase 3 tested the layer everything else is diagnosed through. A feature suite wants the features to have stopped moving, and the last thing Phase 4 does is change what `show` means.
 
-The alternative considered and rejected: writing the half that does not touch the viewer - editor, panes, workflows - before group 7, as a regression net for the restructure. It reads well and does not survive the detail. Group 7 changes the viewer's semantics _deliberately_ - every `show` reading the tree status first and reapplying it afterwards - so tests written against today's behaviour would be updated by design rather than catching anything, and a suite that has to be rewritten to go green teaches everyone to rewrite it.
+Writing the half that does not touch the viewer - editor, panes, workflows - before group 7 was rejected here first, on the grounds that group 7 changes the viewer's semantics _deliberately_ - every `show` reading the tree status first and reapplying it afterwards - so tests written against today's behaviour would be updated by design rather than catching anything. **That argument was wrong and the paragraph is kept only because the correction is worth reading.** It reasons about the viewer to justify excluding tests that, by its own definition, do not touch the viewer. Measured when the question came up again: `src/viewer/` is 719 lines across three files with two exports, imported by `main.js` alone, and it subscribes to the model frames itself - so group 7's frontend footprint is confined to it. The defensible line is narrower than "wait": **a test waits if it asserts on the viewer**, and everything else could be written at once. That is what was done.
 
 What this phase has to reach that nothing does today is the part Phase 3 explicitly left out. Phase 3's harnesses drive the sidecar over its WebSocket, which is the right layer for ipc and threading and the wrong one for "the dirty dot appeared on the tab". Several of Phase 4's defects were found only because the application was built and used by hand - a splitter with no width, a chevron with no glyph, a dirty mark a tick early - and deciding which of those a suite can honestly reach, and which stay a human test script, is the first question this phase answers rather than assumes.
+
+### The four suites, and how to run them
+
+Four now, and the split is about what each one can see rather than about speed. Run all four before proposing a commit.
+
+| command                 | what it drives                                          | what it can see                                            | count |
+| ----------------------- | ------------------------------------------------------- | ---------------------------------------------------------- | ----- |
+| `yarn test`             | pure modules in node                                     | logic with no DOM, no Neutralino, no Monaco                 | 351   |
+| `yarn test:sidecar`     | the Python classes directly, races widened               | which generation a pump holds, which ids count as internal  | 127   |
+| `yarn test:integration` | the real sidecar and a real kernel over the real socket  | anything that crosses that socket - never the DOM           | 68    |
+| `yarn test:frontend`    | the real application in a real engine                    | what is on screen, and only there                           | 82    |
+
+`yarn test:sidecar` and `yarn test:integration` need the application's own interpreter, and **the application must be quit before `yarn test:integration`** - both would otherwise drive the same environment. `yarn test:frontend` builds its own bundle first and needs nothing running.
+
+### The frontend harness
+
+`yarn test:frontend` runs the shipped application in Playwright's WebKit: the real `main.js`, the real Monaco, the real three-cad-viewer, the real stylesheet through the real `cssTarget`. It is not a model of the application, it _is_ the application - a harness that rebuilt it differently would be answering questions about the harness.
+
+**Three seams, and no more.** `@neutralinojs/lib` is aliased at build time to an in-memory stub of the thirty-odd native functions the application uses; `src/bootstrap/setup.js` is replaced so that no uv download runs; and `/__neutralino_globals.js`, which the native server injects and a browser 404s, is fulfilled per test. The sidecar is _not_ stubbed - Playwright routes the WebSocket, so the application opens a real socket and speaks the real binary frame protocol, with `src/frame.js` encoding both ends so the two cannot drift.
+
+**WebKit rather than Chromium, and that is the point of using a browser at all.** Two of Phase 4's defects were engine-specific and reproduce nowhere else: `▸`/`▾` have no glyph in WKWebView, and esbuild deleted the `-webkit-user-select` that WKWebView is the one engine to honour. Playwright's webkit is the same family as the macOS and Linux webviews. Windows uses WebView2, which is Chromium, and adding that project is one entry in `playwright.config.js` rather than a second harness.
+
+**Playwright is a devDependency, pinned exactly.** Its browser is downloaded to the developer's machine and never reaches a user's - which is the distinction the `pyright` rejection in group 3 was actually about, since that one fetched Node on a _user's_ first use.
+
+**The bundle goes to `tests/frontend/build` and never to `resources/`**, which is Neutralino's documentRoot with `emptyOutDir` set: building the test bundle over it would leave the packaged application wired to the stub, and the next `neu run` would look like a very confusing bug.
+
+### No test counts until it has been shown to fail
+
+`node tests/frontend/unapply.mjs` lists 23 named un-fixes; each removes exactly one guard from the shipped source, runs the whole suite, and puts the file back. The only acceptable result is that it fails exactly the tests written for it. Three of them remove a Monaco _contribution_ import one at a time and kill exactly the matching widget - which is the trap that left the editor with no completion of any kind before dev42, silently, because a provider registered without its widget is simply never asked.
+
+This is not ceremony. **Four tests were written, shown to prove nothing, and deleted**: a pane-overlap case that could never fail because the grid clips rather than overlapping; an undo-isolation case that passed in the suite and failed in isolation for an unrelated reason; an "empty cell sends nothing" case asserting a rule nobody had written down - a cell's code includes its own `# %%` line, so running an empty one sends a comment and advances `In[n]`, which is what Jupyter does too; and a scratch probe. Two of those would have shipped green and been believed.
+
+The tool restores the file by writing back the bytes it read, **not** with `git checkout` - which is what it did first, and which silently destroyed an uncommitted fix the suite was about.
+
+### What is covered, and what is not
+
+Eleven spec files, 82 tests, about 100 seconds. The panes and their splitters, including the re-measure when the file tree comes and goes; tabs, their disambiguation and the dirty mark's timing; one Monaco model per buffer; the five run chords; the folder rules and the working directory that follows from them; the single unsaved-work prompt and what each of its three answers does; saving, Save As and the New File template; the four language features as they appear on screen; the console, the variable explorer and the toolbar indicator; the four Settings buttons and the shortcut editor; the debug UI, including the pane swap; and `show()` rendering real geometry.
+
+The viewer is deliberately covered only to "a model frame renders", which is stable across group 7. Its fixture is a real tessellation captured from the pinned kernel - `Box(1, 2, 3)` through `_convert` and the kernel's own `split_buffers` - rather than a header written by hand, because `rehydrate()` reads dtypes and offsets that ocp_tessellate chose and an invented header would only prove that the test agrees with itself.
+
+**What a suite cannot honestly reach, which was this phase's first question.** Glyph _availability_ is the clearest answer: Playwright's WebKit does have a glyph for U+25B8 - measured, 7.23px against 16.23px for the replacement character - so the defect that made the file tree's chevrons render as dots does not reproduce here. What the suite can hold is that the application keeps using the bundled font instead of trusting one; whether a bare character would render stays a human test on a real build. The same caution applies to anything about fonts, native menus and window chrome.
+
+### Found by writing it
+
+The variable explorer was drawing its expand marker as a literal `▸`/`▾` - exactly what the file tree did before group 2 replaced it with the bundled icon subset. Nobody was looking for it: the two panes were drawing one control two different ways, and a test written about the tree's chevron had no counterpart in the explorer. Fixed in `d23682a`.
 
 ## Phase 6 "Code review of phase 4"
 
