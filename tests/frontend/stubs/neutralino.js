@@ -96,6 +96,22 @@ globalThis.__NEUTRALINO_STUB__ = {
   answerDialogWith: (value) => answerDialogWith(value),
   exitNextSpawnWith: (code) => exitNextSpawnWith(code),
   emit: (name, detail) => emit(name, detail),
+  // Deleting from outside the application, which is what a terminal does and
+  // what left the tree remembering folders that were gone.
+  removePath: (path) => {
+    files.delete(path);
+    dirs.delete(path);
+    for (const key of [...files.keys()]) {
+      if (key.startsWith(`${path}/`)) {
+        files.delete(key);
+      }
+    }
+    for (const key of [...dirs]) {
+      if (key.startsWith(`${path}/`)) {
+        dirs.delete(key);
+      }
+    }
+  },
   calls: () => calls.map((call) => ({ ...call })),
   reset: () => reset(),
 };

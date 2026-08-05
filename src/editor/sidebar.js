@@ -23,6 +23,7 @@ import {
   isInside,
   joinPath,
   nameProblem,
+  parentOf,
   separatorOf,
   targetFolder,
   visibleEntries,
@@ -164,10 +165,58 @@ export async function refreshSidebar() {
   if (root === null) {
     return;
   }
-  for (const path of [...expanded]) {
+  // Shallowest first, so a folder is re-read before the children that claim to
+  // be under it - which is what lets the prune below see a whole deleted
+  // subtree rather than only its top.
+  for (const path of [...expanded].sort((a, b) => a.length - b.length)) {
     await read(path);
   }
+  forgetWhatIsGone();
   render();
+}
+
+/**
+ * Drop what the last read says is no longer there.
+ *
+ * Without this the tree remembers deleted folders for ever: `read` answers an
+ * unreadable directory with an empty listing rather than an error, so a folder
+ * removed from a terminal stays in `expanded` and stays selected. Nothing shows
+ * it - the row is gone, because its parent no longer lists it - and then New
+ * file quietly does nothing, because the row it wants to add is a child of a
+ * folder the render never visits. That was the bug: both buttons dead after an
+ * external delete and a refresh, with no error anywhere.
+ */
+function forgetWhatIsGone() {
+  const lists = (parent, path) => {
+    const listing = children.get(parent);
+    // An unknown parent is not evidence of absence - only a parent we have just
+    // read and which does not mention it.
+    return listing === undefined
+      || listing.some((entry) => joinPath(parent, entry.name) === path);
+  };
+
+  for (const path of [...expanded].sort((a, b) => a.length - b.length)) {
+    const parent = parentOf(path);
+    if (path === root || parent === null) {
+      continue;
+    }
+    if (!expanded.has(parent) && parent !== root) {
+      // Its parent is collapsed, so nothing has been read that could disprove
+      // it. Left alone.
+      continue;
+    }
+    if (!lists(parent, path)) {
+      expanded.delete(path);
+      children.delete(path);
+    }
+  }
+
+  if (selected !== null && selected !== root) {
+    const parent = parentOf(selected);
+    if (parent !== null && !lists(parent, selected)) {
+      selected = null;
+    }
+  }
 }
 
 async function read(path) {
@@ -236,6 +285,7 @@ function render() {
   }
   document.getElementById("tree-root").textContent = baseName(root);
   document.getElementById("tree-root").title = root;
+  describeCreateTargets();
   body.replaceChildren(...rowsUnder(root, 0, []).map(
     (row) => (row.pending === true ? renderPendingRow(row.depth) : renderRow(row)),
   ));
@@ -246,6 +296,9 @@ function renderRow(row) {
   const classes = ["tree-row", row.isDirectory ? "tree-dir" : "tree-file"];
   if (row.path === active) {
     classes.push("tree-active");
+  }
+  if (row.path === selected) {
+    classes.push("tree-selected");
   }
   element.className = classes.join(" ");
   element.style.paddingLeft = `${6 + row.depth * 14}px`;
@@ -276,6 +329,10 @@ function renderRow(row) {
 
   element.addEventListener("click", () => {
     selected = row.path;
+    // Named on the buttons as well as marked on the row, because the tree can
+    // be scrolled away from whatever is selected - and "New file" with no
+    // indication of where is a question with a hidden second half.
+    describeCreateTargets();
     if (row.isDirectory) {
       toggle(row.path).catch((error) => log.warn("Could not expand the folder:", error));
       return;
@@ -283,6 +340,34 @@ function renderRow(row) {
     openFile(row.path);
   });
   return element;
+}
+
+/** Whether this path is a directory right now, according to the filesystem. */
+async function isFolder(path) {
+  try {
+    const stats = await filesystem.getStats(path);
+    return stats.isDirectory === true;
+  } catch {
+    return false;
+  }
+}
+
+/** Say on the buttons which folder they would create in. */
+function describeCreateTargets() {
+  if (root === null) {
+    return;
+  }
+  const isDirectory = selected !== null && children.has(selected);
+  const folder = targetFolder(root, selected, isDirectory);
+  const where = folder === root ? baseName(root) : baseName(folder);
+  const file = document.getElementById("tree-new-file");
+  const directory = document.getElementById("tree-new-folder");
+  if (file !== null) {
+    file.title = `New file in ${where}`;
+  }
+  if (directory !== null) {
+    directory.title = `New folder in ${where}`;
+  }
 }
 
 /**
@@ -300,7 +385,17 @@ async function beginCreating(kind) {
     return;
   }
   const isDirectory = selected !== null && children.has(selected);
-  const folder = targetFolder(root, selected, isDirectory);
+  let folder = targetFolder(root, selected, isDirectory);
+  // Asked of the filesystem rather than of what is remembered. The selection
+  // can name something deleted from outside the application since it was
+  // clicked, and creating into a folder that is not there fails in the worst
+  // way available - the row never appears, because render walks the tree from
+  // the root and never reaches it.
+  if (folder !== root && !(await isFolder(folder))) {
+    log.info(`${folder} is gone; creating in ${root} instead`);
+    selected = null;
+    folder = root;
+  }
   if (!children.has(folder)) {
     await read(folder);
   }

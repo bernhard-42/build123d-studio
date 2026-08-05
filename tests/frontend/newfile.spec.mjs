@@ -114,6 +114,40 @@ test.describe("naming it in the tree", () => {
   });
 });
 
+test.describe("which folder the buttons mean", () => {
+  test("clicking a folder marks it, so you can see what is selected", async ({ page }) => {
+    // Reported as "I cannot select a folder": the click did select it, and
+    // nothing on screen said so - the only mark in the tree was the file the
+    // editor was showing, which a folder can never be.
+    await openApp(page);
+
+    await page.locator(".tree-dir", { hasText: "parts" }).click();
+
+    await expect(page.locator(".tree-dir.tree-selected")).toHaveText(/parts/);
+  });
+
+  test("and the buttons name the folder they would create in", async ({ page }) => {
+    // The tree can be scrolled away from the selection, so the mark alone is
+    // not enough to answer "where would this go".
+    await openApp(page);
+    await expect(page.locator("#tree-new-file")).toHaveAttribute("title", "New file in bracket");
+
+    await page.locator(".tree-dir", { hasText: "parts" }).click();
+
+    await expect(page.locator("#tree-new-file")).toHaveAttribute("title", "New file in parts");
+    await expect(page.locator("#tree-new-folder")).toHaveAttribute("title", "New folder in parts");
+  });
+
+  test("selecting a file names its folder, not the file", async ({ page }) => {
+    await openApp(page);
+    await page.locator(".tree-dir", { hasText: "parts" }).click();
+
+    await page.locator(".tree-file", { hasText: "plate.py" }).click();
+
+    await expect(page.locator("#tree-new-file")).toHaveAttribute("title", "New file in parts");
+  });
+});
+
 test.describe("a new folder", () => {
   test("opens as untitled with no extension, and is expanded once made", async ({ page }) => {
     await openApp(page);
@@ -137,5 +171,50 @@ test.describe("a new folder", () => {
     await page.keyboard.press("Enter");
 
     await expect.poll(() => madeDirectories(page)).toContain(`${PROJECT}/parts/small`);
+  });
+});
+
+test.describe("after the folder is deleted from outside", () => {
+  test("a refresh forgets it, and the buttons still work", async ({ page }) => {
+    // Reported after deleting files and folders in a terminal: the refresh
+    // looked right and both buttons then did nothing at all. `read` answers an
+    // unreadable directory with an empty listing rather than an error, so the
+    // deleted folder stayed selected - and the new row, being its child, was
+    // never rendered, because the walk from the root no longer reaches it.
+    await openApp(page);
+    await page.locator(".tree-dir", { hasText: "parts" }).click();
+    await expect(page.locator("#tree-new-file")).toHaveAttribute("title", "New file in parts");
+
+    await page.evaluate(
+      (path) => globalThis.__NEUTRALINO_STUB__.removePath(path),
+      `${PROJECT}/parts`,
+    );
+    await page.locator("#tree-refresh").click();
+    await expect(page.locator(".tree-dir", { hasText: "parts" })).toHaveCount(0);
+
+    await expect(page.locator("#tree-new-file")).toHaveAttribute("title", "New file in bracket");
+    await page.locator("#tree-new-file").click();
+    await page.locator("#tree-new-name").fill("after-delete.py");
+    await page.keyboard.press("Enter");
+
+    await expect.poll(() => wrote(page, `${PROJECT}/after-delete.py`)).toBe("");
+  });
+
+  test("and it works even without a refresh first", async ({ page }) => {
+    // The tree cannot know until something reads the directory again, so the
+    // click checks the filesystem rather than trusting what it remembers.
+    await openApp(page);
+    await page.locator(".tree-dir", { hasText: "parts" }).click();
+
+    await page.evaluate(
+      (path) => globalThis.__NEUTRALINO_STUB__.removePath(path),
+      `${PROJECT}/parts`,
+    );
+
+    await page.locator("#tree-new-file").click();
+    await page.locator("#tree-new-name").fill("fallback.py");
+    await page.keyboard.press("Enter");
+
+    await expect.poll(() => wrote(page, `${PROJECT}/fallback.py`)).toBe("");
   });
 });
