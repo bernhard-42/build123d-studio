@@ -38,6 +38,7 @@ const ICONS = {
   interrupt: "stop_circle",
   restart: "restart_alt",
   refresh: "refresh",
+  "new-folder": "create_new_folder",
   chevron: "chevron_right",
   sidebar: "left_panel_open",
   upgrade: "deployed_code_update",

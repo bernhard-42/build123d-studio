@@ -77,6 +77,11 @@
   content: "\e5d5";
 }
 
+/* create_new_folder */
+.icon-new-folder::before {
+  content: "\e2cc";
+}
+
 /* chevron_right */
 .icon-chevron::before {
   content: "\e5cc";

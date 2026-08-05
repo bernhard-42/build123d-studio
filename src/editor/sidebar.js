@@ -17,7 +17,17 @@
 
 import { filesystem } from "@neutralinojs/lib";
 
-import { baseName, isInside, joinPath, separatorOf, visibleEntries } from "./tree.js";
+import {
+  baseName,
+  freeName,
+  isInside,
+  joinPath,
+  nameProblem,
+  separatorOf,
+  targetFolder,
+  visibleEntries,
+} from "./tree.js";
+import { notifyFailure } from "../confirm.js";
 import { getSetting, setSetting } from "../store.js";
 import { refreshLayout } from "../layout/splitter.js";
 import * as log from "../log.js";
@@ -36,6 +46,14 @@ let hidden = false;
 let visible = false;
 // The file the editor is showing, so the tree can say which one it is.
 let active = null;
+// The row last clicked, which is a different thing: it can be a folder, and a
+// folder is never "active" because opening one is not showing it. This is what
+// New file and New folder create beside - see targetFolder.
+let selected = null;
+// A row being named. It exists in the tree and not on disk: nothing is created
+// until the name is accepted, so changing your mind leaves no untitled.py
+// behind to tidy up. { kind, folder, name } or null.
+let pending = null;
 // Which directories are showing their contents, and what those contents are.
 // Both are keyed by full path, so an expanded folder stays expanded across a
 // refresh even if its parent's listing changed underneath it.
@@ -47,6 +65,12 @@ export function initSidebar({ onOpenFile }) {
   hidden = getSetting(HIDDEN_KEY) === true;
   document.getElementById("tree-refresh").addEventListener("click", () => {
     refreshSidebar().catch((error) => log.warn("Could not refresh the tree:", error));
+  });
+  document.getElementById("tree-new-file").addEventListener("click", () => {
+    beginCreating("file").catch((error) => log.warn("Could not start a new file:", error));
+  });
+  document.getElementById("tree-new-folder").addEventListener("click", () => {
+    beginCreating("folder").catch((error) => log.warn("Could not start a new folder:", error));
   });
   // Draw once with no folder, which is what greys the toolbar's toggle before
   // anything has been opened.
@@ -164,6 +188,12 @@ async function read(path) {
 
 /** Flatten the expanded parts of the tree into the rows actually on screen. */
 function rowsUnder(path, depth, out) {
+  // The row being named comes first in its folder, where the eye already is
+  // after clicking the button - rather than in sort position, which for
+  // "untitled" is usually the bottom of a long list.
+  if (pending !== null && pending.folder === path) {
+    out.push({ pending: true, depth });
+  }
   for (const entry of children.get(path) ?? []) {
     const full = joinPath(path, entry.name);
     out.push({ ...entry, path: full, depth });
@@ -206,7 +236,9 @@ function render() {
   }
   document.getElementById("tree-root").textContent = baseName(root);
   document.getElementById("tree-root").title = root;
-  body.replaceChildren(...rowsUnder(root, 0, []).map(renderRow));
+  body.replaceChildren(...rowsUnder(root, 0, []).map(
+    (row) => (row.pending === true ? renderPendingRow(row.depth) : renderRow(row)),
+  ));
 }
 
 function renderRow(row) {
@@ -243,12 +275,177 @@ function renderRow(row) {
   element.appendChild(label);
 
   element.addEventListener("click", () => {
+    selected = row.path;
     if (row.isDirectory) {
       toggle(row.path).catch((error) => log.warn("Could not expand the folder:", error));
       return;
     }
     openFile(row.path);
   });
+  return element;
+}
+
+/**
+ * Put an editable row in the tree, in the folder the selection points at.
+ *
+ * Nothing is written yet. The row exists here and not on disk, which is what
+ * makes changing your mind free - the alternative, creating untitled.py and
+ * renaming it afterwards, leaves one behind every time somebody presses Escape.
+ *
+ * The folder is expanded first, or the row would be a child of something the
+ * user cannot see.
+ */
+async function beginCreating(kind) {
+  if (root === null) {
+    return;
+  }
+  const isDirectory = selected !== null && children.has(selected);
+  const folder = targetFolder(root, selected, isDirectory);
+  if (!children.has(folder)) {
+    await read(folder);
+  }
+  expanded.add(folder);
+  const existing = (children.get(folder) ?? []).map((entry) => entry.name);
+  pending = {
+    kind,
+    folder,
+    // Already typed, so Enter alone makes a file - and numbered, so Enter twice
+    // makes two rather than one failure.
+    name: freeName("untitled", kind === "folder" ? "" : ".py", existing),
+  };
+  render();
+  focusPendingRow();
+}
+
+/** Select the part worth retyping: the name, not the extension. */
+function focusPendingRow() {
+  const field = document.getElementById("tree-new-name");
+  if (field === null) {
+    return;
+  }
+  field.focus();
+  const dot = field.value.lastIndexOf(".");
+  field.setSelectionRange(0, dot > 0 ? dot : field.value.length);
+}
+
+function cancelCreating() {
+  if (pending === null) {
+    return;
+  }
+  pending = null;
+  render();
+}
+
+/** Write it, and show what was made rather than leaving it to be found. */
+async function commitCreating(name) {
+  if (pending === null) {
+    return;
+  }
+  const { kind, folder } = pending;
+  const path = joinPath(folder, name);
+  pending = null;
+
+  try {
+    if (kind === "folder") {
+      await filesystem.createDirectory(path);
+    } else {
+      // Empty, and deliberately not the New File template: that template
+      // explains the run chords to somebody meeting the application, and a file
+      // made inside an existing project is not that moment.
+      await filesystem.writeFile(path, "");
+    }
+  } catch (error) {
+    log.warn(`Could not create ${path}:`, error);
+    render();
+    await notifyFailure(
+      kind === "folder" ? "Could not create the folder" : "Could not create the file",
+      `${path}\n\n${error?.message ?? error}`,
+    );
+    return;
+  }
+
+  log.info(`Created ${path}`);
+  // Only the folder it went into is re-read: nothing else changed, and a
+  // refresh of the whole tree would be a lot of directory reads to show one
+  // new row.
+  await read(folder);
+  selected = path;
+  if (kind === "folder") {
+    expanded.add(path);
+    await read(path);
+    render();
+    return;
+  }
+  render();
+  openFile(path);
+}
+
+/** The row being named: an input where a label would be. */
+function renderPendingRow(depth) {
+  const element = document.createElement("div");
+  element.className = `tree-row ${pending.kind === "folder" ? "tree-dir" : "tree-file"}`;
+  element.style.paddingLeft = `${6 + depth * 14}px`;
+
+  const twisty = document.createElement("span");
+  twisty.className = "tree-twisty";
+  element.appendChild(twisty);
+
+  const field = document.createElement("input");
+  field.className = "tree-input";
+  field.id = "tree-new-name";
+  field.type = "text";
+  field.spellcheck = false;
+  field.autocomplete = "off";
+  field.value = pending.name;
+
+  const problem = document.getElementById("tree-problem");
+  const say = (text) => {
+    if (problem !== null) {
+      problem.textContent = text ?? "";
+      problem.hidden = text === null || text === undefined;
+    }
+  };
+
+  field.addEventListener("input", () => {
+    pending.name = field.value;
+    const existing = (children.get(pending.folder) ?? []).map((entry) => entry.name);
+    say(field.value.trim() === "" ? null : nameProblem(field.value, existing));
+  });
+
+  field.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      say(null);
+      cancelCreating();
+      return;
+    }
+    if (event.key !== "Enter") {
+      return;
+    }
+    event.preventDefault();
+    const existing = (children.get(pending.folder) ?? []).map((entry) => entry.name);
+    const why = nameProblem(field.value, existing);
+    if (why !== null) {
+      // Said, and the row stays open. Refusing silently would look like Enter
+      // not working.
+      say(why);
+      return;
+    }
+    say(null);
+    commitCreating(field.value.trim())
+      .catch((error) => log.warn("Could not create it:", error));
+  });
+
+  // Clicking away is a cancel, as it is in VS Code. Deferred a tick so that a
+  // click on the row's own input does not cancel it before it is read.
+  field.addEventListener("blur", () => setTimeout(() => {
+    if (pending !== null) {
+      say(null);
+      cancelCreating();
+    }
+  }, 0));
+
+  element.appendChild(field);
   return element;
 }
 

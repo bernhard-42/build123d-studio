@@ -191,6 +191,12 @@ Done, in five commits. What changed, and what it cost to find out.
 
 **Asking about unsaved work once was the point of piece 4, not Save All.** The prompt had grown from one file to a loop over many, and five questions in a row is how people learn to dismiss a dialog without reading it. One prompt, one list, and the same implementation behind quitting, closing a tab, Close All and both folder commands - which is what stops them drifting into asking differently.
 
+**Afterwards: making a file, and making a folder.** There was no way to create a folder at all - Open Folder chooses an existing one and Save As will not make one - so a project's first `parts/` had to be made outside the application. Two buttons in the tree header, and the naming happens in the tree rather than in a dialog.
+
+**Nothing is written until the name is accepted**, which is the half worth stating. The obvious implementation creates `untitled.py` and lets it be renamed, and it leaves one behind every time somebody presses Escape; an editable row that exists in the tree and not on disk costs a little more code and cannot litter. The row opens with `untitled.py` already typed and `untitled` selected - not the extension, because what gets retyped is the name - and the default is numbered so that pressing Enter twice makes two files rather than one failure.
+
+It goes beside the selection: inside a selected folder, next to a selected file, at the root when nothing is selected. That needed a selection separate from the active tab, because a folder can be selected and a folder is never *active* - opening one is not showing it. A name that is taken or carries a slash is refused with a line under the header, and the row stays open; refusing silently reads as Enter not working. Taken is compared case-insensitively, because two of the three platforms are.
+
 **Open Folder, decided.** One folder at a time, which is VS Code's model without multi-root workspaces - and it is what makes "the project root" a well-defined thing for the kernel's working directory to be.
 
 **A folder is the project, and the project is the whole session.** That is the sentence the rest follows from. Both folder commands take everything with them rather than editing part of it: Open Folder is a context reset and Close Folder is a context close, so the answer to "what happens to my tabs" is always all of them, never some. The alternative - keeping the tabs that happened to live outside the old folder - was considered and dropped, because "which tabs survive this" then depends on where each file sits, which is a rule the user has to hold in their head to predict what a menu item will do.
@@ -297,7 +303,15 @@ Done: the uv pin, the New File template, the language support - completion, sign
 
 **One thing is not reported and is not a fault.** `bd.<typo>` is not flagged, because `Builder` defines `__getattr__` and a class with one may legitimately answer to any attribute; `Box` has none, so `c.part` is flagged. The irony is that `Builder.__getattr__` exists only to raise a friendlier `AttributeError`, and that message is what suppresses the static one. Guarding it with `if not TYPE_CHECKING:` upstream restores the check and keeps the runtime message - one line, in build123d, and measured rather than assumed. No workaround was added here: the only ones available would guess at which classes to distrust, and a checker that invents errors is worse than one that misses some.
 
-**Afterwards: the editor was missing most of what an editor does, and the palette is what said so.** F1 was added because there was no command palette, and the palette then listed twelve actions - ours - and essentially nothing else. There was no Find, no Replace, no comment toggle, no way to move a line. `editor.api.js` is the API only and every action belongs to a *contribution*, so an editor imports its own vocabulary; this one had imported six. Thirty-one more are now named one line at a time rather than through `features/register.all.js`, which brings the diff editor and the iPad keyboard, and which - measured - does **not** bring the suggestion widget, so it would have silently undone the completion fix above. +63 kB gzipped. Two are deliberately left out: `toggleHighContrast`, because `theme.js` owns the editor theme and a command that swaps it underneath leaves the two disagreeing, and `inspectTokens`, which is a developer tool in a user's palette. Folding also earns back the sixteen pixels the gutter had been reserving for a folding column nothing could draw in.
+**Afterwards: the editor was missing most of what an editor does, and the palette is what said so.** F1 was added because there was no command palette, and the palette then listed twelve actions - ours - and essentially nothing else. There was no Find, no Replace, no comment toggle, no way to move a line. `editor.api.js` is the API only and every action belongs to a _contribution_, so an editor imports its own vocabulary; this one had imported six. Thirty-one more are now named one line at a time rather than through `features/register.all.js`, which brings the diff editor and the iPad keyboard, and which - measured - does **not** bring the suggestion widget, so it would have silently undone the completion fix above. +63 kB gzipped. Two are deliberately left out: `toggleHighContrast`, because `theme.js` owns the editor theme and a command that swaps it underneath leaves the two disagreeing, and `inspectTokens`, which is a developer tool in a user's palette. Folding also earns back the sixteen pixels the gutter had been reserving for a folding column nothing could draw in.
+
+**Run File and Run All were one word, and the word was wrong.** What the toolbar called Run File never touched a file: it sent the buffer's text to the kernel, where its names stayed in the namespace the console shares. That is Run All, on Alt-Enter, beside the three other things that also run on the kernel. Run File is now what the name says - save the buffer, run the file from disk in a process of its own - which makes it the debugger without the debugger, and the sidecar's relay is reused rather than rebuilt: the same interpreter, the same environment, so a `show()` reaches the viewer already on screen, and the same pipe, because a `print()` never arrived as a DAP event either.
+
+The panes swap exactly as they do for debugging, because the rule is the same one - while something else is running, every pane describes that something else - and the only difference is that there are no step controls, since there is nothing to step. That is also the only difference in VS Code.
+
+**Which is why the chords are VS Code's now.** F5 debugs and continues a paused session, Ctrl-F5 runs, Shift-F5 stops, Ctrl-Shift-F5 restarts. F5 used to mean "run the buffer on the kernel", which is what pushed Debug File onto Shift-F5 and Continue onto **F8** - and F8 is what the `gotoError` contribution binds to "next problem", so the two collided the moment the editing contributions landed. Realigning frees it. Run All keeps the Enter family together at the cost of one narrow collision: `findController` binds Alt-Enter to Select All Matches, preconditioned on the find widget being visible, where that action also has a button.
+
+Two things found by building it. **`.btn` sets `display: inline-flex`, which beats the user agent's rule for `[hidden]`** - so `hidden = true` on a toolbar button did nothing whatever until a plain run needed the step controls gone rather than merely greyed. Nobody had noticed because every previous case disabled them instead. And the Stop button is shared, so it has to mean whichever of the two is running; always stopping the debugger would leave a run with no way out but quitting.
 
 **And formatting, which is black in the sidecar.** In process rather than `python -m black -`: measured at 2.2 ms for an ordinary file against an interpreter start per keystroke, and about 0.25 ms a line, so six thousand lines is 1.5 s - which is why it has a lane of its own rather than sharing completion's. basedpyright has no formatter and never had one, so this is a second tool and a pinned dependency, `black==26.5.1`.
 
@@ -460,17 +474,21 @@ Done. The design held; every claim made about the consequences was wrong in some
 ### 7. OCP VS Code integration
 
 Last, and deliberately so. It is the only group whose scope leaves this repository - ocp_vscode has to be restructured, in its own project, to serve jupyter-cadquery and build123d Studio both - so it wants a base that has stopped moving under it.
+
+Current design: ~/Desktop/viewer-ecosystem.pptx
+
 Current workflows:
 
-- ocp_vscode: ocp_vscode show module => ocp_vscode comms module => viewer.html => three-cad-viewer
+- ocp_vscode: ocp_vscode show module => ocp_vscode comms module => VS Code extension => viewer.html => three-cad-viewer (golden master: the implemented behavior is ground truth, but can be implemented differently)
 - jupyter cadquery: ocp_vscode show module => jupyter_cadquery comms module => cad-viewer-widget => three-cad-viewer
 
 Goals
 
-- ocp_vscode, jupyter_cadquery and build123d_studio should have an encapsulated comms class that gets injected into the show class/functions
+- ocp_vscode, jupyter_cadquery and build123d_studio should have their own encapsulated comms approach that gets used/injected into the show class/functions
 - the logic of ocp_vscode viewer.html needs to be shared/replicated
 - show_clear, show_object, push_object, show_objects, show_all, set_defaults, get_defaults, set_default, workspace_cofig, combined_config, status, ... need to work (Note in a separate project ocp_vscode needs to be restructured to better work with jupyter-cadquery and build123d studio)
 - every show should first get the tree status (see "status" in ocp_vscode) and apply it after show to keep the user intent on what to show. At the end, this is what viewer.html in ocp-vscode does. We need to understand what it does and what and how to replicate it.
+- splitting into ocp_viewer (shared code) and ocp_vscode (the VS Code specific parts) is an option, but not strictly required
 
 ## Phase 5 "Feature test suite"
 
@@ -484,14 +502,16 @@ What this phase has to reach that nothing does today is the part Phase 3 explici
 
 ### The four suites, and how to run them
 
-Four now, and the split is about what each one can see rather than about speed. Run all four before proposing a commit.
+Four now, and the split is about what each one can see rather than about speed.
+
+**Run what the change can reach, and run it when there is something to decide.** While iterating, the narrowest thing that answers the question - one test file, one spec. Before proposing a commit, the suites the change can actually affect: a Python-only change does not reach the frontend, and a frontend-only change does not reach the sidecar. Where a change genuinely crosses the boundary, the specific test on the other side is what to run, not the whole suite behind it. All four together is a release's answer, not an edit's.
 
 | command                 | what it drives                                          | what it can see                                            | count |
 | ----------------------- | ------------------------------------------------------- | ---------------------------------------------------------- | ----- |
-| `yarn test`             | pure modules in node                                     | logic with no DOM, no Neutralino, no Monaco                 | 351   |
-| `yarn test:sidecar`     | the Python classes directly, races widened               | which generation a pump holds, which ids count as internal  | 127   |
-| `yarn test:integration` | the real sidecar and a real kernel over the real socket  | anything that crosses that socket - never the DOM           | 68    |
-| `yarn test:frontend`    | the real application in a real engine                    | what is on screen, and only there                           | 82    |
+| `yarn test`             | pure modules in node                                    | logic with no DOM, no Neutralino, no Monaco                | 395   |
+| `yarn test:sidecar`     | the Python classes directly, races widened              | which generation a pump holds, which ids count as internal | 140   |
+| `yarn test:integration` | the real sidecar and a real kernel over the real socket | anything that crosses that socket - never the DOM          | 68    |
+| `yarn test:frontend`    | the real application in a real engine                   | what is on screen, and only there                          | 128   |
 
 `yarn test:sidecar` and `yarn test:integration` need the application's own interpreter, and **the application must be quit before `yarn test:integration`** - both would otherwise drive the same environment. `yarn test:frontend` builds its own bundle first and needs nothing running.
 
@@ -509,15 +529,17 @@ Four now, and the split is about what each one can see rather than about speed. 
 
 ### No test counts until it has been shown to fail
 
-`node tests/frontend/unapply.mjs` lists 23 named un-fixes; each removes exactly one guard from the shipped source, runs the whole suite, and puts the file back. The only acceptable result is that it fails exactly the tests written for it. Three of them remove a Monaco _contribution_ import one at a time and kill exactly the matching widget - which is the trap that left the editor with no completion of any kind before dev42, silently, because a provider registered without its widget is simply never asked.
+A test is proved by taking its fix out: the guard removed from the shipped source, the suite run, the file put back. The only acceptable result is that it fails exactly the tests written for it. Four of these remove a Monaco _contribution_ import one at a time and kill exactly the matching widget - which is the trap that left the editor with no completion of any kind before dev42, silently, because a provider registered without its widget is simply never asked.
 
 This is not ceremony. **Four tests were written, shown to prove nothing, and deleted**: a pane-overlap case that could never fail because the grid clips rather than overlapping; an undo-isolation case that passed in the suite and failed in isolation for an unrelated reason; an "empty cell sends nothing" case asserting a rule nobody had written down - a cell's code includes its own `# %%` line, so running an empty one sends a comment and advances `In[n]`, which is what Jupyter does too; and a scratch probe. Two of those would have shipped green and been believed.
 
-The tool restores the file by writing back the bytes it read, **not** with `git checkout` - which is what it did first, and which silently destroyed an uncommitted fix the suite was about.
+**It is proved once, and the proof is written down rather than kept runnable.** Every spec file carries what was removed from it and what went red, in its own header. A catalogue of 27 of them lived in `tests/frontend/unapply.mjs` and has been deleted, for three reasons that all point the same way. Re-running it re-proves what has not changed, at about 55 minutes for a full pass, because the suite cannot be parallelised - `playwright.config.js` sets `workers: 1` so that a layout assertion does not become a timing one. It patched files in the live working tree with only a `finally` protecting the restore, and no signal handler, so an interrupted run left a guard deleted from the source; an earlier version restored with `git checkout` and destroyed an uncommitted fix the suite was about. And "refuse to run on a dirty file" is not available as a guard, because proving a _new_ test is exactly the case where the fix is uncommitted.
+
+So a new test that wants proving gets a throwaway script, outside the repository, deleted the moment the test is validated. Nothing that can un-apply a fix should be sitting in the tree where it can be run by accident.
 
 ### What is covered, and what is not
 
-Eleven spec files, 82 tests, about 100 seconds. The panes and their splitters, including the re-measure when the file tree comes and goes; tabs, their disambiguation and the dirty mark's timing; one Monaco model per buffer; the five run chords; the folder rules and the working directory that follows from them; the single unsaved-work prompt and what each of its three answers does; saving, Save As and the New File template; the four language features as they appear on screen; the console, the variable explorer and the toolbar indicator; the four Settings buttons and the shortcut editor; the debug UI, including the pane swap; and `show()` rendering real geometry.
+Fourteen spec files, 128 tests, about two and a half minutes. The panes and their splitters, including the re-measure when the file tree comes and goes; tabs, their disambiguation and the dirty mark's timing; one Monaco model per buffer; the five run chords; the folder rules and the working directory that follows from them; the single unsaved-work prompt and what each of its three answers does; saving, Save As and the New File template; the four language features as they appear on screen, the command palette they are all findable in, the editing contributions - find, comment toggling, folding - and formatting, on the chord and on save; the console, the variable explorer and the toolbar indicator; the four Settings buttons and the shortcut editor; the debug UI and the console pane's two tabs; what opening a file refuses and what it asks about first; making a file or a folder from the tree; and `show()` rendering real geometry.
 
 The viewer is deliberately covered only to "a model frame renders", which is stable across group 7. Its fixture is a real tessellation captured from the pinned kernel - `Box(1, 2, 3)` through `_convert` and the kernel's own `split_buffers` - rather than a header written by hand, because `rehydrate()` reads dtypes and offsets that ocp_tessellate chose and an invented header would only prove that the test agrees with itself.
 
@@ -531,9 +553,11 @@ The variable explorer was drawing its expand marker as a literal `▸`/`▾` - e
 
 ### 1 Reviews
 
+4 reviews:
+
 - Architecture and design review (follow the structure of reviews.md)
 - Implementation review (follow the structure of reviews.md)
-- Filesystem use review: This is mainly an editor and we shall not loose data (code) nor shall we delete data outside of the editors hierarchy: Are all file actions save. It is an editor, we shall not loose code. Verified saves. No unguarded file hierarchy deletions (list all file hierarchy deletions in the code)
+- Filesystem review: This is mainly an editor and we shall not loose data (code) nor shall we delete data outside of the editors hierarchy: Are all file actions save. It is an editor, we shall not loose code. Verified saves. No unguarded file hierarchy deletions (list all file hierarchy deletions in the code)
 - Structure review: Are the folders logically grouped? Do different folders serve the same purpose? Examples: two top level python folders one with build123d_studio subfolder. dist + release folder. public/icons + resources + bin + cli
 
 ### 2 Fix all findings
@@ -547,9 +571,6 @@ Write comprehensive docs (a Readme + mode docs if needed)
 ### BUGS:
 
 ### FEATURES:
-
-- Clicking on a file in the file tree should determine whether it is text or not. If not dont open it (show a dialog)
-- The space for the breakpoints can be much smaller in horizontal direction (a bit more then 1/3)
 
 ### DESIGN ISSUES
 

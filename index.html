@@ -70,10 +70,19 @@
         <aside class="pane-tree" id="pane-tree" hidden>
           <div class="tree-header">
             <span class="tree-root" id="tree-root"></span>
+            <button class="btn" id="tree-new-file" title="New file">
+              <span class="icon icon-new"></span>
+            </button>
+            <button class="btn" id="tree-new-folder" title="New folder">
+              <span class="icon icon-new-folder"></span>
+            </button>
             <button class="btn" id="tree-refresh" title="Refresh the tree">
               <span class="icon icon-refresh"></span>
             </button>
           </div>
+          <!-- Why a name was refused, under the header and above the row it is
+               about. Silence would look like Enter not working. -->
+          <p class="tree-problem" id="tree-problem" hidden></p>
           <div class="tree-body" id="tree-body"></div>
         </aside>
         <div class="splitter splitter-v" id="splitter-tree" hidden></div>
