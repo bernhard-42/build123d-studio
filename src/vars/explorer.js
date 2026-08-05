@@ -196,7 +196,7 @@ function detailRow(depth, first) {
   return tr;
 }
 
-/** How far in a row at this depth sits. The chevron column is 12px of it. */
+/** How far in a row at this depth sits. The chevron column is 16px of it. */
 function indentOf(depth) {
   return 6 + depth * 12;
 }
@@ -265,7 +265,18 @@ function rowsFor(row, path, depth) {
   // Only where opening leads somewhere. A chevron on an int is a promise the
   // row cannot keep, and the kernel is the only thing that can say - cheaply,
   // without touching the object - which those are.
-  twisty.textContent = row.expandable === false ? "" : isOpen ? "▾" : "▸";
+  //
+  // The bundled icon font rather than U+25B8 and U+25BE, for the reason the
+  // file tree already had: WKWebView has no glyph for either and renders them
+  // as a dot. The tree was given the subset font when it landed in group 2 and
+  // this pane was not, so it kept drawing the character that does not exist -
+  // found by the frontend suite noticing that two panes drew one control two
+  // different ways.
+  if (row.expandable !== false) {
+    const chevron = document.createElement("span");
+    chevron.className = isOpen ? "icon icon-chevron var-open" : "icon icon-chevron";
+    twisty.append(chevron);
+  }
   name.append(twisty, document.createTextNode(row.name));
 
   // The label beside the name, because that is where identity belongs: a list

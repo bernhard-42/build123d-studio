@@ -945,10 +945,34 @@ html body {
 
 /* Fixed rather than inline, so a name and a chevron-less row line up: without
    it every element of a list would sit one glyph left of its siblings. */
+/* The chevron is the bundled icon font, as the file tree's is - see
+   renderRow. Inline-flex rather than the tree's flex, because this one sits
+   inside a table cell beside the name rather than in a row of its own, and a
+   block-level box would put the name on the next line. */
 .var-twisty {
-  display: inline-block;
-  width: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  vertical-align: text-bottom;
   color: var(--fg-dim);
+}
+
+.var-twisty .icon {
+  width: 16px;
+  height: 16px;
+  transition: transform 0.1s ease;
+}
+
+/* The glyph is a right-pointing chevron; open rotates it, so the two states are
+   one icon rather than two that could drift apart. */
+.var-twisty .var-open {
+  transform: rotate(90deg);
+}
+
+/* 18px is the toolbar's size and too big for a row of variables. */
+.var-twisty .icon::before {
+  font-size: 14px;
 }
 
 .var-child-name {
