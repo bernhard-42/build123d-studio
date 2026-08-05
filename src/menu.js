@@ -164,7 +164,7 @@ function item(id, text, { platform, shortcut, enabled = true, role = false }) {
 // it, debug it. Grouping is the only thing a menu can say about which items
 // belong together, and this one would otherwise be nine flat entries.
 const RUN_GROUPS = [
-  ["run.cell", "run.cell.stay", "run.selectionOrLine"],
+  ["run.cell", "run.cell.stay", "run.selectionOrLine", "run.all"],
   ["run.file"],
   ["debug.start", "debug.stepOver", "debug.stepInto", "debug.stepOut", "debug.continue",
    "debug.restart", "debug.stop"],

@@ -8,7 +8,7 @@ import {
   isDirty,
   onDirtyChange,
   runCell,
-  runFile,
+  runAll,
   runSelectionOrLine,
 } from "./editor/monaco.js";
 import { onDebugChange } from "./debug/session.js";
@@ -17,6 +17,9 @@ import { nextPreference, onThemeChange, setThemePreference, themePreference } fr
 import { showInfo } from "./info.js";
 import { showSettings } from "./settings.js";
 import * as log from "./log.js";
+import { toggleRunFile } from "./run/file.js";
+import { labelFor } from "./keybindings.js";
+import { titleWithChord } from "./keys.js";
 
 // Toolbar wiring and the kernel state indicator.
 
@@ -79,6 +82,52 @@ export function setDebugToggle(handler) {
   onDebugToggle = handler;
 }
 
+// Which button is which command, so a tooltip cannot claim a chord the keymap
+// does not have. Every one of these is configurable in Settings, which is the
+// other reason the titles are built rather than written: a rebound chord has to
+// reach the tooltip too, or the button goes on advertising the old one.
+//
+// The buttons that are not here have no chord of their own - Interrupt,
+// Restart, Theme, Info and Settings - and their titles stay as the markup has
+// them. New, Open and Save do have chords, but from the native menu rather than
+// from this keymap, and inventing a second source for them is how the two come
+// to disagree.
+const BUTTON_COMMANDS = {
+  "btn-run-cell": ["Run Cell", "run.cell"],
+  "btn-run-sel": ["Run Selection", "run.selectionOrLine"],
+  "btn-run-all": ["Run All", "run.all"],
+  "btn-run-file": ["Run File", "run.file"],
+  // Its resting state. onDebugChange rewrites it while a session runs, to name
+  // Stop and Stop's chord - but that listener does not fire on subscribe, so
+  // without an entry here the button keeps whatever the markup said until the
+  // first session starts.
+  "btn-debug": ["Debug File", "debug.start"],
+  "debug-continue": ["Continue", "debug.continue"],
+  "debug-step-over": ["Step over", "debug.stepOver"],
+  "debug-step-into": ["Step into", "debug.stepInto"],
+  "debug-step-out": ["Step out", "debug.stepOut"],
+  "debug-restart": ["Restart Debugging", "debug.restart"],
+  "debug-stop": ["Stop", "debug.stop"],
+};
+
+/**
+ * Put the current chord in every tooltip that has one.
+ *
+ * Called again after the shortcut editor saves, for the same reason the menu is
+ * rebuilt there: a binding somebody has just changed must not leave the button
+ * describing the old one. btn-debug is not in the table because its tooltip
+ * says which of two things it will do, so this sets its resting state and the
+ * session listener takes it from there.
+ */
+export function refreshToolbarTitles() {
+  for (const [id, [label, command]] of Object.entries(BUTTON_COMMANDS)) {
+    const button = document.getElementById(id);
+    if (button !== null) {
+      button.title = titleWithChord(label, labelFor(command));
+    }
+  }
+}
+
 export function initToolbar() {
   // The title has to follow the buffer, not only the explicit actions below: a
   // keystroke makes it dirty and a successful save makes it clean again, and
@@ -110,7 +159,8 @@ export function initToolbar() {
       await updateTitle();
     }),
     "btn-sidebar": () => withErrorReporting("Toggle sidebar", toggleSidebar),
-    "btn-run-file": runFile,
+    "btn-run-all": runAll,
+    "btn-run-file": () => void toggleRunFile(),
     "btn-run-cell": () => runCell(),
     "btn-run-sel": () => runSelectionOrLine(),
     // Wrapped like the rest: with the sidecar gone these throw out of a click
@@ -126,6 +176,8 @@ export function initToolbar() {
   for (const [id, action] of Object.entries(actions)) {
     document.getElementById(id).addEventListener("click", action);
   }
+
+  refreshToolbarTitles();
 
   // The icon shows what you would get, and the tooltip names the preference -
   // "system" is otherwise indistinguishable from whichever theme it resolved to.
@@ -143,9 +195,12 @@ export function initToolbar() {
   debugButton.addEventListener("click", () =>
     withErrorReporting("Debugging", () => onDebugToggle()));
   onDebugChange((state) => {
+    // Both halves from the keymap, and they are two different chords now: F5
+    // starts, Shift-F5 stops. The literal string here said Shift+F5 for both
+    // and went on saying it after the realignment.
     debugButton.title = state.running
-      ? "Stop debugging (Shift+F5)"
-      : "Debug File (Shift+F5)";
+      ? titleWithChord("Stop Debugging", labelFor("debug.stop"))
+      : titleWithChord("Debug File", labelFor("debug.start"));
     debugButton.classList.toggle("btn-active", state.running);
   });
 

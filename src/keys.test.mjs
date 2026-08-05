@@ -31,6 +31,7 @@ import {
   monacoBinding,
   monacoBindings,
   parseChord,
+  titleWithChord,
   usableChords,
 } from "./keys.js";
 
@@ -165,12 +166,47 @@ test("every default chord parses and binds on every platform", () => {
   }
 });
 
+test("a tooltip names its chord, or says nothing extra", () => {
+  // The toolbar used to spell these itself: literal "(Alt+Enter)" in the markup
+  // beside a menu that wrote the same chord as a symbol, on three buttons out of
+  // five, still claiming Shift+F5 after the chords were realigned.
+  assert.equal(titleWithChord("Run All", "⌥↩"), "Run All (⌥↩)");
+  assert.equal(titleWithChord("Run All", "Alt+Enter"), "Run All (Alt+Enter)");
+});
+
+test("a command with no chord gets a plain tooltip, not empty brackets", () => {
+  // Continue has no chord of its own - F5 resumes - and Stop Debugging had none
+  // before the realignment. "(  )" after a name is worse than nothing.
+  assert.equal(titleWithChord("Continue", ""), "Continue");
+  assert.equal(titleWithChord("Continue", undefined), "Continue");
+  assert.equal(titleWithChord("Continue", null), "Continue");
+});
+
 test("the defaults are the agreed keymap", () => {
   const chords = Object.fromEntries(COMMANDS.map((c) => [c.id, c.chords]));
   assert.deepEqual(chords["run.cell"], ["shift+enter"]);
   assert.deepEqual(chords["run.cell.stay"], ["ctrl+enter", "mod+enter"]);
   assert.deepEqual(chords["run.selectionOrLine"], ["ctrl+shift+enter", "mod+shift+enter"]);
-  assert.deepEqual(chords["run.file"], ["f5"]);
+  // Alt-Enter keeps Run All with the other three, all of which are the kernel's.
+  assert.deepEqual(chords["run.all"], ["alt+enter"]);
+});
+
+test("the file keys are VS Code's, and F8 is not among them", () => {
+  // The realignment, stated so it cannot drift back. F5 debugs and Ctrl-F5 runs,
+  // both from disk; Shift-F5 stops. Continue has no chord because F5 resumes a
+  // paused session, which is what frees F8 - the gotoError contribution binds it
+  // to "next problem", and Continue used to collide with it.
+  const chords = Object.fromEntries(COMMANDS.map((c) => [c.id, c.chords]));
+  assert.deepEqual(chords["run.file"], ["ctrl+f5"]);
+  assert.deepEqual(chords["debug.start"], ["f5"]);
+  assert.deepEqual(chords["debug.stop"], ["shift+f5"]);
+  assert.deepEqual(chords["debug.restart"], ["ctrl+shift+f5"]);
+  assert.deepEqual(chords["debug.continue"], []);
+  assert.equal(
+    COMMANDS.some((command) => command.chords.includes("f8")),
+    false,
+    "F8 belongs to the editor's next-problem action",
+  );
 });
 
 test("no two commands claim the same chord on any platform", () => {

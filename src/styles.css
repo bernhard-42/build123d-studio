@@ -562,6 +562,16 @@ html body {
   display: none;
 }
 
+/* A button that is hidden is hidden. `.btn` sets display: inline-flex, which
+   beats the user agent's rule for [hidden] on specificity, so `hidden = true`
+   on a toolbar button did nothing at all until a plain run needed the step
+   controls out of the way rather than merely disabled. Same shape as the
+   box-sizing reset that quietly re-laid out the viewer: a rule that is correct
+   in isolation, overridden by one that came later. */
+.btn[hidden] {
+  display: none;
+}
+
 .debug-btn {
   width: 26px;
   height: 22px;

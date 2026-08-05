@@ -29,7 +29,10 @@ const ICONS = {
   new: "note_add",
   open: "file_open",
   save: "save",
+  // Circled: the file from disk, in its own process. Plain: the buffer, on the
+  // kernel, beside Run Cell and Run Selection which are also the kernel's.
   "run-file": "play_circle",
+  "run-all": "play_arrow",
   "run-cell": "skip_next",
   "run-sel": "playlist_play",
   interrupt: "stop_circle",

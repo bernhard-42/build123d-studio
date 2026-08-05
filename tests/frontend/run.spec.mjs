@@ -81,16 +81,32 @@ function executed(sidecar) {
 }
 
 test.describe("what each chord runs", () => {
-  test("F5 runs the whole file", async ({ page }) => {
+  test("Alt-Enter runs the whole buffer on the kernel", async ({ page }) => {
+    // This was F5 and is now Run All, which is what it always did: the text on
+    // screen goes to the kernel and never touches disk. F5 debugs the file, and
+    // Ctrl-F5 runs it - both from disk, neither of them this.
     const { sidecar } = await openWithCells(page);
 
     await putCaretOnLine(page, 1);
-    await page.keyboard.press("F5");
+    await page.keyboard.press("Alt+Enter");
     await sidecar.waitFor("kernel.execute");
 
     expect(executed(sidecar)).toHaveLength(1);
     expect(executed(sidecar)[0]).toContain("FIRST");
-    expect(executed(sidecar)[0], "F5 did not send the whole file").toContain("FOURTH");
+    expect(executed(sidecar)[0], "Run All did not send the whole buffer").toContain("FOURTH");
+  });
+
+  test("F5 no longer sends anything to the kernel", async ({ page }) => {
+    // The half of the rename that a passing suite would not have noticed: F5
+    // still does something, so a test that only checked Alt-Enter would leave
+    // the old chord quietly executing the buffer as well.
+    const { sidecar } = await openWithCells(page);
+
+    await putCaretOnLine(page, 1);
+    await page.keyboard.press("F5");
+    await page.waitForTimeout(300);
+
+    expect(executed(sidecar), "F5 still runs the buffer on the kernel").toEqual([]);
   });
 
   test("Shift-Enter runs the cell at the cursor and moves to the next", async ({ page }) => {
@@ -162,6 +178,37 @@ test.describe("what each chord runs", () => {
   });
 });
 
+test.describe("the toolbar says which chord it is", () => {
+  test("every run button names its own chord, in one notation", async ({ page }) => {
+    // What he saw: three buttons carried a chord and two did not, and the ones
+    // that did spelled "Alt+Enter" where the menu beside them wrote the symbol.
+    // The titles are built from the keymap now, so this holds both halves - all
+    // of them have one, and none of them spells Enter as a word on a Mac.
+    await openWithCells(page);
+
+    const titles = {};
+    for (const id of ["btn-run-cell", "btn-run-sel", "btn-run-all", "btn-run-file"]) {
+      titles[id] = await page.locator(`#${id}`).getAttribute("title");
+    }
+
+    expect(titles["btn-run-cell"]).toBe("Run Cell (⇧↩)");
+    expect(titles["btn-run-sel"]).toBe("Run Selection (⌃⇧↩)");
+    expect(titles["btn-run-all"]).toBe("Run All (⌥↩)");
+    expect(titles["btn-run-file"]).toBe("Run File (⌃F5)");
+    for (const [id, title] of Object.entries(titles)) {
+      expect(title, `${id} writes Enter as a word`).not.toContain("Enter");
+    }
+  });
+
+  test("and the debug button names the chord for what it will do next", async ({ page }) => {
+    // It said "(Shift+F5)" for both starting and stopping, and went on saying it
+    // after F5 became Debug File and Shift-F5 became Stop.
+    await openWithCells(page);
+
+    await expect(page.locator("#btn-debug")).toHaveAttribute("title", "Debug File (F5)");
+  });
+});
+
 test.describe("what does not run", () => {
   test("a buffer with nothing but blank lines sends nothing", async ({ page }) => {
     // The guard is `code.trim() === ""` in execute(). Sending whitespace would
@@ -192,14 +239,14 @@ test.describe("what does not run", () => {
     expect(executed(sidecar), "whitespace was sent to the kernel").toEqual([]);
   });
 
-  test("F5 with no file open sends nothing", async ({ page }) => {
+  test("Alt-Enter with no file open sends nothing", async ({ page }) => {
     // Closing the last tab leaves the editor with no buffer at all, and a run
     // action then has nothing to read.
     const { sidecar } = await openWithCells(page);
     await page.locator(".tab .tab-close").first().click();
     await expect(page.locator(".tab")).toHaveCount(0);
 
-    await page.keyboard.press("F5");
+    await page.keyboard.press("Alt+Enter");
     await page.waitForTimeout(300);
 
     expect(executed(sidecar)).toEqual([]);

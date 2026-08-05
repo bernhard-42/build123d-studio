@@ -103,21 +103,24 @@
                 <span class="icon icon-save"></span>
               </button>
               <span class="toolbar-sep"></span>
-              <button class="btn" id="btn-run-file" title="Run File">
-                <span class="icon icon-run-file"></span>
-              </button>
               <button class="btn" id="btn-run-cell" title="Run Cell">
                 <span class="icon icon-run-cell"></span>
               </button>
               <button class="btn" id="btn-run-sel" title="Run Selection">
                 <span class="icon icon-run-sel"></span>
               </button>
+              <button class="btn" id="btn-run-all" title="Run All">
+                <span class="icon icon-run-all"></span>
+              </button>
               <span class="toolbar-sep"></span>
               <!-- Debugging on its own, between running code in the kernel and
                    controlling that kernel. It belongs with neither: the file
                    runs in a process of its own and the kernel is not touched by
                    it. -->
-              <button class="btn" id="btn-debug" title="Debug File (Shift+F5)">
+              <button class="btn" id="btn-run-file" title="Run File">
+                <span class="icon icon-run-file"></span>
+              </button>
+              <button class="btn" id="btn-debug" title="Debug File">
                 <span class="icon icon-debug"></span>
               </button>
               <span class="toolbar-sep"></span>
@@ -153,22 +156,22 @@
             <div class="tab-row" id="tab-row">
               <div class="tab-strip" id="tab-strip" role="tablist" hidden></div>
               <div class="debug-bar" id="debug-bar" hidden>
-                <button class="btn debug-btn" id="debug-continue" title="Continue (F8)">
+                <button class="btn debug-btn" id="debug-continue" title="Continue">
                   <span class="icon icon-debug-continue"></span>
                 </button>
-                <button class="btn debug-btn" id="debug-step-over" title="Step over (F10)">
+                <button class="btn debug-btn" id="debug-step-over" title="Step over">
                   <span class="icon icon-debug-step-over"></span>
                 </button>
-                <button class="btn debug-btn" id="debug-step-into" title="Step into (F11)">
+                <button class="btn debug-btn" id="debug-step-into" title="Step into">
                   <span class="icon icon-debug-step-into"></span>
                 </button>
-                <button class="btn debug-btn" id="debug-step-out" title="Step out (Shift+F11)">
+                <button class="btn debug-btn" id="debug-step-out" title="Step out">
                   <span class="icon icon-debug-step-out"></span>
                 </button>
                 <button class="btn debug-btn" id="debug-restart" title="Restart debugging">
                   <span class="icon icon-restart"></span>
                 </button>
-                <button class="btn debug-btn" id="debug-stop" title="Stop debugging (Shift+F5)">
+                <button class="btn debug-btn" id="debug-stop" title="Stop">
                   <span class="icon icon-debug-stop"></span>
                 </button>
               </div>

@@ -26,6 +26,7 @@ from channel import KIND_CONSOLE, KIND_MODEL, Channel, log
 from completer import Completer
 from debugger import DebugSession, debug_python
 from formatter import format_source
+from runner import RunSession
 from instance import Instance, remove_legacy_connection_file, sweep
 from kernel import Kernel
 from measure_service import MeasurementService
@@ -162,6 +163,15 @@ class Sidecar:
             on_exit=lambda code: self.channel.send("debug.exited", code=code),
         )
 
+        # Run File: the same two worlds as debugging, without the debugger. The
+        # environment is the kernel's for the same reason - a show() in the file
+        # has to reach the viewer that is already on screen.
+        self.run = RunSession(
+            python=debug_python(env_root),
+            on_output=lambda text: self.channel.send("run.output", text=text),
+            on_exit=lambda code: self.channel.send("run.exited", code=code),
+        )
+
         # Whether the kernel is part-way through something. Read by completion,
         # which against a kernel with no subshell asks only when it is not: one
         # shell serves requests serially, so a request sent during a cell waits
@@ -244,6 +254,8 @@ class Sidecar:
         # Starting and stopping block; relaying does not. A DAP message is a
         # socket write, and the frontend sends one per step - so it goes inline,
         # where a step cannot queue behind the session that is starting.
+        self.channel.on("run.start", self.on_run_start, lane=DEBUG)
+        self.channel.on("run.stop", self.on_run_stop, lane=DEBUG)
         self.channel.on("debug.start", self.on_debug_start, lane=DEBUG)
         self.channel.on("debug.stop", self.on_debug_stop, lane=DEBUG)
         self.channel.on("debug.send", self.on_debug_send)
@@ -859,6 +871,30 @@ class Sidecar:
 
     # --- debugging ---
 
+    def on_run_start(self, message):
+        """Run a file from disk, with no debugger attached.
+
+        The same environment and the same working directory as a debug session,
+        because the difference between the two is a debugger and nothing else -
+        a relative path and a show() have to mean what they would have meant
+        under Shift-F5.
+        """
+        path = message.get("path")
+        error = self.run.start(
+            path,
+            env=self.kernel.kernel_environment(),
+            cwd=self.kernel.working_dir,
+        )
+        if error is None:
+            self.channel.send("run.started", path=path)
+        else:
+            log(f"Run failed to start: {error}")
+            self.channel.send("run.failed", path=path, message=error)
+
+    def on_run_stop(self, _message):
+        self.run.stop()
+        self.channel.send("run.stopped")
+
     def on_debug_start(self, message):
         """Run a file under the debugger, in a process of its own.
 
@@ -999,6 +1035,11 @@ class Sidecar:
             self.completer.stop()
         if self.debug is not None:
             self.debug.stop()
+        # Before the kernel, like the debugger: it is a child process holding
+        # the same environment, and quitting the application must not leave a
+        # script running against a viewer that has gone.
+        if self.run is not None:
+            self.run.stop()
         if self.console is not None:
             self.console.stop()
         if self.kernel is not None:

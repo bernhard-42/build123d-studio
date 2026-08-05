@@ -32,10 +32,14 @@ print(f"volume = {part.volume:.3f}")
 
 # %%
 # Shift+Enter runs the cell at the cursor and moves on, Ctrl/Cmd+Enter runs it
-# and stays, Ctrl/Cmd+Shift+Enter runs the selection or the current line, and F5
-# runs the whole file. Output appears in the console below as In [n]:, and the
-# kernel is shared with it - so you can poke at "part" down there straight
+# and stays, Ctrl/Cmd+Shift+Enter runs the selection or the current line, and
+# Alt+Enter runs all of it. Output appears in the console below as In [n]:, and
+# the kernel is shared with it - so you can poke at "part" down there straight
 # after running this.
+#
+# Ctrl+F5 is different: it saves and runs the file itself, in a process of its
+# own, so nothing it makes is left in the kernel afterwards. F5 does that with
+# a debugger attached.
 part.bounding_box()
 `;
 
@@ -54,9 +58,12 @@ export const DEFAULT_NEW_FILE_TEMPLATE = `# Default code for new files. It can b
 #
 # Shift+Enter runs the cell at the cursor and moves on, Ctrl/Cmd+Enter runs
 # it and stays, Ctrl/Cmd+Shift+Enter runs the selection or the current line,
-# and F5 runs the whole file. Output appears in the console below as In [n]:,
-# and the kernel is shared with it - so you can poke at "b" down there
-# straight after running this.
+# and Alt+Enter runs all of it. Output appears in the console below as
+# In [n]:, and the kernel is shared with it - so you can poke at "b" down
+# there straight after running this.
+#
+# Ctrl+F5 saves and runs the file itself instead, in a process of its own,
+# leaving the kernel untouched. F5 does the same with a debugger attached.
 
 from build123d import *
 from build123d_studio import show

@@ -47,6 +47,11 @@
   content: "\e1c4";
 }
 
+/* play_arrow */
+.icon-run-all::before {
+  content: "\e037";
+}
+
 /* skip_next */
 .icon-run-cell::before {
   content: "\e044";

@@ -149,10 +149,19 @@ let debugRequested = () => {};
 
 let debugStep = () => {};
 
+// And what Ctrl-F5 calls, injected for exactly the same reason: running the
+// file saves the buffer first, which reaches back into this module.
+let runFileOnDisk = () => {};
+
 /** Tell the editor what its debug chords should do. Called once, at startup. */
 export function setDebugHandler(handler, step) {
   debugRequested = handler;
   debugStep = step;
+}
+
+/** Tell the editor what Ctrl-F5 should do. Called once, at startup. */
+export function setRunFileHandler(handler) {
+  runFileOnDisk = handler;
 }
 
 /**
@@ -181,7 +190,15 @@ function execute(code) {
   ipc.send("kernel.execute", { code });
 }
 
-export function runFile() {
+/**
+ * Every cell, on the kernel, from the buffer on screen.
+ *
+ * Named "all" rather than "file" because it never touches a file: the text goes
+ * to the kernel as one execute, its names stay in the namespace the console
+ * shares, and an unsaved buffer runs exactly as it reads. Run File - Ctrl-F5 -
+ * is the other thing, and the two were one word for far too long.
+ */
+export function runAll() {
   if (currentModel() === null) {
     return;
   }
@@ -1043,7 +1060,11 @@ export function registerRunActions(target) {
     { id: "run.cell", run: () => runCell() },
     { id: "run.cell.stay", run: () => runCell({ advance: false }) },
     { id: "run.selectionOrLine", run: () => runSelectionOrLine() },
-    { id: "run.file", run: runFile },
+    { id: "run.all", run: runAll },
+    // Not the kernel: the file on disk, in a process of its own. Registered
+    // here with the rest because to a user it is the same kind of thing -
+    // "make this file happen" - and differs only in where it happens.
+    { id: "run.file", run: () => void runFileOnDisk() },
     // Registered here with the run actions because it is the same kind of
     // thing to a user - "make this file happen" - and because an editor action
     // is what gets the chord delivered while the editor has focus.

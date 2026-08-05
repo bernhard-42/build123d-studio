@@ -60,6 +60,7 @@ import * as ipc from "./ipc.js";
 import * as log from "./log.js";
 import { escapeHtml } from "./escape.js";
 import { closeOnBackdropClick } from "./backdrop.js";
+import { refreshToolbarTitles } from "./toolbar.js";
 
 // Package sources.
 //
@@ -665,8 +666,9 @@ export async function showSettings({ tab = null } = {}) {
     }
     if (chordsChanged) {
       // The editor holds the old chords until its actions are registered again,
-      // and the menu carries its own shortcut strings.
+      // and the menu and the toolbar each carry their own copy of the text.
       rebindRunActions();
+      refreshToolbarTitles();
       await refreshMenu();
     }
     return true;

@@ -28,10 +28,11 @@ import {
   initEditor,
   replaceSelection,
   runCell,
-  runFile,
+  runAll,
   runSelectionOrLine,
   selectedText,
   setDebugHandler,
+  setRunFileHandler,
 } from "./editor/monaco.js";
 import { copy, copyText, cut, initClipboard, paste, pasteInto } from "./editing.js";
 import { attachContextMenu } from "./contextmenu.js";
@@ -72,6 +73,7 @@ import { initStore } from "./store.js";
 import { hideBusy, resetBusy, showBusy } from "./busy.js";
 import * as log from "./log.js";
 import { guardAgainstReload, suppressNativeContextMenu } from "./reload.js";
+import { initRunFile, toggleRunFile } from "./run/file.js";
 
 init();
 log.installGlobalHandlers();
@@ -468,7 +470,8 @@ async function main() {
     "run.cell": () => runCell(),
     "run.cell.stay": () => runCell({ advance: false }),
     "run.selectionOrLine": () => runSelectionOrLine(),
-    "run.file": runFile,
+    "run.all": runAll,
+    "run.file": () => void toggleRunFile(),
     "debug.start": () => withMenu(toggleDebugging),
     "debug.restart": () => stepAction("restart"),
     "debug.stop": () => stepAction("stop"),
@@ -497,7 +500,9 @@ async function main() {
 
   initDebug();
   initDebugUi();
+  initRunFile();
   setDebugHandler(toggleDebugging, stepAction);
+  setRunFileHandler(toggleRunFile);
   setDebugToggle(toggleDebugging);
 
   // Before the splash lifts, so the window is revealed already showing the

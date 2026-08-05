@@ -15,6 +15,7 @@ import {
 import {
   isDebugging,
   onDebugChange,
+  state,
   resume,
   start,
   stepInto,
@@ -26,6 +27,7 @@ import {
   updateBreakpoints,
 } from "./session.js";
 import { clearDebugConsole, debugOutput, initDebugConsole, showDebugConsole } from "./console.js";
+import { isRunningFile, onRunChange, toggleRunFile } from "../run/file.js";
 import { justMyCode } from "./settings.js";
 import { notifyFailure } from "../confirm.js";
 import { refreshMenu } from "../menubar.js";
@@ -34,15 +36,23 @@ import { openPath, saveFile } from "../editor/files.js";
 import * as log from "../log.js";
 
 /**
- * Start debugging the file on screen, or stop a session that is running.
+ * Start debugging the file on screen, or carry on a session that is paused.
  *
- * One chord for both because there is nothing to start while something is
- * running, and a session with no visible controls yet would otherwise have no
- * way out. The step controls take the explicit half of this next.
+ * F5 does both, which is VS Code's arrangement and the reason the chords moved:
+ * start it, then keep pressing the same key to get to the next breakpoint.
+ * It used to stop a running session instead, because F5 meant Run File and
+ * Shift-F5 had to serve as both the way in and the way out. Shift-F5 is Stop
+ * now and does that job on its own.
+ *
+ * A session that is running and not paused is left alone. There is nothing to
+ * start and nothing to resume, and killing it would make one key mean "go" and
+ * "give up" depending on timing nobody can see.
  */
 export async function toggleDebugging() {
   if (isDebugging()) {
-    await stop();
+    if (state().stoppedAt !== null) {
+      await resume();
+    }
     return;
   }
 
@@ -125,7 +135,10 @@ const CONTROLS = [
   ["debug-step-into", stepInto],
   ["debug-step-out", stepOut],
   ["debug-restart", () => restart(allBreakpoints())],
-  ["debug-stop", stop],
+  // Stop means whichever of the two is on. The bar is shared, so a button that
+  // always stopped the debugger would do nothing during a plain run - and Stop
+  // is the only control a run has.
+  ["debug-stop", () => (isRunningFile() ? toggleRunFile() : stop())],
 ];
 
 // Which controls need something paused. Restart and Stop do not: they are what
@@ -145,6 +158,20 @@ export function initDebugUi() {
   const bar = document.getElementById("debug-bar");
   initDebugConsole();
 
+  // A plain Run File raises the same bar with only Stop in it. There is nothing
+  // to step, so the step controls are hidden rather than disabled - a row of
+  // five greyed buttons would suggest the run is merely paused. Stop is the one
+  // control that means something, and without it a script in a loop could only
+  // be ended by quitting the application.
+  onRunChange((isRunning) => {
+    bar.hidden = !isRunning && !isDebugging();
+    bar.classList.toggle("debug-bar-running", isRunning);
+    for (const [id] of CONTROLS) {
+      document.getElementById(id).hidden = isRunning && id !== "debug-stop";
+    }
+    document.getElementById("debug-stop").disabled = false;
+  });
+
   // What the debugged process printed. Not the kernel's console, which is
   // hidden while this one is up.
   onDebugOutput(debugOutput);
@@ -160,7 +187,14 @@ export function initDebugUi() {
   let wasStoppedAt = null;
 
   onDebugChange((state) => {
+    if (isRunningFile()) {
+      // A run owns the bar; a debug session cannot be starting while one is on.
+      return;
+    }
     bar.hidden = !state.running;
+    for (const [id] of CONTROLS) {
+      document.getElementById(id).hidden = false;
+    }
 
     // The swap, both panes at once. Only on the edges: this fires on every
     // step, and rebuilding the console and the explorer per step would throw

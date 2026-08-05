@@ -141,21 +141,39 @@ export const COMMANDS = [
     chords: ["ctrl+shift+enter", "mod+shift+enter"],
   },
   {
+    id: "run.all",
+    label: "Run All",
+    // Every cell, on the kernel, from the buffer - which is what "Run File" was
+    // called and never was: it sends the text on screen and never touches disk.
+    //
+    // Alt-Enter keeps it in the Enter family with the other three, which is a
+    // better story than an F-key orphaned from them. One collision, and it is
+    // narrow: findController binds Alt-Enter to Select All Matches under
+    // `precondition: CONTEXT_FIND_WIDGET_VISIBLE`, so the two compete only
+    // while the find widget is open, where that action also has a button.
+    // Jupyter spends Alt-Enter on "run cell and insert below", which has no
+    // meaning in a .py file - there are `# %%` markers here, not cells to
+    // insert - so the reflex costs a surprise rather than a wrong result.
+    chords: ["alt+enter"],
+  },
+  {
     id: "run.file",
     label: "Run File",
-    // F5 rather than Ctrl-R or Cmd-R: R is the reload key on every platform, so
-    // binding it puts Run File one mistaken keystroke away from discarding the
-    // buffer. F5 is a browser reload too, on Windows and Linux - which is why
-    // the reload guard is a prerequisite for this and not a nicety.
-    chords: ["f5"],
+    // The file on disk, saved first, in a process of its own - the debugger
+    // without the debugger. Ctrl-F5 literally, on every platform, because that
+    // is what VS Code binds Run Without Debugging to including on macOS, where
+    // it is Control and not Command.
+    chords: ["ctrl+f5"],
   },
   {
     id: "debug.start",
     label: "Debug File",
-    // Shift-F5 beside F5, so the pair reads as one idea. VS Code puts Start on
-    // F5 and Stop on Shift-F5; here F5 has meant Run File since group 1 and
-    // moving it would cost a habit to buy a convention.
-    chords: ["shift+f5"],
+    // F5, which is VS Code's and is the whole point of the realignment. It used
+    // to be Shift-F5 because F5 meant "run the buffer on the kernel"; that is
+    // Run All now and lives on Alt-Enter, which frees the key its convention
+    // wants. The handler continues a paused session rather than refusing, as
+    // VS Code's F5 does, so one chord covers start and resume.
+    chords: ["f5"],
   },
   {
     id: "debug.restart",
@@ -167,17 +185,18 @@ export const COMMANDS = [
   {
     id: "debug.stop",
     label: "Stop Debugging",
-    // Shift-F5 stops as well as starts - one chord, because there is nothing to
-    // start while something is running. Named here so the menu can say so.
-    chords: [],
+    // Shift-F5, VS Code's, now that F5 no longer has to double as the way out.
+    chords: ["shift+f5"],
   },
   {
     id: "debug.continue",
     label: "Continue",
-    // VS Code's, all four of them, because somebody who debugs Python already
-    // has these in their hands. F5 is Run File here and stays that way, so
-    // Continue takes the one chord VS Code spends on starting.
-    chords: ["f8"],
+    // No chord of its own: F5 resumes a paused session, which is what VS Code
+    // does and what makes one key cover the whole start-and-carry-on gesture.
+    // F8 used to be here because F5 was taken, and it collided with the
+    // gotoError contribution - which binds F8 to "next problem", as VS Code
+    // does. Giving it back is part of the same realignment.
+    chords: [],
   },
   {
     id: "debug.stepOver",
@@ -275,6 +294,19 @@ export function describeChord(platform, chord) {
   }
 
   return mac ? parts.join("") : parts.join("+");
+}
+
+/**
+ * A tooltip that names its shortcut, or just the label when it has none.
+ *
+ * Here rather than in the toolbar because it is the one place that decides how
+ * a chord is written beside a name, and the toolbar had been spelling its own -
+ * literal "(Alt+Enter)" and "(Shift+F5)" strings in the markup, which said
+ * "Enter" where the menu beside them said "↩", went on claiming Shift+F5 after
+ * the chords were realigned, and appeared on three buttons out of five.
+ */
+export function titleWithChord(label, chord) {
+  return chord === "" || chord === undefined || chord === null ? label : `${label} (${chord})`;
 }
 
 /**
