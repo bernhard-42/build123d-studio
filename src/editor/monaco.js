@@ -549,6 +549,33 @@ export function isBufferDirty(key) {
   return buffers.isDirty(key);
 }
 
+/** Whether the file a buffer names has gone from disk. */
+export function isBufferMissing(key) {
+  return buffers.isMissing(key);
+}
+
+/** Either edits that are not written, or no file left to have written them to. */
+export function bufferNeedsSaving(key) {
+  return buffers.needsSaving(key);
+}
+
+/**
+ * Note which open files are no longer on disk.
+ *
+ * Given the paths that were checked and the ones found missing, so the caller
+ * does the filesystem work and this stays a decision about buffers.
+ */
+export function markMissingFiles(missingPaths) {
+  const gone = new Set(missingPaths);
+  for (const key of buffers.keys()) {
+    const path = buffers.get(key)?.path ?? null;
+    if (path !== null) {
+      buffers.setMissing(key, gone.has(path));
+    }
+  }
+  notifyDirtyChanged();
+}
+
 /** Where a tab was left, for writing into the workspace at quit. */
 export function bufferCaret(key) {
   return buffers.caret(key);

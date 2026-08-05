@@ -49,6 +49,7 @@ import {
   newFile,
   openFile,
   openFolder,
+  checkOpenFilesExist,
   openPath,
   restoreWorkspace,
   saveAll,
@@ -373,7 +374,15 @@ async function main() {
   });
   // Clicking a file in the tree opens it exactly as Open File does, tab and
   // all - the tree is a way of finding files, not a second kind of buffer.
-  initSidebar({ onOpenFile: (path) => withTitle(() => openPath(path)) });
+  initSidebar({
+    onOpenFile: (path) => withTitle(() => openPath(path)),
+    // A refresh is the only moment this application learns that a file it has
+    // open has been deleted from outside - there is no watcher yet.
+    onRefreshed: () => {
+      checkOpenFilesExist().catch((error) =>
+        log.warn("Could not check whether the open files are still there:", error));
+    },
+  });
   initViewer();
   initVariables();
   initToolbar();

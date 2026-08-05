@@ -64,6 +64,9 @@ export function open({ path = null, text = "", caret = null }) {
     savedVersionId: models.versionOf(model),
     viewState: null,
     caret,
+    // Whether the file this buffer names has gone from disk. Not a property of
+    // the model - the text is fine, it is the file underneath it that is not.
+    missing: false,
   });
   return key;
 }
@@ -165,6 +168,9 @@ export function markSaved(key) {
     return;
   }
   buffer.savedVersionId = models.versionOf(buffer.model);
+  // Saving a file that had been deleted writes it back, so it is not missing
+  // any more - which is also the way out of the struck-through state.
+  buffer.missing = false;
 }
 
 /**
@@ -182,6 +188,35 @@ export function isDirty(key) {
     return false;
   }
   return models.versionOf(buffer.model) !== buffer.savedVersionId;
+}
+
+/**
+ * Record whether the file underneath a buffer still exists.
+ *
+ * Separate from dirty, and both are "unsaved work" to the prompt: a buffer with
+ * no file left is the only copy of that text, so quitting without asking would
+ * discard it exactly the way Phase 2 was about.
+ */
+export function setMissing(key, missing) {
+  const buffer = buffers.get(key);
+  if (buffer !== undefined) {
+    buffer.missing = missing === true;
+  }
+}
+
+export function isMissing(key) {
+  return buffers.get(key)?.missing === true;
+}
+
+/**
+ * Whether this buffer holds work that is not safely on disk.
+ *
+ * Either it has edits that have not been written, or the file it was written to
+ * is gone. An unnamed buffer is neither: it has never had a file, and Save As
+ * is what gives it one - which is why a new file is not "missing".
+ */
+export function needsSaving(key) {
+  return isDirty(key) || isMissing(key);
 }
 
 /** Where the caret and viewport were when this buffer was last shown. */

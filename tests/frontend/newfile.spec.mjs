@@ -218,3 +218,55 @@ test.describe("after the folder is deleted from outside", () => {
     await expect.poll(() => wrote(page, `${PROJECT}/fallback.py`)).toBe("");
   });
 });
+
+test.describe("a tab whose file has gone", () => {
+  test("is struck through after a refresh, and stays open", async ({ page }) => {
+    // Closing it would discard edits nobody asked to lose, which is the Phase 2
+    // rule. The mark says what the dirty dot says, in its strongest form: what
+    // is on screen is not what is on disk, because there is no longer a disk
+    // copy at all.
+    await openApp(page);
+    await expect(page.locator(".tab-missing")).toHaveCount(0);
+
+    await page.evaluate(
+      (path) => globalThis.__NEUTRALINO_STUB__.removePath(path),
+      `${PROJECT}/part.py`,
+    );
+    await page.locator("#tree-refresh").click();
+
+    await expect(page.locator(".tab-missing .tab-label")).toHaveText("part.py");
+    await expect(page.locator(".tab")).toHaveCount(1);
+  });
+
+  test("counts as unsaved work, so closing it asks", async ({ page }) => {
+    // The buffer is the only copy of that text now. Discarding it silently is
+    // exactly the failure the unsaved prompt exists to prevent.
+    await openApp(page);
+    await page.evaluate(
+      (path) => globalThis.__NEUTRALINO_STUB__.removePath(path),
+      `${PROJECT}/part.py`,
+    );
+    await page.locator("#tree-refresh").click();
+    await expect(page.locator(".tab-missing")).toHaveCount(1);
+
+    await page.locator(".tab-close").first().click();
+
+    await expect(page.locator(".confirm-overlay:visible")).toContainText("part.py");
+  });
+
+  test("and saving writes it back and takes the mark off", async ({ page }) => {
+    await openApp(page);
+    await page.evaluate(
+      (path) => globalThis.__NEUTRALINO_STUB__.removePath(path),
+      `${PROJECT}/part.py`,
+    );
+    await page.locator("#tree-refresh").click();
+    await expect(page.locator(".tab-missing")).toHaveCount(1);
+
+    await page.locator(".monaco-editor .view-lines").first().click();
+    await page.keyboard.press("Meta+s");
+
+    await expect(page.locator(".tab-missing")).toHaveCount(0);
+    await expect.poll(() => wrote(page, `${PROJECT}/part.py`)).toContain("PART = 1");
+  });
+});

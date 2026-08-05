@@ -41,6 +41,9 @@ const HIDDEN_KEY = "sidebarHidden";
 
 let root = null;
 let openFile = null;
+// Told after every refresh, so the editor can check whether the files its tabs
+// name are still there. The tree does not know about buffers and should not.
+let refreshed = () => {};
 let hidden = false;
 // Whether the tree pane was on screen after the last render, so that a change
 // in that - and only a change - re-measures the grid. See render().
@@ -61,8 +64,9 @@ let pending = null;
 const expanded = new Set();
 const children = new Map();
 
-export function initSidebar({ onOpenFile }) {
+export function initSidebar({ onOpenFile, onRefreshed = () => {} }) {
   openFile = onOpenFile;
+  refreshed = onRefreshed;
   hidden = getSetting(HIDDEN_KEY) === true;
   document.getElementById("tree-refresh").addEventListener("click", () => {
     refreshSidebar().catch((error) => log.warn("Could not refresh the tree:", error));
@@ -173,6 +177,7 @@ export async function refreshSidebar() {
   }
   forgetWhatIsGone();
   render();
+  refreshed();
 }
 
 /**

@@ -11,7 +11,8 @@ import {
   formatBuffer,
   getCurrentFile,
   getValue,
-  isBufferDirty,
+  bufferNeedsSaving,
+  markMissingFiles,
   markSaved,
   openBuffer,
   setCurrentFile,
@@ -358,7 +359,7 @@ export async function closeActiveTab() {
  * @param {number[]} keys the buffers at risk, in tab order
  */
 async function confirmDiscard(keys) {
-  const dirty = keys.filter((key) => isBufferDirty(key));
+  const dirty = keys.filter((key) => bufferNeedsSaving(key));
   if (dirty.length === 0) {
     return true;
   }
@@ -426,8 +427,10 @@ export async function confirmDiscardAll() {
  * @returns {Promise<boolean>} false if a save failed
  */
 export async function saveAll() {
+  // Missing files are included: the buffer is the only copy left, and Save All
+  // is exactly the command for getting the project back onto disk.
   const pending = bufferKeys()
-    .filter((key) => isBufferDirty(key) && bufferPath(key) !== null);
+    .filter((key) => bufferNeedsSaving(key) && bufferPath(key) !== null);
   if (pending.length === 0) {
     return true;
   }
@@ -596,6 +599,36 @@ export async function openFile() {
     return null;
   }
   return openPath(entries[0]);
+}
+
+/**
+ * Check which open files are still on disk, and mark the ones that are not.
+ *
+ * Stat'd one by one rather than inferred from the tree's listings, because a
+ * tab can name a file outside the project folder - the tree would never see it.
+ * There is no watcher, deliberately: createWatcher stayed deferred until a real
+ * build establishes it on all three platforms, so this runs when the tree is
+ * refreshed. It is therefore not live, and it is never wrong the other way - a
+ * struck-through tab really is gone.
+ */
+export async function checkOpenFilesExist() {
+  const missing = [];
+  for (const key of bufferKeys()) {
+    const path = bufferPath(key);
+    if (path === null) {
+      continue;
+    }
+    try {
+      await filesystem.getStats(path);
+    } catch {
+      missing.push(path);
+    }
+  }
+  markMissingFiles(missing);
+  if (missing.length > 0) {
+    log.info(`No longer on disk: ${missing.join(", ")}`);
+  }
+  refreshTabs();
 }
 
 /**

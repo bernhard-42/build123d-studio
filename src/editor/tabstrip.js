@@ -14,7 +14,14 @@
 // does not fit is a second place to look for a file that is already on screen
 // somewhere, and the strip is horizontal anyway.
 
-import { activeBufferKey, bufferKeys, bufferPath, isBufferDirty, onDirtyChange } from "./monaco.js";
+import {
+  activeBufferKey,
+  bufferKeys,
+  bufferPath,
+  isBufferDirty,
+  isBufferMissing,
+  onDirtyChange,
+} from "./monaco.js";
 import { labelsFor } from "./tabs.js";
 
 let strip = null;
@@ -58,8 +65,21 @@ export function refreshTabs() {
 
 function render(tab, isActive) {
   const element = document.createElement("div");
-  element.className = isActive ? "tab tab-active" : "tab";
-  element.title = tab.title;
+  // Struck through when the file has gone from disk, which is the strongest
+  // version of the thing the dirty dot says: what is on screen is not what is
+  // on disk, because there is no longer anything on disk. The buffer stays -
+  // closing a tab because a file vanished would discard edits nobody asked to
+  // lose - and saving it writes the file back and takes the mark off.
+  const missing = isBufferMissing(tab.key);
+  const classes = ["tab"];
+  if (isActive) {
+    classes.push("tab-active");
+  }
+  if (missing) {
+    classes.push("tab-missing");
+  }
+  element.className = classes.join(" ");
+  element.title = missing ? `${tab.title}\n\nNo longer on disk. Save to write it back.` : tab.title;
   element.setAttribute("role", "tab");
   element.setAttribute("aria-selected", isActive ? "true" : "false");
 

@@ -665,6 +665,15 @@ html body {
   box-shadow: inset 0 2px 0 var(--accent);
 }
 
+/* The file this tab names has gone from disk. Struck through rather than
+   coloured, because colour in this strip already means "active" and a second
+   colour would be a second thing to learn. The buffer is still open and still
+   saveable - the mark says where it would be saved *to* no longer exists. */
+.tab-missing > .tab-label {
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+}
+
 .tab-label {
   overflow: hidden;
   white-space: nowrap;
