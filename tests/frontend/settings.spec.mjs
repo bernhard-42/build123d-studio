@@ -198,6 +198,52 @@ test.describe("the Editor tab", () => {
       .toMatchObject({ formatLineLength: 120, formatOnSave: false });
   });
 
+  test("dark mode pins nothing unless it is changed", async ({ page }) => {
+    // The trap this avoids: opening the dialog and pressing Apply would
+    // otherwise pin a preference that had been following the desktop, and the
+    // theme would quietly stop tracking it. Written without assuming which
+    // theme the machine running the suite is in - the point is that Apply
+    // changes nothing, whichever it is.
+    await openSettings(page);
+    await page.locator("#tab-editor").click();
+
+    await page.locator("#settings-apply").click();
+    await expect(page.locator("#settings-apply")).toBeHidden();
+
+    const stored = await page.evaluate(() =>
+      JSON.parse(
+        String(
+          globalThis.__NEUTRALINO_STUB__.wrote("/appdata/build123d-studio/settings.json") ?? "{}",
+        ),
+      ),
+    );
+    expect(stored.theme, "Apply pinned a theme nobody asked it to").toBeUndefined();
+  });
+
+  test("and changing it pins the one now showing", async ({ page }) => {
+    await openSettings(page);
+    await page.locator("#tab-editor").click();
+    const box = page.locator("#settings-dark-mode");
+    const wasDark = await box.isChecked();
+
+    await box.setChecked(!wasDark);
+    await page.locator("#settings-apply").click();
+
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          JSON.parse(
+            String(
+              globalThis.__NEUTRALINO_STUB__.wrote(
+                "/appdata/build123d-studio/settings.json",
+              ) ?? "{}",
+            ),
+          ),
+        ),
+      )
+      .toMatchObject({ theme: wasDark ? "light" : "dark" });
+  });
+
   test("a line length that is not a number is refused where it was typed", async ({ page }) => {
     // Refused rather than rounded or silently defaulted: the value is on screen
     // and the user is looking at it, so this is the one moment where saying no

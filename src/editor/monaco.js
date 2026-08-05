@@ -110,6 +110,7 @@ import { cellAt, findCells, nextCell } from "./cells.js";
 import { completionItems, completionQuery, isIncomplete } from "./completion.js";
 import { markersFor } from "./diagnostics.js";
 import { formatEdits } from "./format.js";
+import { showConsolePanel } from "../debug/console.js";
 import { formatLineLength } from "./formatting.js";
 import { hoverContents } from "./hover.js";
 import { signatureHelp } from "./signature.js";
@@ -187,6 +188,11 @@ function execute(code) {
     return;
   }
   log.info(`Run: sending ${code.length} chars to the kernel`);
+  // Whatever this prints lands in the console, so the console is what to look
+  // at. Without this a run after a debug session would put its output behind
+  // whichever tab happened to be showing, which is the same disappearing act
+  // the tabs were introduced to end.
+  showConsolePanel("console");
   ipc.send("kernel.execute", { code });
 }
 
@@ -771,7 +777,21 @@ export function initEditor() {
     unicodeHighlight: { nonBasicASCII: false, invisibleCharacters: true, ambiguousCharacters: true },
     scrollBeyondLastLine: false,
     fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace',
-    fontSize: 13,
+    // 12 rather than 13, and the gutter is why. Monaco makes the glyph margin -
+    // the breakpoint strip - exactly one line height wide, and the line height
+    // is fontSize x 1.5 on macOS, so the only lever on that strip is the font.
+    // The digits narrow with it, so the line-number column comes in as well.
+    fontSize: 12,
+    // Three, not the default five. A five-character column right-aligns a
+    // three-digit number and leaves two digits' worth of blank to its left -
+    // which lands exactly between the breakpoint dot and the number, and reads
+    // as the breakpoint strip being enormous. It grows on its own for a file
+    // that needs more.
+    lineNumbersMinChars: 3,
+    // Ten pixels of lane between the fold controls and the text, holding
+    // nothing: this is the width for decorations, and the only one this editor
+    // draws is the breakpoint, which is in the glyph margin.
+    lineDecorationsWidth: 0,
     tabSize: 4,
     insertSpaces: true,
     // The ruler is the formatter's own line length, so the line somebody is
@@ -1123,6 +1143,27 @@ export async function formatBuffer() {
     return;
   }
   await action.run();
+}
+
+/**
+ * Open the command palette, as F1 does.
+ *
+ * Focus first, because the palette is an editor action and an action with no
+ * editor focused is an action nobody asked. That is also why the button exists:
+ * F1 only works while the caret is in the editor, and somebody who has just
+ * clicked in the console has no way in.
+ */
+export function openCommandPalette() {
+  if (editor === null || editor === undefined) {
+    return;
+  }
+  editor.focus();
+  const action = editor.getAction("editor.action.quickCommand");
+  if (action === null || action === undefined) {
+    log.warn("No command palette registered");
+    return;
+  }
+  void action.run();
 }
 
 /** Whether the caret is in the editor, for routing clipboard commands. */

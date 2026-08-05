@@ -62,36 +62,6 @@ export async function setThemePreference(next) {
   await setSetting(STORAGE_KEY, preference);
 }
 
-/**
- * The next preference for the toolbar button, skipping any that would not
- * change what is on screen.
- *
- * A plain three-way cycle has a dead click in it, because "system" resolves to
- * whichever of light and dark the OS is using. On a light desktop, stepping
- * system → light changes nothing visible, so the button had to be pressed twice
- * to get to dark; on a dark desktop the dead step is dark → system instead.
- *
- * Skipping the no-op step means the preference that matches the OS is no longer
- * reachable from the button - on a light desktop it cycles system ↔ dark, never
- * settling on a pinned "light". That is the right trade for a toggle: the two
- * differ only in what happens when the OS theme later changes, and the settings
- * dialog can still set the preference explicitly.
- */
-export function nextPreference() {
-  const current = resolvedTheme();
-  const start = PREFERENCES.indexOf(preference);
-  for (let step = 1; step <= PREFERENCES.length; step += 1) {
-    const candidate = PREFERENCES[(start + step) % PREFERENCES.length];
-    const theme = candidate === "system" ? systemTheme() : candidate;
-    if (theme !== current) {
-      return candidate;
-    }
-  }
-  // Unreachable while PREFERENCES holds both light and dark, but a toolbar
-  // button that does nothing beats one that throws.
-  return preference;
-}
-
 export async function initTheme() {
   const stored = getSetting(STORAGE_KEY);
   if (PREFERENCES.includes(stored)) {

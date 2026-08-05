@@ -26,12 +26,18 @@ import {
   restart,
   updateBreakpoints,
 } from "./session.js";
-import { clearDebugConsole, debugOutput, initDebugConsole, showDebugConsole } from "./console.js";
+import {
+  applyPanelState,
+  clearDebugConsole,
+  debugOutput,
+  initDebugConsole,
+  showConsolePanel,
+} from "./console.js";
 import { isRunningFile, onRunChange, toggleRunFile } from "../run/file.js";
 import { justMyCode } from "./settings.js";
 import { notifyFailure } from "../confirm.js";
 import { refreshMenu } from "../menubar.js";
-import { refreshDebugFrame, setVariableSource } from "../vars/explorer.js";
+import { refreshDebugFrame } from "../vars/explorer.js";
 import { openPath, saveFile } from "../editor/files.js";
 import * as log from "../log.js";
 
@@ -204,8 +210,13 @@ export function initDebugUi() {
       if (state.running) {
         clearDebugConsole();
       }
-      showDebugConsole(state.running);
-      setVariableSource(state.running ? "debug" : "kernel");
+      if (state.running) {
+        showConsolePanel("rundebug");
+      }
+      // And when it ends, the tab stays and the explorer empties rather than
+      // reverting to the kernel: the pane still belongs to the session that has
+      // just finished, and its transcript is still on screen above it.
+      applyPanelState();
     }
 
     // A new stop is a new frame, and every reference the explorer holds belongs

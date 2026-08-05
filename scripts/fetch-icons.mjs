@@ -47,6 +47,8 @@ const ICONS = {
   close: "close",
   copy: "content_copy",
   settings: "tune",
+  // The command palette. ">_" is what every editor uses for "type a command".
+  command: "terminal",
   // Debugging. The step glyphs are Material Symbols' own, drawn for exactly
   // this: an arrow hopping over, into and out of a line.
   debug: "bug_report",

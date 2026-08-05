@@ -61,6 +61,7 @@ import * as log from "./log.js";
 import { escapeHtml } from "./escape.js";
 import { closeOnBackdropClick } from "./backdrop.js";
 import { refreshToolbarTitles } from "./toolbar.js";
+import { resolvedTheme, setThemePreference } from "./theme.js";
 
 // Package sources.
 //
@@ -337,6 +338,17 @@ export async function showSettings({ tab = null } = {}) {
             <span>Format on save</span>
           </label>
           <p class="info-note" id="settings-editor-problems" hidden></p>
+
+          <p class="settings-group">Appearance</p>
+          <p class="info-note">
+            Unticked and untouched, the editor follows the desktop's own light or
+            dark setting and changes with it. Ticking or unticking pins it, and
+            it stops following.
+          </p>
+          <label class="settings-check">
+            <input type="checkbox" id="settings-dark-mode" />
+            <span>Dark mode</span>
+          </label>
         </section>
 
         <section class="settings-panel" data-panel="debugging" hidden>
@@ -551,6 +563,10 @@ export async function showSettings({ tab = null } = {}) {
 
   renderChords();
 
+  // What is on screen, not the preference: "system" resolves to one of the two
+  // and a checkbox can only show which. Pinning happens on Apply, and only if
+  // the box no longer agrees with what is showing.
+  document.getElementById("settings-dark-mode").checked = resolvedTheme() === "dark";
   document.getElementById("settings-line-length").value = String(formatLineLength());
   document.getElementById("settings-format-on-save").checked = formatOnSave();
   document.getElementById("settings-just-my-code").checked = justMyCode();
@@ -609,6 +625,15 @@ export async function showSettings({ tab = null } = {}) {
     // until it is restarted, which is worth knowing and not worth a reload.
     if (usableLineLength(typedLength) !== formatLineLength()) {
       await setSetting(LINE_LENGTH_KEY, usableLineLength(typedLength));
+    }
+
+    // Only when it disagrees with what is on screen. Otherwise opening the
+    // dialog and pressing Apply would pin a preference that had been following
+    // the desktop, and the theme would stop tracking it for reasons the user
+    // never asked for.
+    const wantsDark = document.getElementById("settings-dark-mode").checked;
+    if (wantsDark !== (resolvedTheme() === "dark")) {
+      await setThemePreference(wantsDark ? "dark" : "light");
     }
 
     const onSave = document.getElementById("settings-format-on-save").checked;

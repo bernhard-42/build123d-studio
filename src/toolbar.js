@@ -7,18 +7,20 @@ import {
   getCurrentFile,
   isDirty,
   onDirtyChange,
+  openCommandPalette,
   runCell,
   runAll,
   runSelectionOrLine,
 } from "./editor/monaco.js";
 import { onDebugChange } from "./debug/session.js";
 import * as ipc from "./ipc.js";
-import { nextPreference, onThemeChange, setThemePreference, themePreference } from "./theme.js";
 import { showInfo } from "./info.js";
 import { showSettings } from "./settings.js";
 import * as log from "./log.js";
 import { toggleRunFile } from "./run/file.js";
 import { labelFor } from "./keybindings.js";
+import { menuChordLabel } from "./menubar.js";
+import { MENU } from "./menu.js";
 import { titleWithChord } from "./keys.js";
 
 // Toolbar wiring and the kernel state indicator.
@@ -92,6 +94,17 @@ export function setDebugToggle(handler) {
 // them. New, Open and Save do have chords, but from the native menu rather than
 // from this keymap, and inventing a second source for them is how the two come
 // to disagree.
+// The buttons whose chord belongs to the menu rather than to the keymap. Asked
+// of menubar.js for the same reason as above: one source, so the button and the
+// menu item cannot end up claiming different keys for the same action.
+const MENU_BUTTONS = {
+  "btn-new": ["New File", MENU.NEW],
+  "btn-open": ["Open File", MENU.OPEN],
+  "btn-save": ["Save File", MENU.SAVE],
+  "btn-sidebar": ["Toggle the file tree", MENU.TOGGLE_SIDEBAR],
+  "btn-settings": ["Settings", MENU.SETTINGS],
+};
+
 const BUTTON_COMMANDS = {
   "btn-run-cell": ["Run Cell", "run.cell"],
   "btn-run-sel": ["Run Selection", "run.selectionOrLine"],
@@ -124,6 +137,12 @@ export function refreshToolbarTitles() {
     const button = document.getElementById(id);
     if (button !== null) {
       button.title = titleWithChord(label, labelFor(command));
+    }
+  }
+  for (const [id, [label, command]] of Object.entries(MENU_BUTTONS)) {
+    const button = document.getElementById(id);
+    if (button !== null) {
+      button.title = titleWithChord(label, menuChordLabel(command));
     }
   }
 }
@@ -168,7 +187,7 @@ export function initToolbar() {
     "btn-interrupt": () =>
       withErrorReporting("Interrupt", async () => ipc.send("kernel.interrupt")),
     "btn-restart": () => withErrorReporting("Restart", async () => ipc.send("kernel.restart")),
-    "btn-theme": () => setThemePreference(nextPreference()),
+    "btn-palette": openCommandPalette,
     "btn-info": showInfo,
     "btn-settings": showSettings,
   };
@@ -178,14 +197,6 @@ export function initToolbar() {
   }
 
   refreshToolbarTitles();
-
-  // The icon shows what you would get, and the tooltip names the preference -
-  // "system" is otherwise indistinguishable from whichever theme it resolved to.
-  onThemeChange((theme) => {
-    const icon = document.getElementById("icon-theme");
-    icon.className = `icon icon-theme-${theme === "light" ? "light" : "dark"}`;
-    document.getElementById("btn-theme").title = `Theme: ${themePreference()}`;
-  });
 
   // Debugging, which needs no kernel: the file runs in a process of its own.
   // The one button both starts and stops, like the chord, and says which it

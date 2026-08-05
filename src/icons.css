@@ -122,6 +122,11 @@
   content: "\e429";
 }
 
+/* terminal */
+.icon-command::before {
+  content: "\eb8e";
+}
+
 /* bug_report */
 .icon-debug::before {
   content: "\e868";

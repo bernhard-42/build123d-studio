@@ -15,13 +15,17 @@
 // not state, and a show() from the run reaches the viewer already on screen
 // because the process is given the kernel's environment.
 
-import { clearDebugConsole, debugOutput, showDebugConsole } from "../debug/console.js";
+import {
+  applyPanelState,
+  clearDebugConsole,
+  debugOutput,
+  showConsolePanel,
+} from "../debug/console.js";
 import { isDebugging } from "../debug/session.js";
 import { getCurrentFile } from "../editor/monaco.js";
 import { notifyFailure } from "../confirm.js";
 import { refreshMenu } from "../menubar.js";
 import { saveFile } from "../editor/files.js";
-import { setVariableSource } from "../vars/explorer.js";
 import * as ipc from "../ipc.js";
 import * as log from "../log.js";
 
@@ -43,10 +47,17 @@ function announce(next) {
     return;
   }
   running = next;
-  // The panes, both at once. Same call as the debugger's, so the two cannot
-  // drift into describing the swap differently.
-  showDebugConsole(running);
-  setVariableSource(running ? "debug" : "kernel");
+  if (running) {
+    // Shown rather than swapped to: the tab stays reachable afterwards, which
+    // is the point - a traceback outlives the process that raised it.
+    showConsolePanel("rundebug");
+  }
+  // And nothing is put back when it ends. The tab is still the run's output, so
+  // the panes beside it still describe the run - which is now nothing running,
+  // rather than the kernel. Restoring the kernel's explorer and an evaluate
+  // line under a Run/Debug tab was three panes describing three different
+  // things, which is what he saw.
+  applyPanelState();
   for (const listener of listeners) {
     listener(running);
   }

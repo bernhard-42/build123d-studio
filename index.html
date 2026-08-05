@@ -55,7 +55,7 @@
            read before the splash goes away. -->
       <button type="button" class="splash-ok confirm-button primary" id="splash-ok" hidden>
         OK
-      </button>
+            </button>
     </div>
 
     <!-- Laid out from the start, covered by the splash overlay. Monaco and
@@ -103,6 +103,22 @@
                 <span class="icon icon-save"></span>
               </button>
               <span class="toolbar-sep"></span>
+              <!-- The file, from disk, in a process of its own - first, because
+                   it is the group that does not touch the kernel at all. The
+                   two of them differ only in whether a debugger is attached. -->
+              <button class="btn" id="btn-run-file" title="Run File">
+                <span class="icon icon-run-file"></span>
+              </button>
+              <button class="btn" id="btn-debug" title="Debug File">
+                <span class="icon icon-debug"></span>
+              </button>
+              <span class="toolbar-sep"></span>
+              <!-- Everything the kernel does, in one group and not two: running
+                   code in it and controlling it are the same subject, and a
+                   separator between them said they were different things. The
+                   indicator ends the group rather than starting it - in front
+                   of the buttons it read as a label for them rather than as the
+                   kernel's own state. -->
               <button class="btn" id="btn-run-cell" title="Run Cell">
                 <span class="icon icon-run-cell"></span>
               </button>
@@ -112,23 +128,6 @@
               <button class="btn" id="btn-run-all" title="Run All">
                 <span class="icon icon-run-all"></span>
               </button>
-              <span class="toolbar-sep"></span>
-              <!-- Debugging on its own, between running code in the kernel and
-                   controlling that kernel. It belongs with neither: the file
-                   runs in a process of its own and the kernel is not touched by
-                   it. -->
-              <button class="btn" id="btn-run-file" title="Run File">
-                <span class="icon icon-run-file"></span>
-              </button>
-              <button class="btn" id="btn-debug" title="Debug File">
-                <span class="icon icon-debug"></span>
-              </button>
-              <span class="toolbar-sep"></span>
-              <!-- Restart, Interrupt, then what the kernel is doing. The
-                   indicator belongs with these two - they are what you press
-                   about it - but in front of them it read as a label for the
-                   buttons rather than as the kernel's state, so it reads the
-                   group and does not interrupt it. -->
               <button class="btn" id="btn-restart" title="Restart kernel">
                 <span class="icon icon-restart"></span>
               </button>
@@ -139,14 +138,18 @@
                 <span class="dot" id="kernel-dot"></span><span id="kernel-label">starting</span>
               </span>
               <span class="toolbar-spacer"></span>
-              <button class="btn" id="btn-settings" title="Packages">
+              <button class="btn" id="btn-settings" title="Settings">
                 <span class="icon icon-settings"></span>
               </button>
               <button class="btn" id="btn-info" title="About build123d Studio">
                 <span class="icon icon-info"></span>
               </button>
-              <button class="btn" id="btn-theme" title="Theme">
-                <span class="icon" id="icon-theme"></span>
+              <!-- Everything this editor can do, by name. The theme button was
+                   here and is in Settings now: a preference somebody sets once
+                   was taking the space of the one control that reaches the
+                   other fifty. -->
+              <button class="btn" id="btn-palette" title="Command Palette">
+                <span class="icon icon-command"></span>
               </button>
             </div>
             <!-- The strip and the debug controls share one row: no second bar,
@@ -155,6 +158,34 @@
                  left, which while debugging is a little less. -->
             <div class="tab-row" id="tab-row">
               <div class="tab-strip" id="tab-strip" role="tablist" hidden></div>
+            </div>
+            <div class="editor-host" id="editor-host"></div>
+          </div>
+          <div class="splitter splitter-v" id="splitter-v-top"></div>
+          <div class="pane pane-viewer" id="pane-viewer"></div>
+        </div>
+
+        <div class="splitter splitter-h" id="splitter-h"></div>
+
+        <div class="row" id="row-bottom">
+          <!-- Two panels under one header, in one grid cell. They used to be
+               siblings that took turns being hidden, which meant a finished
+               run's output went away with it - so a traceback could only be
+               read while the process that printed it was still alive. Tabs keep
+               it, and keep the rule the swap was for: the Run/Debug tab is the
+               other process and the Console tab is the kernel, and neither ever
+               describes the other.
+
+               The group is the grid cell and is what the splitter sizes; both
+               panels simply fill it. -->
+          <div class="pane pane-console-group" id="pane-console-group">
+            <div class="console-tabs" id="console-tabs" role="tablist">
+              <button class="console-tab" id="console-tab-console" role="tab"
+                      data-console-panel="console">Console</button>
+              <button class="console-tab" id="console-tab-rundebug" role="tab"
+                      data-console-panel="rundebug">Run/Debug</button>
+              <!-- Beside the output they act on, rather than up in the editor's
+                   tab strip where they were lost among the file tabs. -->
               <div class="debug-bar" id="debug-bar" hidden>
                 <button class="btn debug-btn" id="debug-continue" title="Continue">
                   <span class="icon icon-debug-continue"></span>
@@ -176,29 +207,19 @@
                 </button>
               </div>
             </div>
-            <div class="editor-host" id="editor-host"></div>
-          </div>
-          <div class="splitter splitter-v" id="splitter-v-top"></div>
-          <div class="pane pane-viewer" id="pane-viewer"></div>
-        </div>
-
-        <div class="splitter splitter-h" id="splitter-h"></div>
-
-        <div class="row" id="row-bottom">
-          <div class="pane pane-console" id="pane-console"></div>
-          <!-- The debug console takes the same grid cell, and only one of the
-               two is ever visible. Two worlds: while a session runs every pane
-               describes the debugged process, and otherwise every pane
-               describes the kernel - so there is never a question of which one
-               a pane is talking about. -->
-          <div class="pane pane-debug" id="pane-debug" hidden>
-            <div class="debug-output" id="debug-output"></div>
-            <div class="debug-prompt">
-              <span class="debug-caret">&gt;</span>
-              <input class="debug-input" id="debug-input" type="text" spellcheck="false"
-                     autocomplete="off" placeholder="Evaluate in the selected frame" />
+            <div class="console-panels" id="console-panels">
+              <div class="pane-console" id="pane-console"></div>
+              <div class="pane-debug" id="pane-debug" hidden>
+                <div class="debug-output" id="debug-output"></div>
+                <div class="debug-prompt" id="debug-prompt">
+                  <span class="debug-caret">&gt;</span>
+                  <input class="debug-input" id="debug-input" type="text" spellcheck="false"
+                         autocomplete="off" placeholder="Evaluate in the selected frame" />
+                </div>
+              </div>
             </div>
           </div>
+
           <div class="splitter splitter-v" id="splitter-v-bottom"></div>
           <div class="pane pane-vars" id="pane-vars"></div>
         </div>

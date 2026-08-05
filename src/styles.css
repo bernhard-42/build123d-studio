@@ -803,26 +803,87 @@ html body {
   grid-column: 3;
 }
 .pane-console {
-  grid-column: 1;
   /* xterm draws its first column flush against the container edge, which puts
      the prompt hard up against the splitter. The padding sits on the pane
      rather than on .xterm so the fit addon - which measures the container's
      content box - still computes rows and columns correctly. */
   padding-left: 3px;
 }
-/* The debug console, in the console's cell. Output above, one line below -
-   which is the shape of the thing it replaces, so the eye does not have to
-   relearn the pane when a session starts. */
-.pane-debug {
+/* The grid cell, and the only thing in the bottom row's left column. What the
+   splitter sizes is this; the two panels inside simply fill it, which is why
+   neither of them carries a column of its own any more. */
+.pane-console-group {
   grid-column: 1;
   display: flex;
   flex-direction: column;
   min-height: 0;
 }
 
-.pane-debug[hidden] {
+/* The header, whose height comes out of the group rather than being added to
+   the row - the panes are sized in pixels computed from their container, so a
+   bar that grew the row would push the bottom of the window off screen. */
+.console-tabs {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: stretch;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.console-tab {
+  padding: 4px 12px;
+  border: none;
+  border-right: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted-fg, var(--fg));
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.console-tab-active {
+  background: var(--bg-pane);
+  color: var(--fg);
+}
+
+/* Right-aligned, which is where they were in the tab strip - the difference is
+   that there is nothing here to crowd them out. */
+.console-tabs .debug-bar {
+  margin-left: auto;
+}
+
+.console-panels {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+}
+
+.console-panels > * {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+}
+
+.pane-debug {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.pane-debug[hidden],
+.pane-console[hidden],
+.debug-prompt[hidden] {
   display: none;
 }
+
+/* With no explorer the console group takes the whole row. Hiding the pane alone
+   would leave its track standing empty, because the row is a grid with three
+   fixed columns rather than a flex line. */
+#row-bottom.no-vars {
+  grid-template-columns: 1fr;
+}
+
 
 .debug-output {
   flex: 1 1 auto;
@@ -1362,8 +1423,11 @@ html body {
    more than one tool's settings needs to say which is which before it has two,
    not after - "line length" alone is a question about the editor, and this one
    is a question about black. */
+/* A group heading opens a new subject, so it needs room above it and almost
+   none below - the note that explains it follows immediately. First in a panel
+   it needs neither, because the panel's own padding is already there. */
 .settings-group {
-  margin: 0 0 2px;
+  margin: 16px 0 4px;
   font-weight: 600;
   font-size: 12px;
   letter-spacing: 0.04em;
@@ -1390,12 +1454,30 @@ html body {
   font-size: 12px;
 }
 
+/* The rhythm of a panel: a note, the control it explains, then a gap before the
+   next pair. Without the gap below, a checkbox sits as close to the *next*
+   setting's explanation as to its own, and the two read as one. */
 .settings-check {
   display: flex;
   align-items: center;
   gap: 6px;
+  margin: 0 0 14px;
   cursor: pointer;
   user-select: none;
+}
+
+.settings-line,
+.settings-field {
+  margin-bottom: 14px;
+}
+
+.settings-panel > :first-child {
+  margin-top: 0;
+}
+
+/* The last one carries no gap; the panel's padding ends it. */
+.settings-panel > :last-child {
+  margin-bottom: 0;
 }
 
 .settings-check input {

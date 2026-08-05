@@ -31,7 +31,7 @@
 import { isDebugging } from "./debug/session.js";
 import { events, window as neuWindow } from "@neutralinojs/lib";
 
-import { COMMANDS, parseChord } from "./keys.js";
+import { COMMANDS, describeChord, parseChord } from "./keys.js";
 import { MENU, buildMenu } from "./menu.js";
 import { chordsFor } from "./keybindings.js";
 import * as log from "./log.js";
@@ -94,6 +94,19 @@ function chordFor(commandId) {
   }
   const fixed = FILE_CHORDS[commandId];
   return fixed === undefined ? null : parseChord(fixed);
+}
+
+/**
+ * How a menu item's chord is written, for a tooltip on the button beside it.
+ *
+ * Exported so the toolbar can ask rather than keep its own copy. New, Open,
+ * Save, the sidebar toggle and Settings have chords that live here rather than
+ * in the keymap - they are the menu's, not the editor's - and a second table
+ * for the buttons is how the two come to disagree about Cmd-S.
+ */
+export function menuChordLabel(commandId) {
+  const chord = chordFor(commandId);
+  return chord === null ? "" : describeChord(NL_OS, chord);
 }
 
 /** The id out of whatever mainMenuItemClicked turns out to deliver. */

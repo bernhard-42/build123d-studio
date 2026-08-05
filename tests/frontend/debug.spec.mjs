@@ -122,19 +122,36 @@ test.describe("starting a session", () => {
 });
 
 test.describe("the panes swap rather than sharing", () => {
-  test("the debug console takes the console pane, and gives it back", async ({ page }) => {
+  test("starting a session raises the Run/Debug tab", async ({ page }) => {
     const { sidecar } = await openApp(page);
 
     await expect(page.locator("#pane-console")).toBeVisible();
 
     await startSession(page, sidecar);
+
     await expect(
       page.locator("#pane-console"),
       "the Jupyter console is still on screen during a session",
     ).toBeHidden();
     await expect(page.locator("#pane-debug")).toBeVisible();
+  });
+
+  test("and its output survives the session that wrote it", async ({ page }) => {
+    // The panes used to swap back when the session ended, which took the
+    // transcript with it - so a traceback could only be read while the process
+    // that raised it was still alive. The tab stays where it is now, and the
+    // Console tab is one click away rather than being restored underneath you.
+    const { sidecar } = await openApp(page);
+    await startSession(page, sidecar);
+    sidecar.send("debug.output", { text: "SENTINEL_TRACEBACK\n" });
+    await expect(page.locator("#debug-output")).toContainText("SENTINEL_TRACEBACK");
 
     sidecar.send("debug.exited", { code: 0 });
+
+    await expect(page.locator("#pane-debug")).toBeVisible();
+    await expect(page.locator("#debug-output")).toContainText("SENTINEL_TRACEBACK");
+
+    await page.locator("#console-tab-console").click();
     await expect(page.locator("#pane-console")).toBeVisible();
     await expect(page.locator("#pane-debug")).toBeHidden();
   });
@@ -148,6 +165,55 @@ test.describe("the panes swap rather than sharing", () => {
     sidecar.send("debug.exited", { code: 0 });
 
     await expect(page.locator("#debug-bar")).toBeHidden();
+  });
+});
+
+test.describe("what the tabs mean for the panes beside them", () => {
+  test("a finished session leaves the tab up and the explorer empty", async ({ page }) => {
+    // Not back to the kernel. The pane still belongs to the session that has
+    // just ended, and its transcript is still on screen above it.
+    const { sidecar } = await openApp(page);
+    await startSession(page, sidecar);
+
+    sidecar.send("debug.exited", { code: 0 });
+
+    await expect(page.locator("#pane-debug")).toBeVisible();
+    // Gone rather than empty: with the session over there is nothing for it to
+    // be about, and an empty explorer reads as a kernel with no variables yet.
+    await expect(page.locator("#pane-vars")).toBeHidden();
+    await expect(page.locator("#debug-prompt")).toBeHidden();
+  });
+
+  test("switching tabs switches what the explorer is about", async ({ page }) => {
+    // With a session live: the Console tab is the kernel, the Run/Debug tab is
+    // the frame. Clicking between them moves the explorer with them.
+    const { sidecar } = await openApp(page);
+    await startSession(page, sidecar);
+    await expect(page.locator("#debug-prompt")).toBeVisible();
+
+    // Paused, because an explorer over a session that is merely running has no
+    // frame to describe and asks for nothing - which would make the assertion
+    // below pass or fail on timing rather than on the rule.
+    sidecar.send("debug.message", {
+      message: { type: "event", event: "stopped", seq: 1,
+                 body: { reason: "breakpoint", threadId: 1 } },
+    });
+    await expect(page.locator("#debug-continue")).toBeEnabled();
+
+    await page.locator("#console-tab-console").click();
+    await expect
+      .poll(() => sidecar.received.filter((frame) => frame.type === "vars.refresh").length)
+      .toBeGreaterThan(0);
+
+    await page.locator("#console-tab-rundebug").click();
+
+    // Still on screen, because there is a live session for it to describe. It
+    // only goes when the tab has nothing behind it.
+    await expect(page.locator("#pane-vars")).toBeVisible();
+    await expect(page.locator("#debug-prompt")).toBeVisible();
+    await expect
+      .poll(() => dapCommands(sidecar).filter((command) => command === "scopes").length)
+      .toBeGreaterThan(0);
   });
 });
 

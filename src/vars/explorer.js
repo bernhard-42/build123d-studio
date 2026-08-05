@@ -3,6 +3,7 @@ import { columnWidths, isUnder, pageInfo, pathKey, resized } from "./tree.js";
 import { detailFor, reset as resetFrames, scopeRows } from "./frames.js";
 import * as ipc from "../ipc.js";
 import * as log from "../log.js";
+import { refreshLayout } from "../layout/splitter.js";
 
 // The variable explorer.
 //
@@ -110,12 +111,46 @@ export function refreshDebugFrame() {
   }
 }
 
+/**
+ * Show or hide the explorer, and give the row its width back when it goes.
+ *
+ * The pane and its splitter go together, as the file tree's do, and the row is
+ * told to stop reserving the column - it is a three-track grid, so hiding the
+ * pane alone leaves its track standing empty and the console does not grow into
+ * it.
+ *
+ * This moves the layout every time the Run/Debug tab is chosen with nothing
+ * running behind it, which was the argument for showing it empty instead. He
+ * chose the movement, and the reason is a good one: hidden and empty say
+ * different things, and "there is nothing here to describe" is better said by
+ * an absent pane than by an empty one that looks like a kernel with no
+ * variables in it yet.
+ */
+export function showVariablePane(visible) {
+  document.getElementById("pane-vars").hidden = !visible;
+  document.getElementById("splitter-v-bottom").hidden = !visible;
+  document.getElementById("row-bottom").classList.toggle("no-vars", !visible);
+  // The console is sized in pixels computed from its container, so it has to be
+  // measured again now that the container is a different width.
+  refreshLayout();
+}
+
 export function setVariableSource(kind) {
   source = kind;
   expanded.clear();
   details.clear();
   pages.clear();
   resetFrames();
+
+  if (kind === "none") {
+    // The Run/Debug tab with nothing running behind it: there is no frame to
+    // describe and no kernel this tab is about. Empty is the honest answer, and
+    // it is a different fact from "no variables yet" - which is why nothing is
+    // asked for here.
+    rows = [];
+    render();
+    return;
+  }
 
   if (kind === "debug") {
     rows = [];

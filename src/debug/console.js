@@ -14,6 +14,8 @@
 import { evaluate } from "./session.js";
 import { refit } from "../console/terminal.js";
 import * as log from "../log.js";
+import { isDebugging } from "./session.js";
+import { setVariableSource, showVariablePane } from "../vars/explorer.js";
 
 // Lines kept in the transcript. A script in a loop can print faster than anyone
 // reads, and an unbounded pane is a memory leak with a scrollbar.
@@ -26,6 +28,11 @@ let input = null;
 // Cleared with the transcript, because a session's questions belong to that
 // session - the frame they were about is gone with the process.
 let history = [];
+// Which panel is showing. The console until something else runs.
+let current = "console";
+// The last source the explorer was actually put on, so a tab click that changes
+// nothing does not throw away what the user had opened.
+let appliedSource = "kernel";
 let atHistory = 0;
 // What was typed before the user started walking back, so coming forward again
 // returns it rather than an empty line.
@@ -117,28 +124,99 @@ async function submit() {
 }
 
 /**
- * Show or hide the pane, and take the console with it.
+ * Show one of the two panels, and remember which.
  *
- * Focus follows: a debug console nobody can type into without clicking first is
- * a debug console that gets used once.
+ * This replaces a swap: the two panels used to take turns being hidden, so a
+ * finished run's output disappeared with the process that wrote it and a
+ * traceback could only be read while the thing that raised it was still alive.
+ * The Run/Debug panel keeps its transcript now, and is cleared at the *start*
+ * of the next run rather than at the end of this one.
+ *
+ * What the swap was protecting is kept: the Console tab is the kernel and the
+ * Run/Debug tab is the other process, and neither ever describes the other.
+ * Choosing between them is the user's now rather than the application's, which
+ * is the whole difference.
+ *
+ * @param {"console"|"rundebug"} panel
  */
-export function showDebugConsole(visible) {
-  const debugPane = document.getElementById("pane-debug");
-  const consolePane = document.getElementById("pane-console");
-  debugPane.hidden = !visible;
-  consolePane.hidden = visible;
-  if (visible) {
-    input.focus();
+export function showConsolePanel(panel) {
+  const wanted = panel === "rundebug" ? "rundebug" : "console";
+  current = wanted;
+  document.getElementById("pane-console").hidden = wanted !== "console";
+  document.getElementById("pane-debug").hidden = wanted !== "rundebug";
+  for (const tab of document.querySelectorAll(".console-tab")) {
+    const active = tab.dataset.consolePanel === wanted;
+    tab.classList.toggle("console-tab-active", active);
+    tab.setAttribute("aria-selected", String(active));
+  }
+  applyPanelState();
+  if (wanted === "rundebug") {
     return;
   }
-  // Back to the console, which has been unmeasurable for the length of the
-  // session: xterm sizes itself from its container and a hidden one is zero.
+  // Back to the console, which has been unmeasurable for as long as it was
+  // hidden: xterm sizes itself from its container and a hidden one is zero.
   refit();
+}
+
+/** Which panel is on show. */
+export function currentConsolePanel() {
+  return current;
+}
+
+/**
+ * What the tab on show means for the panes beside it.
+ *
+ * One rule, in one place, because the alternative was three: the run set some
+ * of this, the debugger set some of it, and the end of either set it back - so
+ * finishing a Run File put the kernel's explorer and an evaluate line beside a
+ * Run/Debug tab that was still showing the run's output, describing three
+ * different things at once.
+ *
+ * The tab decides. Console is the kernel. Run/Debug is the debugged process
+ * when there is one, and empty when there is not - after a run ends, after a
+ * session ends, and when somebody simply clicks the tab. Nothing switches back
+ * on its own, because the output is still there and still worth reading.
+ *
+ * The source is only reset when it actually changes: setVariableSource clears
+ * what the user had expanded, and clicking between tabs must not cost them that
+ * every time.
+ */
+export function applyPanelState() {
+  const debugging = isDebugging();
+  const wanted = current === "console" ? "kernel" : (debugging ? "debug" : "none");
+  // The evaluate line is debugging's: it needs a frame to evaluate in.
+  showEvaluateInput(current === "rundebug" && debugging);
+  // And the explorer goes altogether when there is nothing for it to be about -
+  // which is the Run/Debug tab with no session behind it, whether that is a
+  // plain run, a finished session, or simply having clicked the tab.
+  showVariablePane(wanted !== "none");
+  if (wanted !== appliedSource) {
+    appliedSource = wanted;
+    setVariableSource(wanted);
+  }
+}
+
+/**
+ * Whether the evaluate line is offered.
+ *
+ * A plain run has no frame to evaluate in, so the field would be a prompt that
+ * answers nothing. Debugging keeps it - it is the whole of the debug console.
+ */
+export function showEvaluateInput(visible) {
+  document.getElementById("debug-prompt").hidden = !visible;
+  if (visible) {
+    input.focus();
+  }
 }
 
 export function initDebugConsole() {
   output = document.getElementById("debug-output");
   input = document.getElementById("debug-input");
+
+  for (const tab of document.querySelectorAll(".console-tab")) {
+    tab.addEventListener("click", () => showConsolePanel(tab.dataset.consolePanel));
+  }
+  showConsolePanel("console");
 
   input.addEventListener("keydown", (event) => {
     if (event.key === "Enter") {
