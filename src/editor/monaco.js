@@ -32,6 +32,75 @@ import "monaco-editor/editor/contrib/parameterHints/browser/parameterHints.js";
 // The hover tooltip. Same rule again: registerHoverProvider is in the API and
 // the thing that draws what it returns is not.
 import "monaco-editor/editor/contrib/hover/browser/hoverContribution.js";
+// The command palette, on F1, which is the chord this contribution binds for
+// itself. Nothing here registers it and nothing here needs to: every action
+// added below through addAction carries a label, so the five run chords and the
+// seven debug ones are all findable by name the moment the palette exists.
+//
+// It is the same trap one more time - there is no palette API to call and no
+// error to see, only an import that was missing - and the answer to "why does
+// nothing open" was that this line was not here. 6 kB gzipped, measured.
+import "monaco-editor/features/quickCommand/register.js";
+// And everything below is the rest of what an editor is expected to do.
+//
+// The palette is what made their absence obvious - it lists every registered
+// action, and there were almost none, because a contribution that is not
+// imported registers nothing. There was no Find, no Replace, no comment toggle
+// and no way to move a line, in an editor people write Python in all day.
+//
+// Named one at a time rather than through "monaco-editor/features/register.all
+// .js", for three reasons. That bundle also brings the diff editor, the iPad
+// keyboard and the experimental GPU renderer, none of which this application
+// has any use for. It does *not* bring the suggestion widget - it registers
+// suggestInlineCompletions and not suggestController - so it would silently
+// undo the fix above. And a list read one line at a time is a list somebody can
+// argue with, which is the point of writing down what is deliberately absent:
+// toggleHighContrast, because this application chooses the editor's theme in
+// theme.js and a command that swaps it underneath would leave the two
+// disagreeing; and inspectTokens, which is a developer tool and would sit in a
+// user's palette offering to explain their own file's tokens to them.
+//
+// Find and replace, and moving around what is found.
+import "monaco-editor/editor/contrib/find/browser/findController.js";
+import "monaco-editor/editor/contrib/gotoError/browser/gotoError.js";
+import "monaco-editor/editor/standalone/browser/quickAccess/standaloneGotoLineQuickAccess.js";
+import "monaco-editor/editor/standalone/browser/quickAccess/standaloneHelpQuickAccess.js";
+// Editing text, which is most of what the list above was missing.
+import "monaco-editor/editor/contrib/comment/browser/comment.js";
+import "monaco-editor/editor/contrib/format/browser/formatActions.js";
+import "monaco-editor/editor/contrib/linesOperations/browser/linesOperations.js";
+import "monaco-editor/editor/contrib/wordOperations/browser/wordOperations.js";
+import "monaco-editor/editor/contrib/wordPartOperations/browser/wordPartOperations.js";
+import "monaco-editor/editor/contrib/indentation/browser/indentation.js";
+import "monaco-editor/editor/contrib/inPlaceReplace/browser/inPlaceReplace.js";
+import "monaco-editor/editor/contrib/insertFinalNewLine/browser/insertFinalNewLine.js";
+import "monaco-editor/editor/contrib/caretOperations/browser/transpose.js";
+import "monaco-editor/editor/contrib/dnd/browser/dnd.js";
+import "monaco-editor/editor/contrib/snippet/browser/snippetController2.js";
+// Choosing what to edit.
+import "monaco-editor/editor/contrib/multicursor/browser/multicursor.js";
+import "monaco-editor/editor/contrib/smartSelect/browser/smartSelect.js";
+import "monaco-editor/editor/contrib/lineSelection/browser/lineSelection.js";
+import "monaco-editor/editor/contrib/anchorSelect/browser/anchorSelect.js";
+import "monaco-editor/editor/contrib/cursorUndo/browser/cursorUndo.js";
+// Reading a long file. Folding also earns back the sixteen pixels the gutter
+// has been reserving for it all along - the layout allows for a folding column
+// whether or not anything can draw one, so until now that space was blank.
+import "monaco-editor/editor/contrib/folding/browser/folding.js";
+import "monaco-editor/editor/contrib/stickyScroll/browser/stickyScrollContribution.js";
+import "monaco-editor/editor/contrib/bracketMatching/browser/bracketMatching.js";
+import "monaco-editor/editor/contrib/sectionHeaders/browser/sectionHeaders.js";
+import "monaco-editor/editor/contrib/links/browser/links.js";
+import "monaco-editor/editor/contrib/fontZoom/browser/fontZoom.js";
+// Things that only ever speak up when something is wrong with the file itself.
+import "monaco-editor/editor/contrib/unicodeHighlighter/browser/unicodeHighlighter.js";
+import "monaco-editor/editor/contrib/unusualLineTerminators/browser/unusualLineTerminators.js";
+import "monaco-editor/editor/contrib/readOnlyMessage/browser/contribution.js";
+import "monaco-editor/editor/contrib/longLinesHelper/browser/longLinesHelper.js";
+import "monaco-editor/editor/contrib/placeholderText/browser/placeholderText.contribution.js";
+import "monaco-editor/editor/contrib/middleScroll/browser/middleScroll.contribution.js";
+import "monaco-editor/editor/contrib/toggleTabFocusMode/browser/toggleTabFocusMode.js";
+import "monaco-editor/editor/contrib/tokenization/browser/tokenization.js";
 // Not the "monaco-editor/esm/vs/editor/editor.worker" path that most guides
 // still show: as of 0.56 the exports map is {"./*": "./esm/vs/*.js"}, so the
 // esm/vs prefix is added for us and spelling it out resolves to esm/vs/esm/vs.
@@ -40,6 +109,8 @@ import EditorWorker from "monaco-editor/editor/editor.worker.js?worker";
 import { cellAt, findCells, nextCell } from "./cells.js";
 import { completionItems, completionQuery, isIncomplete } from "./completion.js";
 import { markersFor } from "./diagnostics.js";
+import { formatEdits } from "./format.js";
+import { formatLineLength } from "./formatting.js";
 import { hoverContents } from "./hover.js";
 import { signatureHelp } from "./signature.js";
 import * as breakpoints from "../debug/breakpoints.js";
@@ -673,12 +744,24 @@ export function initEditor() {
     // not drawn without it - no error, no mark.
     glyphMargin: true,
     minimap: { enabled: true },
+    // Flag characters that are invisible or that can be mistaken for another,
+    // and say nothing about the rest. The default for nonBasicASCII is
+    // "inUntrustedWorkspace", which has no meaning outside VS Code, so what it
+    // resolves to here is not something to guess at - and if it resolved to
+    // true, every umlaut in a German comment would be marked as a problem in a
+    // file that has nothing wrong with it. The two checks worth having are the
+    // ones about characters a person cannot see.
+    unicodeHighlight: { nonBasicASCII: false, invisibleCharacters: true, ambiguousCharacters: true },
     scrollBeyondLastLine: false,
     fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace',
     fontSize: 13,
     tabSize: 4,
     insertSpaces: true,
-    rulers: [88],
+    // The ruler is the formatter's own line length, so the line somebody is
+    // looking at is the line black will wrap at. It was literally 88 before
+    // there was a setting, which happened to be black's default too - that
+    // agreement is now caused rather than coincidental.
+    rulers: [formatLineLength()],
   });
 
   onThemeChange((theme) => monaco.editor.setTheme(theme === "light" ? "vs" : "vs-dark"));
@@ -723,6 +806,12 @@ export function initEditor() {
 // rather than a second opinion about how long is too long - that judgement is
 // made once, where the work happens.
 const LANGUAGE_TIMEOUT = 6000;
+
+// Long enough for black to finish a file nobody should be editing by hand:
+// measured at about 0.25 ms a line, so this covers roughly a hundred thousand
+// lines. It is a backstop against the sidecar having gone, not a judgement
+// about how long formatting ought to take.
+const FORMAT_TIMEOUT = 30000;
 
 /**
  * Route Monaco's completion and signature requests to the sidecar.
@@ -803,6 +892,32 @@ function registerLanguageFeatures() {
         timeout: LANGUAGE_TIMEOUT,
       });
       return token.isCancellationRequested ? null : hoverContents(reply);
+    },
+  });
+
+  // Shift-Alt-F, and Format Document in the palette and the context menu, all
+  // of which come with the formatActions contribution rather than being
+  // registered here.
+  //
+  // A longer timeout than the others on purpose: completion and hover are
+  // answers that are worthless late, so they give up quickly and the user types
+  // on. A format is asked for once and waited for, and black costs about a
+  // quarter of a millisecond a line, so a large file legitimately takes
+  // seconds. Giving up on it at the language timeout would leave the one
+  // request the user is actually watching as the only one that fails.
+  monaco.languages.registerDocumentFormattingEditProvider("python", {
+    displayName: "black",
+    provideDocumentFormattingEdits: async (model, options, token) => {
+      const source = model.getValue();
+      const reply = await ipc.request(
+        "editor.format",
+        { source, lineLength: formatLineLength() },
+        { timeout: FORMAT_TIMEOUT },
+      );
+      if (token.isCancellationRequested) {
+        return [];
+      }
+      return formatEdits(source, reply?.source, model.getFullModelRange());
     },
   });
 
@@ -965,6 +1080,28 @@ export function registerRunActions(target) {
     }));
   }
   return registered;
+}
+
+/**
+ * Format the buffer on screen, as Shift-Alt-F does.
+ *
+ * Through Monaco's own action rather than by calling the provider directly, so
+ * that the keystroke and Format on Save are the same code path - including the
+ * progress indication and the single undo stop the action wraps the edit in.
+ * Two routes to one behaviour is how they come to differ.
+ */
+export async function formatBuffer() {
+  if (editor === null || editor === undefined || currentModel() === null) {
+    return;
+  }
+  const action = editor.getAction("editor.action.formatDocument");
+  if (action === null || action === undefined) {
+    // The contribution is imported, so this cannot happen - and if an upgrade
+    // ever makes it happen, a save must not fail because of it.
+    log.warn("No format action registered; the buffer was not formatted");
+    return;
+  }
+  await action.run();
 }
 
 /** Whether the caret is in the editor, for routing clipboard commands. */

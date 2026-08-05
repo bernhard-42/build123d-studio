@@ -136,11 +136,76 @@ test.describe("the tabs", () => {
     for (const [tab, panel] of [
       ["packages", "packages"],
       ["newfile", "newfile"],
+      ["editor", "editor"],
+      ["debugging", "debugging"],
       ["shortcuts", "shortcuts"],
     ]) {
       await page.locator(`#tab-${tab}`).click();
       await expect(page.locator(`[data-panel="${panel}"]`)).toBeVisible();
     }
+  });
+});
+
+test.describe("the Editor tab", () => {
+  test("shows black's settings as they currently stand", async ({ page }) => {
+    await openSettings(page, { formatLineLength: 100, formatOnSave: false });
+    await page.locator("#tab-editor").click();
+
+    await expect(page.locator("#settings-line-length")).toHaveValue("100");
+    await expect(page.locator("#settings-format-on-save")).not.toBeChecked();
+  });
+
+  test("and defaults to 88 with format on save on", async ({ page }) => {
+    // Both defaults are deliberate: 88 is black's own and the editor's ruler,
+    // and a formatter nobody remembers to press is a file that drifts.
+    await openSettings(page);
+    await page.locator("#tab-editor").click();
+
+    await expect(page.locator("#settings-line-length")).toHaveValue("88");
+    await expect(page.locator("#settings-format-on-save")).toBeChecked();
+  });
+
+  test("a changed line length is stored, and the dialog closes", async ({ page }) => {
+    await openSettings(page);
+    await page.locator("#tab-editor").click();
+
+    await page.locator("#settings-line-length").fill("120");
+    await page.locator("#settings-format-on-save").uncheck();
+    await page.locator("#settings-apply").click();
+
+    await expect(page.locator("#settings-apply")).toBeHidden();
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          JSON.parse(
+            String(
+              globalThis.__NEUTRALINO_STUB__.wrote(
+                "/appdata/build123d-studio/settings.json",
+              ) ?? "{}",
+            ),
+          ),
+        ),
+      )
+      .toMatchObject({ formatLineLength: 120, formatOnSave: false });
+  });
+
+  test("a line length that is not a number is refused where it was typed", async ({ page }) => {
+    // Refused rather than rounded or silently defaulted: the value is on screen
+    // and the user is looking at it, so this is the one moment where saying no
+    // costs nothing and guessing costs trust.
+    await openSettings(page);
+    await page.locator("#tab-editor").click();
+
+    await page.locator("#settings-line-length").fill("4");
+    await page.locator("#settings-apply").click();
+
+    await expect(page.locator("#settings-apply")).toBeVisible();
+    // In the Editor panel's own message line, not the packages one. Reporting
+    // there and then switching tabs would hide the message with the panel it
+    // lives in, and the dialog would refuse to close saying nothing.
+    await expect(page.locator("#settings-editor-problems")).toContainText("between 20 and 1000");
+    await expect(page.locator("#settings-editor-problems")).toBeVisible();
+    await expect(page.locator('[data-panel="editor"]')).toBeVisible();
   });
 });
 

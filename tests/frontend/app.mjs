@@ -55,6 +55,22 @@ class FakeSidecar {
     this._dap = false;
   }
 
+  /** What a real sidecar always answers, so tests need not know it exists.
+   *
+   * Format on Save is on by default, so *every* save now waits on this frame -
+   * and a harness that left it unanswered would make each save test hang for
+   * the request's whole timeout and then fail as though saving were broken.
+   * `source: null` is what the real sidecar sends for a buffer black would not
+   * change, which is the common case and produces no edit at all.
+   *
+   * A test that cares about formatting overrides it with answer().
+   */
+  _answerDefaults() {
+    if (!this._answers.has("editor.format")) {
+      this._answers.set("editor.format", () => ({ source: null }));
+    }
+  }
+
   /** Answer every request of a type, the way the sidecar's lanes do.
    *
    * ipc.request() correlates a reply to its request by an `id` it puts in the
@@ -106,6 +122,7 @@ class FakeSidecar {
 
   _attach(route) {
     this._route = route;
+    this._answerDefaults();
     route.onMessage((message) => {
       // Text frames are JSON control messages; binary ones are console bytes
       // and model payloads.

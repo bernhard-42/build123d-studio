@@ -1348,6 +1348,38 @@ html body {
   font-size: 12px;
 }
 
+/* The name of the tool a group of settings belongs to. A panel that will hold
+   more than one tool's settings needs to say which is which before it has two,
+   not after - "line length" alone is a question about the editor, and this one
+   is a question about black. */
+.settings-group {
+  margin: 0 0 2px;
+  font-weight: 600;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted-fg, var(--fg));
+}
+
+/* A label beside its input rather than above it, which is what a single short
+   value wants - a number field the width of the dialog invites an essay. */
+.settings-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-number {
+  width: 6em;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+
 .settings-check {
   display: flex;
   align-items: center;

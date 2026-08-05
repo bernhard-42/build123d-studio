@@ -8,6 +8,7 @@ import {
   bufferPath,
   captureActiveCaret,
   closeBuffer,
+  formatBuffer,
   getCurrentFile,
   getValue,
   isBufferDirty,
@@ -23,6 +24,7 @@ import { chooseActive, readWorkspace } from "./workspace.js";
 import { unsavedPrompt } from "./unsaved.js";
 import { hideFolder, revealInTree, showFolder } from "./sidebar.js";
 import { describeSize, isLarge, looksBinary, SNIFF_BYTES } from "./filetype.js";
+import { formatOnSave } from "./formatting.js";
 import { askThreeWay, askTwoWay, notifyFailure, notifyRefusal } from "../confirm.js";
 import { writeFileSafely } from "./safewrite.js";
 import { getSetting, setSetting } from "../store.js";
@@ -760,6 +762,27 @@ export async function saveFile({ saveAs = false } = {}) {
       return null;
     }
     path = withPythonExtension(path);
+  }
+
+  // Formatted before it is written, never after: what lands on disk and what
+  // is on screen have to be the same text, and formatting the file underneath
+  // the buffer would leave the tab showing the old layout and claiming to be
+  // clean. Awaited for the same reason - the write below reads the buffer.
+  //
+  // Failure here is not failure to save. black declining a buffer that does not
+  // parse is the ordinary state of a file being typed into, and refusing to
+  // write it would turn a formatter into an obstacle between somebody and their
+  // own work.
+  // isConnected first, because the alternative is a save that hangs. The
+  // request would otherwise sit out its whole timeout before failing, and a
+  // Cmd-S that takes half a minute because the sidecar died is a worse answer
+  // than a file saved with the layout it already had.
+  if (formatOnSave() && ipc.isConnected()) {
+    try {
+      await formatBuffer();
+    } catch (error) {
+      log.warn("Not formatted before saving:", error);
+    }
   }
 
   try {

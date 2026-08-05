@@ -198,6 +198,152 @@ test.describe("Save As", () => {
   });
 });
 
+test.describe("the command palette", () => {
+  test("F1 opens it, and this application's own actions are in it", async ({ page }) => {
+    // The contribution trap once more, and this one had been sitting there
+    // unnoticed: there was no palette at all, because the import was missing.
+    // F1 is the chord the contribution binds for itself, so what this holds is
+    // that the palette exists and that the actions registered through addAction
+    // are reachable by name - which is the whole reason it is worth having.
+    await openApp(page);
+    await focusEditor(page);
+
+    await page.keyboard.press("F1");
+
+    await expect(page.locator(".quick-input-widget")).toBeVisible();
+    await page.keyboard.type("Run Cell");
+    await expect(page.locator(".quick-input-list")).toContainText("Run Cell");
+  });
+
+  test("and Monaco's own actions are in it too, not only ours", async ({ page }) => {
+    // What the palette was first opened on: it listed our twelve actions and
+    // essentially nothing else, because an action belongs to a contribution and
+    // this editor had imported six of them. The palette was right and the
+    // editor was empty - there was no Find to list.
+    await openApp(page);
+    await focusEditor(page);
+
+    await page.keyboard.press("F1");
+    await expect(page.locator(".quick-input-widget")).toBeVisible();
+    await page.keyboard.type("comment");
+
+    await expect(page.locator(".quick-input-list")).toContainText("Toggle Line Comment");
+  });
+});
+
+test.describe("the editing contributions", () => {
+  test("Cmd-F opens the find widget", async ({ page }) => {
+    await openApp(page);
+    await focusEditor(page);
+
+    await page.keyboard.press("Meta+f");
+
+    await expect(page.locator(".editor-widget.find-widget")).toBeVisible();
+  });
+
+  test("Cmd-/ comments the line, and again takes it back", async ({ page }) => {
+    await openApp(page);
+    await focusEditor(page);
+    // The last line of the file is the empty one after the trailing newline,
+    // so Cmd-Down alone comments nothing anybody can see.
+    await page.keyboard.press("Meta+ArrowDown");
+    await page.keyboard.press("ArrowUp");
+
+    await page.keyboard.press("Meta+/");
+    await expect.poll(() => editorText(page)).toContain("# b = Box(1, 2, 3)");
+
+    await page.keyboard.press("Meta+/");
+    await expect.poll(() => editorText(page)).not.toContain("# b = Box(1, 2, 3)");
+  });
+
+  test("a block gets a fold control, in the space the gutter already reserved", async ({ page }) => {
+    // Folding is why the margin has a sixteen pixel column at all. Until this
+    // was imported the column was laid out on every line and nothing could ever
+    // draw in it.
+    await openApp(page);
+    await focusEditor(page);
+    await page.keyboard.press("Meta+ArrowDown");
+    await page.keyboard.press("End");
+    await page.keyboard.type("\nfor i in range(3):\n    print(i)");
+
+    // The controls are drawn on hover, which is Monaco's default and VS Code's,
+    // so the margin has to be under the pointer before there is anything to
+    // find. The class is the codicon's - `.folding` alone matches nothing.
+    const margin = page.locator(".monaco-editor .margin-view-overlays");
+    await margin.hover();
+
+    await expect(margin.locator(".codicon-folding-expanded").first()).toBeVisible();
+  });
+});
+
+test.describe("formatting", () => {
+  const TIDY = "b = Box(1, 2, 3)\n";
+
+  test("Shift-Alt-F replaces the buffer with what black sent back", async ({ page }) => {
+    const { sidecar } = await openApp(page);
+    sidecar.answer("editor.format", () => ({ source: `FORMATTED = 1\n${TIDY}` }));
+
+    await focusEditor(page);
+    await page.keyboard.press("Shift+Alt+f");
+
+    await expect.poll(() => editorText(page)).toContain("FORMATTED = 1");
+  });
+
+  test("the line length from settings is what is asked for", async ({ page }) => {
+    // The setting's only job is to reach black, and nothing on screen would
+    // show that it had not - a buffer formatted at 88 when 60 was asked for
+    // looks perfectly reasonable.
+    const { sidecar } = await openApp(page, { formatLineLength: 60 });
+    sidecar.answer("editor.format", () => ({ source: TIDY }));
+
+    await focusEditor(page);
+    await page.keyboard.press("Shift+Alt+f");
+
+    await expect
+      .poll(() => sidecar.received.find((frame) => frame.type === "editor.format")?.lineLength)
+      .toBe(60);
+  });
+
+  // There was a case here asserting that a buffer black would not change is not
+  // edited with itself, and it was deleted rather than kept. It could not be
+  // made to fail: with formatEdits' guard removed it still passed, because
+  // Monaco discards a no-op edit of its own accord - neither the undo stop nor
+  // the dirty mark it was written to catch ever happens. The property is real
+  // and worth keeping, so it is asserted in format.test.mjs where removing the
+  // guard genuinely reddens it. A green test that never had the chance to be
+  // red is worse than none, because it gets believed.
+
+  test("Format on save formats before it writes, so disk and screen agree", async ({ page }) => {
+    const { sidecar } = await openApp(page, { formatOnSave: true });
+    sidecar.answer("editor.format", () => ({ source: "SAVED_FORMATTED = 1\n" }));
+
+    await caretToEnd(page);
+    await page.keyboard.type("x");
+    await page.keyboard.press("Meta+s");
+
+    await expect
+      .poll(() =>
+        page.evaluate(
+          (p) => String(globalThis.__NEUTRALINO_STUB__.wrote(p) ?? ""),
+          `${PROJECT}/part.py`,
+        ),
+      )
+      .toContain("SAVED_FORMATTED = 1");
+    await expect.poll(() => editorText(page)).toContain("SAVED_FORMATTED = 1");
+  });
+
+  test("and with it off, saving asks black nothing", async ({ page }) => {
+    const { sidecar } = await openApp(page, { formatOnSave: false });
+
+    await caretToEnd(page);
+    await page.keyboard.type("UNFORMATTED");
+    await page.keyboard.press("Meta+s");
+
+    await expect(page.locator(".tab-close.tab-dirty")).toHaveCount(0);
+    expect(sidecar.received.filter((frame) => frame.type === "editor.format")).toHaveLength(0);
+  });
+});
+
 test.describe("the language features reach the screen", () => {
   test("the suggestion widget shows what the sidecar offered", async ({ page }) => {
     // The contribution trap, stated as a test. Without the suggest widget

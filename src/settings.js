@@ -38,6 +38,13 @@ import {
   showSplash,
 } from "./bootstrap/splash.js";
 import { NEW_FILE_TEMPLATE_KEY, newFileTemplate } from "./editor/files.js";
+import { lineLengthProblem, usableLineLength } from "./editor/format.js";
+import {
+  FORMAT_ON_SAVE_KEY,
+  formatLineLength,
+  formatOnSave,
+  LINE_LENGTH_KEY,
+} from "./editor/formatting.js";
 import { DEFAULT_NEW_FILE_TEMPLATE } from "./editor/starters.js";
 import {
   JUST_MY_CODE_KEY,
@@ -107,6 +114,7 @@ function onKeyDown(event) {
 const TABS = [
   { id: "packages", label: "Packages" },
   { id: "newfile", label: "New file" },
+  { id: "editor", label: "Editor" },
   { id: "debugging", label: "Debugging" },
   { id: "shortcuts", label: "Shortcuts" },
 ];
@@ -303,6 +311,31 @@ export async function showSettings({ tab = null } = {}) {
           <button class="settings-btn settings-template-reset" id="settings-template-default">
             Restore default
           </button>
+        </section>
+
+        <section class="settings-panel" data-panel="editor" hidden>
+          <p class="settings-group">black</p>
+          <p class="info-note">
+            The width black wraps at, and the column the editor's ruler is drawn
+            at - they are the same number so that the line you are looking at is
+            the line the formatter will break. 88 is black's own default.
+          </p>
+          <label class="settings-field">
+            <span>Line length</span>
+            <input class="settings-number" id="settings-line-length" type="number"
+                   min="20" max="1000" step="1" />
+          </label>
+
+          <p class="info-note">
+            Format the buffer with black each time it is saved. black changes
+            layout and never meaning, the result is one undo away, and a buffer
+            that does not parse is left exactly as it is rather than half done.
+          </p>
+          <label class="settings-check">
+            <input type="checkbox" id="settings-format-on-save" />
+            <span>Format on save</span>
+          </label>
+          <p class="info-note" id="settings-editor-problems" hidden></p>
         </section>
 
         <section class="settings-panel" data-panel="debugging" hidden>
@@ -517,6 +550,8 @@ export async function showSettings({ tab = null } = {}) {
 
   renderChords();
 
+  document.getElementById("settings-line-length").value = String(formatLineLength());
+  document.getElementById("settings-format-on-save").checked = formatOnSave();
   document.getElementById("settings-just-my-code").checked = justMyCode();
   document.getElementById("settings-on-stop").value = onStopExpression();
   document.getElementById("settings-on-stop-breakpoints").checked =
@@ -551,6 +586,34 @@ export async function showSettings({ tab = null } = {}) {
       return false;
     }
     report.hidden = true;
+
+    // Refused rather than rounded, and reported where it was typed. A line
+    // length that silently became something else would be a dialog answering a
+    // question the user is still in the middle of asking.
+    const typedLength = document.getElementById("settings-line-length").value;
+    const lengthProblem = lineLengthProblem(typedLength);
+    const editorReport = document.getElementById("settings-editor-problems");
+    editorReport.hidden = lengthProblem === null;
+    editorReport.textContent = lengthProblem ?? "";
+    editorReport.classList.toggle("settings-problem", lengthProblem !== null);
+    if (lengthProblem !== null) {
+      showTab("editor");
+      document.getElementById("settings-line-length").focus();
+      return false;
+    }
+
+    // Both take effect on the next format rather than needing anything told
+    // about them - the length is read when a request is built, and the ruler
+    // when the editor is created. A window already open keeps the old ruler
+    // until it is restarted, which is worth knowing and not worth a reload.
+    if (usableLineLength(typedLength) !== formatLineLength()) {
+      await setSetting(LINE_LENGTH_KEY, usableLineLength(typedLength));
+    }
+
+    const onSave = document.getElementById("settings-format-on-save").checked;
+    if (onSave !== formatOnSave()) {
+      await setSetting(FORMAT_ON_SAVE_KEY, onSave);
+    }
 
     const template = document.getElementById("settings-new-template").value;
     if (template !== newFileTemplate()) {

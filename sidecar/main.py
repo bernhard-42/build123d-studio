@@ -25,6 +25,7 @@ import appinfo
 from channel import KIND_CONSOLE, KIND_MODEL, Channel, log
 from completer import Completer
 from debugger import DebugSession, debug_python
+from formatter import format_source
 from instance import Instance, remove_legacy_connection_file, sweep
 from kernel import Kernel
 from measure_service import MeasurementService
@@ -57,6 +58,13 @@ EXECUTE = "execute"
 # would queue behind an expansion that can legitimately take fifteen seconds,
 # and on the execute lane behind a Run.
 COMPLETE = "complete"
+
+# Formatting gets one too, and for the opposite reason to completion's: it is
+# not that the answer goes stale, it is that the answer can be slow. black costs
+# about 0.25 ms a line, so a six thousand line file is a second and a half - on
+# the complete lane that would stall every suggestion typed while it ran, for
+# work the user asked for once and is waiting on anyway.
+FORMAT = "format"
 
 # Debugging gets a lane of its own because starting a session blocks: the
 # process is spawned and then dialled back to, which is under a second when it
@@ -231,6 +239,7 @@ class Sidecar:
         # refresh when somebody happened to open the suggestion list.
         self.channel.on("editor.sync", self.on_sync, lane=COMPLETE)
         self.channel.on("editor.close", self.on_close, lane=COMPLETE)
+        self.channel.on("editor.format", self.on_format, lane=FORMAT)
 
         # Starting and stopping block; relaying does not. A DAP message is a
         # socket write, and the frontend sends one per step - so it goes inline,
@@ -899,6 +908,20 @@ class Sidecar:
                 message.get("key"),
             ),
         )
+
+    def on_format(self, message):
+        """Format the whole buffer, or answer with nothing to do.
+
+        The source comes in the request rather than being read from disk: the
+        buffer is what the user is looking at and it is very often unsaved,
+        which is precisely when somebody reaches for a formatter.
+        """
+        formatted, why = format_source(
+            message.get("source", ""),
+            int(message.get("lineLength", 88)),
+        )
+        log(f"Format: {why}")
+        self.channel.send("editor.format", id=message.get("id"), source=formatted)
 
     def on_signature(self, message):
         """The call the cursor is inside, for the parameter hints popup.
