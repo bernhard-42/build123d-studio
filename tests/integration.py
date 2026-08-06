@@ -261,6 +261,30 @@ def kernel_process(sidecar_pid):
     return None
 
 
+def child_process(sidecar_pid, needle):
+    """A live child of the sidecar whose command line mentions ``needle``.
+
+    How "the file runs in a process of its own" is asserted as a fact about the
+    machine rather than as a frame the sidecar sent about itself - the same
+    reason a Run is checked by the file the code wrote. Zombies are skipped:
+    a killed process stays in the table until the exit watcher reaps it, and
+    "still listed" is not "still running".
+    """
+    try:
+        parent = psutil.Process(sidecar_pid)
+    except psutil.Error:
+        return None
+    for child in parent.children(recursive=True):
+        try:
+            if child.status() == psutil.STATUS_ZOMBIE:
+                continue
+            if any(needle in argument for argument in child.cmdline()):
+                return child
+        except psutil.Error:
+            continue
+    return None
+
+
 def main():
     parser = argparse.ArgumentParser("build123d Studio integration test")
     parser.add_argument("--env-root", required=True)
@@ -508,6 +532,62 @@ def main():
           reply is not None and reply.get("diagnostics") == [],
           "no frame" if reply is None else str(reply.get("diagnostics"))[:60])
 
+    # --- formatting ---
+    #
+    # black, in the sidecar's own process on a lane of its own. The source
+    # travels in the request rather than being read from disk, because the
+    # buffer is what the user is looking at and is very often unsaved - which is
+    # precisely when somebody reaches for a formatter.
+
+    before = len(side.frames)
+    side.send("editor.format", id="format-1", source="b  =  Box( 1,2,3 )\n", lineLength=88)
+    _, reply = side.wait_frame("editor.format", ACTION_TIMEOUT, since=before)
+    check("a buffer comes back formatted",
+          reply is not None and reply.get("source") == "b = Box(1, 2, 3)\n",
+          "no reply" if reply is None else repr(reply.get("source")))
+    check("the format reply carries its request id",
+          reply is not None and reply.get("id") == "format-1",
+          "no reply" if reply is None else str(reply.get("id")))
+
+    # The same buffer at two line lengths. One length proves nothing here,
+    # because black's own default is 88: a request whose lineLength was dropped
+    # on the way and one that carried it produce identical output at that
+    # number, and the check would pass with the field never read.
+    wide = "value = some_call(first_argument, second_argument, third_argument)\n"
+
+    before = len(side.frames)
+    side.send("editor.format", id="format-2", source=wide, lineLength=88)
+    _, reply = side.wait_frame("editor.format", ACTION_TIMEOUT, since=before)
+    # None is "nothing to change", and it is what stops a Format on Save from
+    # marking every clean buffer dirty.
+    check("a buffer that is already formatted is left alone",
+          reply is not None and reply.get("source") is None,
+          "no reply" if reply is None else repr(reply.get("source"))[:60])
+
+    before = len(side.frames)
+    side.send("editor.format", id="format-3", source=wide, lineLength=40)
+    _, reply = side.wait_frame("editor.format", ACTION_TIMEOUT, since=before)
+    check("the configured line length is what black is given",
+          reply is not None and reply.get("source") is not None
+          and reply["source"].startswith("value = some_call(\n")
+          and reply["source"].count("\n") == 5,
+          "no reply" if reply is None else repr(reply.get("source"))[:60])
+
+    # A buffer being typed into does not parse, constantly, and Format on Save
+    # meets that state more than any other. It answers with nothing to change
+    # rather than with a complaint: the squiggle has already said so where the
+    # user is looking. Which of the two "nothing to change" means goes to the
+    # log, so that is where it is asserted.
+    before = len(side.frames)
+    side.send("editor.format", id="format-4", source="def broken(\n", lineLength=88)
+    _, reply = side.wait_frame("editor.format", ACTION_TIMEOUT, since=before)
+    check("a buffer that does not parse is returned untouched",
+          reply is not None and reply.get("source") is None,
+          "no reply" if reply is None else repr(reply.get("source"))[:60])
+    at_why, why = side.wait_log("Format: not formatted, the buffer does not parse", 15)
+    check("and the log says which of the two it was", at_why is not None,
+          "silent" if why is None else why.split("Format: ")[-1][:60])
+
     # --- show() delivers a model ---
 
     before = len(side.binary)
@@ -736,6 +816,169 @@ def main():
         "kernel.status", lambda f: f["state"] == "idle", BUSY_SECONDS + 10, since=before)
     check("the cell finishes and reports itself idle", done is not None,
           "still busy" if done is None else done["state"])
+
+    # --- Run File: the same second world, with no debugger in it ---
+    #
+    # Run All sends the buffer's text to the kernel and leaves its names in the
+    # namespace the console shares. This runs the *file*, in a process that is
+    # gone when it ends, and the two were one word until they were separated.
+    # What is asserted here is what the runner owns rather than what it borrows
+    # from the debug relay: that the process starts, that its output arrives,
+    # that it exits with a code, and that the kernel beside it is untouched.
+
+    # The working directory a run inherits is the kernel's, which the frontend
+    # sets from the open folder. Pointed at the scratch directory so that a
+    # relative path in the script has somewhere of its own to land - which is
+    # the promise `export_step(part, "bracket.step")` makes.
+    side.send("kernel.cwd", path=scratch)
+
+    run_script = os.path.join(scratch, "run-check.py")
+    with open(run_script, "w") as handle:
+        handle.write(
+            "from build123d import Box\n"
+            "from build123d_studio import show\n"
+            "\n"
+            # Relative on purpose: absolute would prove the process ran and say
+            # nothing about where it thinks it is.
+            "open('run-wrote-this', 'w').write('ok')\n"
+            "run_only_name = 1\n"
+            "show(Box(1, 1, 1))\n"
+            "print('the run printed this')\n"
+        )
+
+    before = len(side.frames)
+    at_models = len(side.binary)
+    side.send("run.start", path=run_script)
+    _, run_started = side.wait_frame("run.started", ACTION_TIMEOUT, since=before)
+    check("a file runs in a process of its own", run_started is not None,
+          "no run.started" if run_started is None else os.path.basename(run_started["path"]))
+
+    _, printed = side.wait_frame_where(
+        "run.output", lambda f: "the run printed this" in f.get("text", ""),
+        ACTION_TIMEOUT, since=before)
+    # Piped rather than assumed: a print() is not a DAP event, measured, which
+    # is why the relay carries stdout at all.
+    check("what the file printed is relayed", printed is not None,
+          "nothing" if printed is None else printed["text"].strip())
+
+    # The whole reason the run is given the kernel's environment rather than a
+    # bare interpreter: it gets the model socket's port and token, so a show()
+    # in the file reaches the viewer already on screen.
+    at_model = side.wait_binary(KIND_MODEL, ACTION_TIMEOUT, since=at_models)
+    check("a show() from the run reaches the viewer", at_model is not None,
+          "no model frame" if at_model is None else f"at {at_model:.2f}s")
+
+    check("a relative path resolves in the kernel's working directory",
+          side.wait_file(os.path.join(scratch, "run-wrote-this"), ACTION_TIMEOUT))
+
+    _, run_exited = side.wait_frame("run.exited", ACTION_TIMEOUT, since=before)
+    check("the run reports the process exiting",
+          run_exited is not None and run_exited.get("code") == 0,
+          "silent" if run_exited is None else f"code {run_exited.get('code')}")
+
+    # Two worlds, asserted of the runner rather than of the debugger: nothing
+    # the file defined is in the namespace the console shares.
+    before = len(side.frames)
+    side.send("vars.detail", path=["run_only_name"], offset=0)
+    _, leaked = side.wait_frame_where(
+        "vars.detail", lambda f: f["detail"].get("path") == ["run_only_name"],
+        ACTION_TIMEOUT, since=before)
+    check("nothing the run defined reached the kernel",
+          leaked is not None and "error" in leaked["detail"],
+          "no reply" if leaked is None else str(leaked["detail"])[:60])
+
+    # A script that raises. Both halves matter: a non-zero code is an ordinary
+    # outcome of running a file, and the traceback that explains it comes back
+    # on the same stream as the prints that led to it - one pipe, because two
+    # would arrive in whatever order the reader threads were scheduled in.
+    raising = os.path.join(scratch, "run-raises.py")
+    with open(raising, "w") as handle:
+        handle.write("print('before the mistake')\nraise ValueError('deliberate')\n")
+
+    before = len(side.frames)
+    side.send("run.start", path=raising)
+    side.wait_frame("run.started", ACTION_TIMEOUT, since=before)
+    _, traceback_line = side.wait_frame_where(
+        "run.output", lambda f: "ValueError: deliberate" in f.get("text", ""),
+        ACTION_TIMEOUT, since=before)
+    check("a traceback arrives on the same stream as the output",
+          traceback_line is not None,
+          "nothing" if traceback_line is None else traceback_line["text"].strip())
+    _, failed_exit = side.wait_frame("run.exited", ACTION_TIMEOUT, since=before)
+    check("a non-zero exit is reported as an outcome rather than an error",
+          failed_exit is not None and failed_exit.get("code") not in (None, 0),
+          "silent" if failed_exit is None else f"code {failed_exit.get('code')}")
+
+    # A path that is not a file is refused out loud. Silence here would leave
+    # the toolbar claiming something is running with nothing behind it.
+    before = len(side.frames)
+    side.send("run.start", path=os.path.join(scratch, "there-is-no-such-file.py"))
+    _, refused = side.wait_frame("run.failed", ACTION_TIMEOUT, since=before)
+    check("running a path that is not a file is refused, not ignored",
+          refused is not None and "is not a file" in refused.get("message", ""),
+          "no run.failed" if refused is None else refused.get("message", ""))
+
+    # --- stopping a run ---
+
+    forever = os.path.join(scratch, "run-forever.py")
+    with open(forever, "w") as handle:
+        handle.write(
+            "import time\n"
+            # No flush=True on purpose. An ordinary script does not flush, and
+            # stdout to a pipe is block-buffered, so without -u this line would
+            # sit in the buffer for as long as the loop runs - which is every
+            # long script looking like it had hung until it finished.
+            "print('the long run started')\n"
+            "while True:\n"
+            "    time.sleep(0.05)\n"
+        )
+
+    before = len(side.frames)
+    side.send("run.start", path=forever)
+    side.wait_frame("run.started", ACTION_TIMEOUT, since=before)
+    _, long_output = side.wait_frame_where(
+        "run.output", lambda f: "the long run started" in f.get("text", ""),
+        ACTION_TIMEOUT, since=before)
+    # -u, so a script that prints its progress is readable while it runs rather
+    # than arriving in a lump at the end.
+    check("a long run's output arrives while it is still running",
+          long_output is not None, "nothing yet" if long_output is None else "printed")
+
+    child = child_process(side.proc.pid, "run-forever.py")
+    check("the running file really is a process of its own", child is not None,
+          "no such child" if child is None else f"pid {child.pid}")
+
+    # Asking for a second one while that is running is refused rather than
+    # silently replacing it - one run at a time, as the debugger has.
+    before = len(side.frames)
+    side.send("run.start", path=run_script)
+    _, second = side.wait_frame("run.failed", ACTION_TIMEOUT, since=before)
+    check("a second run is refused while one is running",
+          second is not None and "already running" in second.get("message", ""),
+          "no run.failed" if second is None else second.get("message", ""))
+
+    before = len(side.frames)
+    side.send("run.stop")
+    _, run_stopped = side.wait_frame("run.stopped", ACTION_TIMEOUT, since=before)
+    check("Stop is answered", run_stopped is not None,
+          "" if run_stopped is not None else "silent")
+
+    deadline = time.monotonic() + 15
+    while child_process(side.proc.pid, "run-forever.py") is not None:
+        if time.monotonic() >= deadline:
+            break
+        time.sleep(0.05)
+    survivor = child_process(side.proc.pid, "run-forever.py")
+    check("and the process is actually gone", survivor is None,
+          "" if survivor is None else f"pid {survivor.pid} still running")
+
+    # Deliberately silent afterwards: the frontend asked for this and is not
+    # waiting to be told what it already knows. An exit here would announce the
+    # run as finished a second time, after the UI had already moved on.
+    time.sleep(1.0)
+    late = [f for _, f in side.frames[before:] if f["type"] == "run.exited"]
+    check("a deliberate stop does not also report an exit", len(late) == 0,
+          f"{len(late)} run.exited frames")
 
     # --- debugging: a second world, driven over the relay ---
     #
@@ -1087,7 +1330,11 @@ def main():
     # Listed rather than filtered by wording, so that a genuine failure with
     # similar words is not quietly swallowed with them.
     provoked = ("Failed to read a model: timed out",
-                "Failed to read a model: Gave up with")
+                "Failed to read a model: Gave up with",
+                # Both asked for above: a path that is not a file, and a second
+                # run while one is running. The sidecar refusing them is the
+                # behaviour under test, and it says so through this same log.
+                "Run failed to start:")
     complaints = [text for _, text in side.log
                   if ("failed" in text or "timed out" in text or "Traceback" in text)
                   and not text.startswith(provoked)]
