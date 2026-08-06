@@ -406,7 +406,37 @@ export const clipboard = {
   },
 };
 
+// The window's geometry, as the real one would report it. Held here rather than
+// answered with constants so that a test can watch the application put the
+// window back where it was - which is the whole point of remembering it.
+const geometry = { width: 1600, height: 1000, x: 40, y: 60, maximized: false };
+
 export const window = {
+  async getSize() {
+    record("getSize", []);
+    return { width: geometry.width, height: geometry.height };
+  },
+  async setSize(options) {
+    record("setSize", [options]);
+    Object.assign(geometry, options);
+  },
+  async getPosition() {
+    record("getPosition", []);
+    return { x: geometry.x, y: geometry.y };
+  },
+  async move(x, y) {
+    record("move", [x, y]);
+    geometry.x = x;
+    geometry.y = y;
+  },
+  async isMaximized() {
+    record("isMaximized", []);
+    return geometry.maximized;
+  },
+  async maximize() {
+    record("maximize", []);
+    geometry.maximized = true;
+  },
   async setTitle(title) {
     record("setTitle", [title]);
     document.title = title;
@@ -418,6 +448,16 @@ export const window = {
   // builds; what matters here is that it was set, and with what.
   async setMainMenu(menu) {
     record("setMainMenu", [menu]);
+  },
+};
+
+// One screen, at the origin. A test that cares about a position on a monitor
+// that is no longer attached drives geometry.js directly, where the decision
+// lives and where it needs no browser.
+export const computer = {
+  async getDisplays() {
+    record("getDisplays", []);
+    return [{ id: 1, x: 0, y: 0, width: 1920, height: 1200 }];
   },
 };
 

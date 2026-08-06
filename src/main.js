@@ -75,6 +75,7 @@ import { hideBusy, resetBusy, showBusy } from "./busy.js";
 import * as log from "./log.js";
 import { guardAgainstReload, suppressNativeContextMenu } from "./reload.js";
 import { initRunFile, toggleRunFile } from "./run/file.js";
+import { restoreWindow, saveWindow, watchWindow } from "./windowstate.js";
 
 init();
 log.installGlobalHandlers();
@@ -119,6 +120,9 @@ async function shutdown() {
   } catch (error) {
     log.warn("Could not remember the open tabs:", error);
   }
+  // Here as well as on resize, because nothing publishes a window *move* - a
+  // window that was only dragged would otherwise come back at its old place.
+  await saveWindow();
   try {
     await ipc.stopSidecar();
   } catch (error) {
@@ -347,7 +351,13 @@ async function main() {
   }
 
   await neuWindow.setTitle("build123d Studio");
+  // Before show(), so the window appears where it belongs rather than at the
+  // default and then jumping. Neutralino's own memory of this lives beside its
+  // binary and is therefore lost on every new install; ours is in settings.json
+  // with everything else.
+  await restoreWindow();
   await neuWindow.show();
+  watchWindow();
 
   let environment;
   try {

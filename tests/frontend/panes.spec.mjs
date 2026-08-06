@@ -187,3 +187,44 @@ test.describe("dragging a boundary", () => {
       .toBeGreaterThan(20);
   });
 });
+
+test.describe("the window comes back where it was left", () => {
+  test("a remembered size and position are applied before the window is shown", async ({ page }) => {
+    // Neutralino remembers this itself, in .tmp/window_state.config.json beside
+    // its own binary - so it survives a restart and is lost on every new
+    // install, which is what he reported: unpack a new version and the layout
+    // appears to have been forgotten. The splitters were never the problem;
+    // they are fractions in settings.json and came back correctly into a window
+    // that was suddenly the default size again.
+    const { sidecar } = await open(page, {
+      files: {},
+      settings: { window: { width: 1280, height: 820, x: 120, y: 90 } },
+    });
+    expect(sidecar).toBeDefined();
+
+    const calls = await page.evaluate(() => globalThis.__NEUTRALINO_STUB__.calls());
+    const sized = calls.find((call) => call.name === "setSize");
+    const moved = calls.find((call) => call.name === "move");
+    const shown = calls.findIndex((call) => call.name === "show");
+
+    expect(sized, "the window was never sized").toBeDefined();
+    expect(sized.args[0]).toMatchObject({ width: 1280, height: 820 });
+    expect(moved.args).toEqual([120, 90]);
+
+    // Before show(), or the window appears at the default and jumps - which
+    // looks like a bug even though it ends up in the right place.
+    expect(calls.indexOf(sized)).toBeLessThan(shown);
+    expect(calls.indexOf(moved)).toBeLessThan(shown);
+  });
+
+  test("with nothing remembered, the window is left alone", async ({ page }) => {
+    // A first run must not be sized to anything: the config's own width and
+    // height are the answer, and asking for them again would be this module
+    // second-guessing the window it was given.
+    await open(page, { files: {}, settings: {} });
+
+    const calls = await page.evaluate(() => globalThis.__NEUTRALINO_STUB__.calls());
+    expect(calls.filter((call) => call.name === "setSize")).toHaveLength(0);
+    expect(calls.filter((call) => call.name === "move")).toHaveLength(0);
+  });
+});
