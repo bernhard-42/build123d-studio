@@ -195,7 +195,7 @@ Done, in five commits. What changed, and what it cost to find out.
 
 **Nothing is written until the name is accepted**, which is the half worth stating. The obvious implementation creates `untitled.py` and lets it be renamed, and it leaves one behind every time somebody presses Escape; an editable row that exists in the tree and not on disk costs a little more code and cannot litter. The row opens with `untitled.py` already typed and `untitled` selected - not the extension, because what gets retyped is the name - and the default is numbered so that pressing Enter twice makes two files rather than one failure.
 
-It goes beside the selection: inside a selected folder, next to a selected file, at the root when nothing is selected. That needed a selection separate from the active tab, because a folder can be selected and a folder is never *active* - opening one is not showing it. A name that is taken or carries a slash is refused with a line under the header, and the row stays open; refusing silently reads as Enter not working. Taken is compared case-insensitively, because two of the three platforms are.
+It goes beside the selection: inside a selected folder, next to a selected file, at the root when nothing is selected. That needed a selection separate from the active tab, because a folder can be selected and a folder is never _active_ - opening one is not showing it. A name that is taken or carries a slash is refused with a line under the header, and the row stays open; refusing silently reads as Enter not working. Taken is compared case-insensitively, because two of the three platforms are.
 
 **Open Folder, decided.** One folder at a time, which is VS Code's model without multi-root workspaces - and it is what makes "the project root" a well-defined thing for the kernel's working directory to be.
 
@@ -489,6 +489,7 @@ Goals
 - show_clear, show_object, push_object, show_objects, show_all, set_defaults, get_defaults, set_default, workspace_cofig, combined_config, status, ... need to work (Note in a separate project ocp_vscode needs to be restructured to better work with jupyter-cadquery and build123d studio)
 - every show should first get the tree status (see "status" in ocp_vscode) and apply it after show to keep the user intent on what to show. At the end, this is what viewer.html in ocp-vscode does. We need to understand what it does and what and how to replicate it.
 - splitting into ocp_viewer (shared code) and ocp_vscode (the VS Code specific parts) is an option, but not strictly required
+- **The splash logo should be measurable**, as it is in ocp_vscode. It is not today and never has been: `showLogo()` renders `src/viewer/logo.js` in the frontend alone, so the mesh never passes the kernel, the model socket or the sidecar and no mapping reaches the measurement backend. ocp_vscode solves it by loading `backend_logo.py` into ViewerBackend at start - our `MeasurementBackend` deliberately skips `super().__init__`, so it has never had it. Parked here rather than fixed in passing, because "which logo, whose copy of it, and who ships it" is the same question this group exists to answer.
 
 ## Phase 5 "Feature test suite"
 
@@ -557,21 +558,22 @@ The variable explorer was drawing its expand marker as a literal `▸`/`▾` - e
 
 - Architecture and design review (follow the structure of reviews.md)
 - Implementation review (follow the structure of reviews.md)
-- Filesystem review: This is mainly an editor and we shall not loose data (code) nor shall we delete data outside of the editors hierarchy: Are all file actions save. It is an editor, we shall not loose code. Verified saves. No unguarded file hierarchy deletions (list all file hierarchy deletions in the code)
+- Filesystem review: This is mainly an editor and we shall not lose data (code) nor shall we delete data outside of the editors hierarchy: Are all file actions save. It is an editor, we shall not loose code. Verified saves. No unguarded file hierarchy deletions (list all file hierarchy deletions in the code)
 - Structure review: Are the folders logically grouped? Do different folders serve the same purpose? Examples: two top level python folders one with build123d_studio subfolder. dist + release folder. public/icons + resources + bin + cli
 
 ### 2 Fix all findings
 
 ## Phase 7
 
-Write comprehensive docs (a Readme + mode docs if needed)
+- Write comprehensive docs (a Readme + mode docs if needed)
+- Document the design in Design.md (components, relationships, workflows, assumptions, safeguards, public API, dependencies, ...)
 
 ## Change requests
 
 ### BUGS:
 
+- What can we do about: "quitting races the sidecar's own termination", where stopSidecar closes stdin and lets app.exit() follow while stop still has a kernel, a console and a debugger to close. It was written down as a hypothesis that could not report on itself, because the frontend that writes the log is gone before the sidecar finishes.
+
 ### FEATURES:
 
-### DESIGN ISSUES
-
-- Document the design in Design.md (components, relationships, workflows, assumptions, safeguards, public API, dependencies, ...)
+- File tree: right click on files: "rename" | "move to trash" (not delete, but move to the OS trash bin if possible)

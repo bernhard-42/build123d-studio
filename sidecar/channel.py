@@ -99,8 +99,9 @@ class Channel:
         self._connected = threading.Event()
         self._server = None
         self._rejection_logged = False
-        # Whether the accept loop is running. Read by Sidecar.load_backend, whose
-        # whole correctness rests on this being False while it works.
+        # Whether the accept loop is running. It used to carry weight - an
+        # assertion refused to import the measurement backend once this was
+        # True - and now it is simply true about this object. See bind().
         self.accepting = False
         self.port = None
         self.token = secrets.token_urlsafe(32)
@@ -206,28 +207,29 @@ class Channel:
     def bind(self):
         """Take a port and announce it, without accepting anything yet.
 
-        Split from accept() so that there is a window in which this process is
-        listening but single-threaded, and the measurement backend's native
-        import can happen inside it. On Windows, loading a .pyd holds the OS
-        loader lock while CPython holds the GIL, and starting a thread needs
-        that same lock for DLL_THREAD_ATTACH - so the import deadlocks against
-        any thread creation that overlaps it.
+        The split from accept() was a deadlock fix, and the reason is worth
+        keeping even though the constraint has gone. The measurement backend's
+        native import used to happen in this process, and loading a .pyd holds
+        the Windows loader lock while CPython holds the GIL, while every thread
+        a process starts needs that same lock for DLL_THREAD_ATTACH. The accept
+        loop starts a thread per connection (websockets sync/server.py:285),
+        which made it the one thread creation whose timing this process did not
+        control - so the import went in the window between binding and
+        accepting, where nothing else could start a thread.
 
-        The accept loop starts a thread per connection (websockets
-        sync/server.py:285), which makes it the one thread creation this process
-        does not control the timing of. Bernhard's cold Windows log shows how
-        close that came: the import held the main thread for 10.3 s, a Run was
-        pressed inside that window, and it survived only because the kernel's
-        own build123d import released the shell channel 103 ms after the
-        sidecar's import finished. Two unrelated durations from two unrelated
-        dependency graphs; had the kernel been quicker, show()'s viewer
-        discovery would have connected here and the application would have hung
-        exactly as it did before.
+        The margin was thinner than it looked. A cold Windows log shows the
+        import holding the main thread for 10.3 s, a Run pressed inside that
+        window, and the application surviving only because the kernel's own
+        build123d import released the shell channel 103 ms after the sidecar's
+        import finished. Two unrelated durations from two unrelated dependency
+        graphs.
 
-        Nothing is lost by waiting. The port is on stdout before the import, so
-        the frontend's handshake deadline is unaffected, and a webview that
-        connects meanwhile waits in the listen backlog - which is what a backlog
-        is for.
+        That import is in a process of its own now - see measure_service.py -
+        so this process never loads a native extension and there is no loader
+        lock for anything to collide with. The two calls remain separate
+        because announcing a port before serving it is worth doing explicitly,
+        and because a gap that costs nothing is not worth removing to save a
+        line.
         """
         self._server = serve(
             self._handle_connection,

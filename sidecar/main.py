@@ -60,6 +60,15 @@ EXECUTE = "execute"
 # and on the execute lane behind a Run.
 COMPLETE = "complete"
 
+# Measurement gets one of its own, and the reason is two-fold. Its warm-up waits
+# for a reply that cannot come until OCP has loaded in the other process - two
+# to four seconds - and on a shared lane that is time the variable explorer's
+# first refresh spends queued behind it. And a measure click has always waited
+# behind whatever the explorer had already asked for, which the comment on
+# _pending_details describes as a cost worth coalescing around; it stops being a
+# cost at all once the two do not share.
+MEASURE = "measure"
+
 # Formatting gets one too, and for the opposite reason to completion's: it is
 # not that the answer goes stale, it is that the answer can be slow. black costs
 # about 0.25 ms a line, so a six thousand line file is a second and a half - on
@@ -139,8 +148,9 @@ class Sidecar:
         # re-requests whatever is open after every execution, and a cell that
         # runs quickly produces requests faster than a large assembly can be
         # measured. They pile up on the inspect lane, each describing a value
-        # the next has already superseded - and a measure click, which shares
-        # that lane, then waits behind all of them.
+        # the next has already superseded. A measure click used to wait behind
+        # all of them too; measurement has a lane of its own now, so this
+        # coalescing is only about the explorer's own repeats.
         self._pending_details = set()
         self._details_lock = threading.Lock()
         # Whether a completion is already on its way to the kernel. One at a
@@ -211,7 +221,7 @@ class Sidecar:
         # on the kernel for up to fifteen seconds, activating a measure tool
         # deserialises a BRep per face, edge and vertex of the model, and the
         # About dialog walks the installed distributions.
-        self.channel.on("viewer.changes", self.on_viewer_changes, lane=INSPECT)
+        self.channel.on("viewer.changes", self.on_viewer_changes, lane=MEASURE)
         self.channel.on("vars.refresh", self.on_vars_refresh, lane=INSPECT)
         self.channel.on("app.info", self.on_app_info, lane=INSPECT)
 
@@ -266,40 +276,14 @@ class Sidecar:
 
     # --- lifecycle ---
 
-    def load_backend(self):
-        """Import the measurement backend, before anything else has a thread.
-
-        On a background thread this deadlocked. Loading OCP's native extensions
-        is LoadLibrary, which holds the Windows loader lock, and every thread
-        the process starts needs that lock to run DLL_THREAD_ATTACH - so the
-        import and the websockets accept loop's per-connection thread waited on
-        each other for good, and show() cost seventy seconds. See
-        measure_service.py for the full account.
-
-        Moving it to the main thread was the first fix and was not enough. What
-        the rule actually says is that *nothing may create a thread while this
-        runs*, and which thread performs the import is beside the point. The
-        accept loop is the one thread creation whose timing this process does
-        not control, so this now happens before it starts - see Channel.bind.
-
-        The assertion is the rule written where it will be enforced rather than
-        read, and it checks the accept loop specifically rather than counting
-        threads. Threads already exist by now - the lanes open theirs during
-        __init__, deliberately, for a neighbouring deadlock - and that is fine.
-        The requirement is not that none exists but that none is *created* while
-        this runs, and every other thread in this process is started by code
-        here at a moment of its own choosing. The accept loop is the exception,
-        because a connection arrives when a stranger decides it does.
-        """
-        assert not self.channel.accepting, (
-            "the measurement backend must be imported before the accept loop starts: "
-            "a connection arriving during the import creates a thread, and on Windows "
-            "that deadlocks against the loader lock the import is holding"
-        )
-        self.measurements.load_backend()
-
     def start(self):
         self.models.start()
+
+        # Spawned here and not waited for. Its import is the same native stack
+        # the kernel is about to load in its own process - 3.3 s each on a warm
+        # Windows start - and the two now overlap instead of adding up, which is
+        # the whole point of it having a process of its own.
+        self.measurements.start()
 
         info = self.kernel_start()
         self.console_start()
@@ -310,6 +294,14 @@ class Sidecar:
         # kernel warm-up makes, and unlike that one it blocks nothing, because
         # this lane exists only for completion.
         self.channel.submit(COMPLETE, self.completer.warm)
+
+        # And the measurement backend answers a question it does not need, for
+        # the same reason: the reply cannot arrive until its import has
+        # finished, so this is the moment that cost is paid rather than the
+        # first click on a measure tool. On the inspect lane, which is where
+        # measurements are served, so a real one arriving early queues behind a
+        # warm backend rather than racing it.
+        self.channel.submit(MEASURE, self.measurements.warm)
 
         self.channel.send(
             "ready",
@@ -1040,6 +1032,8 @@ class Sidecar:
         # script running against a viewer that has gone.
         if self.run is not None:
             self.run.stop()
+        if self.measurements is not None:
+            self.measurements.stop()
         if self.console is not None:
             self.console.stop()
         if self.kernel is not None:
@@ -1108,10 +1102,10 @@ def main():
     sidecar.channel.bind()
 
     try:
-        # Before the accept loop, while this process is still single-threaded.
-        # See Sidecar.load_backend - this ordering is a deadlock fix, not a
-        # preference, and the assertion in there enforces it.
-        sidecar.load_backend()
+        # bind() and accept() used to have a deliberate gap between them, wide
+        # enough to import the measurement backend while this process was still
+        # single-threaded. That backend has a process of its own now, so there
+        # is nothing to fit in the gap and nothing to get wrong about it.
         sidecar.channel.accept()
 
         # Kernel and console only come up once the UI is listening, so their

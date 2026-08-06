@@ -291,20 +291,23 @@ def main():
 
     # Absent from every Windows log for as long as the deadlock lasted, and that
     # absence was the tell. A missing line is evidence.
-    at_backend, _ = side.wait_log("Measurement backend loaded", 60)
-    check("the measurement backend loads", at_backend is not None,
+    at_backend, _ = side.wait_log("Measurement backend ready", 60)
+    check("the measurement backend becomes ready", at_backend is not None,
           f"at {at_backend:.2f}s" if at_backend is not None else "never - see the Windows deadlock")
 
-    # The native import has to finish before anything can connect, because a
-    # connection starts a thread and on Windows that deadlocks against the
-    # loader lock the import holds. Checked as an ordering in the sidecar's own
-    # log rather than as an assertion about threads, because the ordering is the
-    # property and it is the thing a future rearrangement would break.
-    at_connected, _ = side.wait_log("Webview connected", 30)
-    check("the backend is imported before the first connection is accepted",
-          at_backend is not None and at_connected is not None and at_backend < at_connected,
-          f"import {at_backend:.2f}s, first connection {at_connected:.2f}s"
-          if at_backend is not None and at_connected is not None else "missing")
+    # And it does so *after* the application is usable, which is the whole point
+    # of it having a process of its own. It used to be the other way round by
+    # construction: the import ran between binding and accepting, so nothing
+    # could connect until it finished - 3.33 s of a 6.52 s startup on a
+    # ten-year-old Windows machine. This is that ordering inverted, and it is
+    # the property a future rearrangement would break.
+    at_ready, _ = side.wait_log("Sidecar ready", 60)
+    if at_ready is None:
+        at_ready, _ = side.wait_log("Kernel started", 60)
+    check("startup does not wait for the measurement backend",
+          at_backend is not None and at_ready is not None and at_ready < at_backend,
+          f"usable at {at_ready:.2f}s, backend ready at {at_backend:.2f}s"
+          if at_backend is not None and at_ready is not None else "missing")
 
     # The warm-up must follow the console's kernel_info handshake rather than
     # racing it. Reversed, the import queues ahead of the console on the kernel's
