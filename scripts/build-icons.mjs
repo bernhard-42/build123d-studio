@@ -57,7 +57,7 @@
 
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -91,6 +91,65 @@ function sourceHash() {
 /** What it hashed to when the committed icons were built, or "" if unrecorded. */
 function stampedHash() {
   return existsSync(STAMP) ? readFileSync(STAMP, "utf8").trim() : "";
+}
+
+// The sizes a Windows shortcut is asked for: the list view, the desktop, and
+// the large tile. 256 is the one that matters on a modern display and the
+// others stop Explorer scaling it down badly.
+const ICO_SIZES = [16, 32, 48, 256];
+
+/**
+ * Write a .ico, which a Windows shortcut needs and a .png cannot be.
+ *
+ * The container is a header and one entry per image, and since Vista each image
+ * may be a PNG rather than a bitmap - so this is sips for the rendering and
+ * eighteen bytes of arithmetic for the wrapper, rather than a dependency that
+ * would have to be pinned, audited and shipped for one file.
+ *
+ * It exists so the Windows package can point a shortcut at an unmodified
+ * Neutralino binary. Rewriting the icon *into* the executable is what Defender
+ * scores as re-skinning somebody else's binary; a shortcut carries its own.
+ */
+function writeIco(destination) {
+  const images = ICO_SIZES.map((size) => {
+    const scaled = join(ICONS, `.ico-${size}.png`);
+    execFileSync(
+      "sips",
+      ["-s", "format", "png", "-z", String(size), String(size), SOURCE, "--out", scaled],
+      { stdio: ["ignore", "ignore", "pipe"] },
+    );
+    const data = readFileSync(scaled);
+    rmSync(scaled);
+    return { size, data };
+  });
+
+  const header = Buffer.alloc(6);
+  header.writeUInt16LE(0, 0);           // reserved
+  header.writeUInt16LE(1, 2);           // 1 = icon
+  header.writeUInt16LE(images.length, 4);
+
+  let offset = 6 + images.length * 16;
+  const entries = [];
+  for (const { size, data } of images) {
+    const entry = Buffer.alloc(16);
+    // 0 means 256 in this field, which is why the largest size is expressible
+    // in one byte at all.
+    entry.writeUInt8(size === 256 ? 0 : size, 0);
+    entry.writeUInt8(size === 256 ? 0 : size, 1);
+    entry.writeUInt8(0, 2);             // palette colours: none, it is truecolour
+    entry.writeUInt8(0, 3);             // reserved
+    entry.writeUInt16LE(1, 4);          // colour planes
+    entry.writeUInt16LE(32, 6);         // bits per pixel
+    entry.writeUInt32LE(data.length, 8);
+    entry.writeUInt32LE(offset, 12);
+    entries.push(entry);
+    offset += data.length;
+  }
+
+  writeFileSync(destination, Buffer.concat([
+    header, ...entries, ...images.map((image) => image.data),
+  ]));
+  console.log(`appIcon.ico     ${ICO_SIZES.join(", ")} px, for the Windows shortcut`);
 }
 
 function main() {
@@ -128,6 +187,7 @@ function main() {
     { stdio: ["ignore", "ignore", "pipe"] },
   );
   copyFileSync(mac, join(ICONS, "appIcon.png"));
+  writeIco(join(ICONS, "appIcon.ico"));
   writeFileSync(STAMP, `${sourceHash()}\n`);
 
   console.log(`appIcon.png     ${CANVAS}x${CANVAS}`);

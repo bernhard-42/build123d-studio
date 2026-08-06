@@ -88,8 +88,27 @@ if (target === undefined) {
 function assemblePayload(destination) {
   mkdirSync(destination, { recursive: true });
 
+  // Windows takes Neutralino's own binary, unpatched and under its own name.
+  //
+  // `neu build` produces a copy with our icons and version strings rewritten
+  // into its .rsrc - +41,984 bytes, entry point and every code section
+  // byte-identical - and Microsoft Defender deletes that copy as
+  // Trojan:Win32/Wacatac. Measured on 0.2.0 and again on 0.3.0, and on a build
+  // with no metadata at all, so it is not what the resources *say*. The stock
+  // binary passes on the same machine, because millions of copies of that exact
+  // hash exist and Defender has an opinion about it.
+  //
+  // So Windows gets the file everyone else has, under our own name - a filename
+  // is not part of the hash, and the hash is what Defender scores. It was
+  // briefly called neutralinojs.exe, which was honest and unusable: anybody who
+  // skips the shortcut unpacks a folder with no obvious thing to click. The
+  // other platforms keep the patched binary: neither has this problem, and a
+  // .app without an icon would be a worse answer there.
   const binaryName = target.kind === "windows" ? `${APP_SLUG}.exe` : APP_SLUG;
-  cpSync(join(DIST, APP_SLUG, target.binary), join(destination, binaryName));
+  const binarySource = target.kind === "windows"
+    ? join(ROOT, "bin", "neutralino-win_x64.exe")
+    : join(DIST, APP_SLUG, target.binary);
+  cpSync(binarySource, join(destination, binaryName));
   if (target.kind !== "windows") {
     chmodSync(join(destination, binaryName), 0o755);
   }
@@ -106,6 +125,18 @@ function assemblePayload(destination) {
   // lets it be copied anywhere.
   if (target.kind === "windows") {
     cpSync(join(ROOT, "cli", "studio.cmd"), join(destination, "studio.cmd"));
+    // Named for what it does, because that is the whole of its job: it makes a
+    // shortcut and exits. It started life as a launcher called
+    // build123d-studio.cmd, which was wrong twice over - the application can
+    // simply be double-clicked, and with extensions hidden a launcher sat
+    // beside a PowerShell file of the same name, one of which does nothing when
+    // clicked because Windows opens .ps1 in an editor.
+    cpSync(join(ROOT, "cli", "create-build123d-studio-link.cmd"),
+           join(destination, "create-build123d-studio-link.cmd"));
+    // The icon a shortcut points at. It cannot be a .png, and it is no longer
+    // inside the executable.
+    cpSync(join(ROOT, "public", "icons", "appIcon.ico"),
+           join(destination, "appIcon.ico"));
   } else {
     const studio = join(destination, "studio");
     cpSync(join(ROOT, "cli", "studio"), studio);
