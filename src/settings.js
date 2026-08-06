@@ -363,11 +363,12 @@ export async function showSettings({ tab = null } = {}) {
           </label>
 
           <p class="info-note">
-            Run an expression every time execution stops.
-            <code>show_all(locals())</code> draws whatever the current frame
-            holds, so stepping through a model is watching it being built. It
-            costs a tessellation per stop, which on a large assembly is seconds -
-            clear the field to switch it off.
+            Run an expression every time execution stops. The default draws
+            whatever the current frame holds, so stepping through a model is
+            watching it being built - it imports <code>show_all</code> itself,
+            because it runs inside your file and your file has no reason to have
+            imported it. It costs a tessellation per stop, which on a large
+            assembly is seconds - clear the field to switch it off.
           </p>
           <input class="settings-line" id="settings-on-stop" type="text" spellcheck="false"
                  placeholder="empty — nothing runs at a stop" />

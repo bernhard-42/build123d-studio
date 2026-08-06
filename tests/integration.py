@@ -990,7 +990,11 @@ def main():
     with open(script, "w") as handle:
         handle.write(
             "from build123d import *\n"
-            "from build123d_studio import show, show_all\n"
+            # Deliberately does not import show_all. The on-stop hook is
+            # evaluated *in this frame*, so a default that assumed the name was
+            # already bound failed with a NameError on every stop of every file
+            # that draws with show() - which is most of them.
+            "from build123d_studio import show\n"
             "\n"
             "def make(size):\n"
             "    b = Box(size, size, size)\n"
@@ -1076,13 +1080,32 @@ def main():
                   reply is not None and reply["body"]["result"] == "30",
                   "no reply" if reply is None else str(reply["body"].get("result")))
 
-            # The whole reason the debuggee is given the kernel's environment:
-            # a shape drawn in a paused frame reaches the same viewer.
+            # The bare call first, to establish that this frame really has not
+            # got the name - otherwise the check below would pass for a file
+            # that happened to import it, which is exactly how the defect
+            # survived. Reported on screen as "show_all(locals()) failed:
+            # NameError", once per stop.
+            reply = dap_reply(dap("evaluate", expression="show_all(locals())",
+                                  frameId=frame_id, context="repl"), since=before)
+            check("the frame has not got show_all, as an ordinary file has not",
+                  reply is not None and reply.get("success") is False
+                  and "NameError" in str(reply.get("message")),
+                  "no reply" if reply is None else str(reply.get("message"))[:60])
+
+            # And the on-stop default, which is why it carries its own import.
+            # Kept in step with DEFAULT_ON_STOP in src/debug/settings.js by
+            # hand; what it proves is the half that cannot be read off the
+            # frontend at all - that DAP's evaluate takes two statements,
+            # because the request goes with context "repl" and debugpy execs
+            # what it cannot eval.
             at_models = len(side.binary)
-            dap_reply(dap("evaluate", expression="show_all(locals())",
+            dap_reply(dap("evaluate",
+                          expression="from build123d_studio import show_all; "
+                                     "show_all(locals())",
                           frameId=frame_id, context="repl"), since=before)
             at_model = side.wait_binary(KIND_MODEL, ACTION_TIMEOUT, since=at_models)
-            check("show_all in a paused frame reaches the viewer", at_model is not None,
+            check("the on-stop default draws from a frame that never imported it",
+                  at_model is not None,
                   "no model frame" if at_model is None else f"at {at_model:.2f}s")
 
             # Stepping, and a shape drawn at the new stop. This is the whole of
@@ -1104,7 +1127,12 @@ def main():
                     dap("stackTrace", threadId=stepped["body"]["threadId"]),
                     since=before,
                 )["body"]["stackFrames"]
-                dap_reply(dap("evaluate", expression="show_all(locals())",
+                # The same expression as the stop before, because that is what
+                # the hook sends at every stop - a name bound by an earlier
+                # evaluate is not carried into the next one.
+                dap_reply(dap("evaluate",
+                              expression="from build123d_studio import show_all; "
+                                         "show_all(locals())",
                               frameId=frames[0]["id"], context="repl"), since=before)
                 at_model = side.wait_binary(KIND_MODEL, ACTION_TIMEOUT, since=at_models)
                 check("a shape drawn at a later stop reaches the viewer too",

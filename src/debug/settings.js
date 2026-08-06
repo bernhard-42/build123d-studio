@@ -30,14 +30,26 @@ export function justMyCode() {
 // empty is answered by onStopBreakpointsOnly below, which is on by default - so
 // out of the box it draws once per breakpoint, which is once per place somebody
 // deliberately stopped.
-const DEFAULT_ON_STOP = "show_all(locals())";
+// The import is part of the default rather than an assumption about the file.
+// The expression is evaluated *in the paused frame*, so it can only see what
+// that frame can see - and a file that draws with `show()`, or one that has not
+// drawn anything yet, has never bound `show_all`. Out of the box the hook then
+// failed on every stop with a NameError, which reads as the debugger being
+// broken rather than as a setting needing a line added to it.
+//
+// Two statements, which DAP's `evaluate` takes because the request is sent with
+// context "repl" - debugpy execs what it cannot eval. Re-importing at every stop
+// costs nothing: the module is in sys.modules after the first one.
+const DEFAULT_ON_STOP = "from build123d_studio import show_all; show_all(locals())";
 
 /**
  * An expression to run each time execution stops, or "" for none.
  *
  * This is what makes debugging *visual* on this application rather than
  * textual: `show_all(locals())` at every stop draws the shapes in the frame
- * into the viewer, so stepping through a model is watching it being built. The
+ * into the viewer, so stepping through a model is watching it being built. It
+ * is imported in the same breath, because the frame it runs in is the user's
+ * file and that file has no reason to have imported it. The
  * debugged process is given the kernel's environment - the model socket's port
  * and token - which is the only reason a shape drawn there arrives in the same
  * pane.
