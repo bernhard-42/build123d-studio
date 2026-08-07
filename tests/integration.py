@@ -1369,6 +1369,61 @@ def main():
     check("the sidecar reported no unexpected failures", len(complaints) == 0,
           "; ".join(complaints[:3]))
 
+    # --- nothing outlives this process, however it dies ---
+    #
+    # Last, because it destroys the sidecar. SIGKILL rather than a graceful
+    # stop: no shutdown ordering survives one - measured, the sidecar is gone in
+    # 0.02 s - so this is the case that no amount of teardown code can answer
+    # and only a contract can.
+    #
+    # Four of the six children are somebody else's promise and are asserted here
+    # for exactly that reason: ipykernel's parent poller, the LSP's
+    # `initialize.processId`, the console's pty, the measurement pipe. An
+    # upgrade that quietly drops one of those should be a red test rather than a
+    # leak found months later. The other two are ours, spawned through
+    # `_supervise.py`, and before it existed both survived this.
+    forever = os.path.join(scratch, "outlive.py")
+    with open(forever, "w") as handle:
+        handle.write("import time\nprint('running')\nwhile True:\n    time.sleep(0.05)\n")
+
+    before = len(side.frames)
+    side.send("run.start", path=forever)
+    side.wait_frame("run.started", ACTION_TIMEOUT, since=before)
+    side.send("debug.start", path=forever)
+    side.wait_frame("debug.started", ACTION_TIMEOUT, since=before)
+
+    watched = [p for p in psutil.Process(side.proc.pid).children(recursive=True)
+               if p.status() != psutil.STATUS_ZOMBIE]
+    check("the tree is what it should be before the kill", len(watched) >= 4,
+          f"{len(watched)} processes")
+
+    side.proc.kill()
+    deadline = time.monotonic() + 20
+    alive = watched
+    while time.monotonic() < deadline:
+        alive = [p for p in alive
+                 if p.is_running() and p.status() != psutil.STATUS_ZOMBIE]
+        if len(alive) == 0:
+            break
+        time.sleep(0.2)
+
+    def describe(process):
+        try:
+            return " ".join(process.cmdline())[:70]
+        except psutil.Error:
+            return f"pid {process.pid}"
+
+    check("nothing survives the sidecar being killed", len(alive) == 0,
+          "; ".join(describe(p) for p in alive[:3]))
+
+    # Whatever leaked, so a failing run does not leave a Python process looping
+    # on the machine it ran on.
+    for process in alive:
+        try:
+            process.kill()
+        except psutil.Error:
+            pass
+
     side.stop()
 
     failed = [name for name, ok in results if not ok]
