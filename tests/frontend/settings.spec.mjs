@@ -340,3 +340,36 @@ test.describe("the shortcut editor", () => {
     await expect(runFile.locator(".settings-chord")).toHaveCount(2);
   });
 });
+
+test.describe("the package source picker", () => {
+  // Reported from a real build: choosing "Local checkout" and pressing Apply
+  // without picking a folder saved the choice and installed from PyPI. The
+  // dialog is where the choice is still being made, so it has to refuse -
+  // startup deliberately tolerates the same state, because a half-made setting
+  // must not stop the application starting, and that tolerance is exactly what
+  // made the saved choice do nothing visible.
+  //
+  // Proved by un-applying: with the localSourceProblem check removed from
+  // saveEverything, both tests below fail and nothing else does.
+
+  test("a local checkout with no folder refuses Apply and says why", async ({ page }) => {
+    await openSettings(page);
+    await page.locator('input[name="src-build123d"][value="local"]').check();
+    await page.locator("#settings-apply").click();
+
+    await expect(page.locator("#settings-apply"), "the dialog must stay open").toBeVisible();
+    const problem = page.locator("#local-problem-build123d");
+    await expect(problem).toBeVisible();
+    await expect(problem).toContainText("choose a folder");
+  });
+
+  test("and applies once a folder is given", async ({ page }) => {
+    // The other half: the refusal is about this state, not about the choice.
+    await openSettings(page);
+    await page.locator('input[name="src-build123d"][value="local"]').check();
+    await page.locator("#local-build123d").fill("/Users/me/src/build123d");
+    await page.locator("#settings-apply").click();
+
+    await expect(page.locator("#settings-apply")).toBeHidden();
+  });
+});

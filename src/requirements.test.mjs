@@ -12,6 +12,7 @@ import { test } from "node:test";
 import {
   findProblems,
   insertDependencies,
+  localSourceProblem,
   normalizeName,
   parseRequirements,
   renderRequirements,
@@ -260,4 +261,39 @@ test("editable is written as a TOML boolean, not a string", () => {
   const { sources } = renderRequirements(parseRequirements("/tmp/mylib"));
   assert.match(sources[0], /editable = true\b/);
   assert.equal(sources[0].includes('"true"'), false);
+});
+
+// The source picker, not this field - but the same definition of "absolute
+// enough", which is why the rule lives beside `relative` and `looksLikePath`.
+
+test("choosing a local checkout without a folder is refused", () => {
+  // The case that reached a real build: pick "Local checkout", press Apply, and
+  // the stored choice installs from PyPI, because renderPyproject drops a
+  // source it has no path for.
+  for (const empty of ["", "   "]) {
+    const problem = localSourceProblem("build123d", empty);
+    assert.notEqual(problem, null);
+    assert.match(problem, /choose a folder/);
+  }
+});
+
+test("a chosen folder is accepted on both platforms", () => {
+  for (const path of ["/Users/me/src/build123d", "C:\\src\\build123d", "  /tmp/b  "]) {
+    assert.equal(localSourceProblem("build123d", path), null, `${path} must be accepted`);
+  }
+});
+
+test("a relative folder is refused, as it is in the requirements field", () => {
+  // uv resolves it against the environment root under the app-data directory,
+  // so the dangerous case is not the one that fails - it is the one that finds
+  // a different directory of the same name.
+  for (const path of ["../build123d", "./build123d", "~/src/build123d", "src/build123d"]) {
+    const problem = localSourceProblem("build123d", path);
+    assert.notEqual(problem, null, `${path} must be refused`);
+    assert.match(problem, /full path/);
+  }
+});
+
+test("the message names the package, because a row is per package", () => {
+  assert.match(localSourceProblem("bd_warehouse", ""), /^bd_warehouse:/);
 });

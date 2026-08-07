@@ -203,6 +203,34 @@ export function findProblems(entries, declared) {
  * content: `nonsense-!!!` is escaped faithfully and uv says what is wrong with
  * it.
  */
+/**
+ * Why a package redirected to a local checkout cannot be applied, or null.
+ *
+ * The picker's rule rather than this field's, kept here because it is the same
+ * rule and `relative` and `looksLikePath` are the definition of "absolute
+ * enough" - two copies of that would eventually disagree about `~/src`.
+ *
+ * An empty path is tolerated at startup on purpose: `renderPyproject` drops a
+ * source it has no path for, so the declared version applies and a half-made
+ * setting cannot stop the application starting. In the dialog it is a question
+ * still being answered, and saving it would store a choice that silently does
+ * nothing - the user picks "local checkout", presses Apply, and gets PyPI.
+ *
+ * @param {string} label  the package name, for the message
+ * @param {string} path   the folder as typed
+ * @returns {string|null}
+ */
+export function localSourceProblem(label, path) {
+  const chosen = path.trim();
+  if (chosen === "") {
+    return `${label}: choose a folder for the local checkout, or put it back on PyPI`;
+  }
+  if (relative(chosen) || !looksLikePath(chosen)) {
+    return `${label}: give the full path - a relative one has nothing to be relative to here`;
+  }
+  return null;
+}
+
 export function tomlString(value) {
   const escaped = value
     .replace(/\\/g, "\\\\")

@@ -12,7 +12,7 @@ import {
   saveLocalPaths,
   savePackageSources,
 } from "./packages.js";
-import { findProblems, parseRequirements } from "./requirements.js";
+import { findProblems, localSourceProblem, parseRequirements } from "./requirements.js";
 import {
   COMMANDS,
   chordFromEvent,
@@ -175,6 +175,7 @@ function packageRow(pkg, selection, gitPresent, localPath) {
                placeholder="no folder chosen">
         <button class="settings-btn" id="choose-${escapeHtml(pkg.name)}">Choose…</button>
       </div>
+      <p class="info-note settings-problem" id="local-problem-${escapeHtml(pkg.name)}" hidden></p>
       <button class="settings-btn settings-action" id="reinstall-${escapeHtml(pkg.name)}">
         Re-install ${escapeHtml(pkg.name)}
       </button>
@@ -604,6 +605,32 @@ export async function showSettings({ tab = null } = {}) {
       return false;
     }
     report.hidden = true;
+
+    // A local checkout with no folder chosen, checked here for the same reason
+    // as the two rules above: the dialog is where the choice is still being
+    // made, and storing it would store something that silently does nothing -
+    // startup drops a source it has no path for, so "local checkout" quietly
+    // installs from PyPI. Every row is cleared before any is reported, or a
+    // message answered on one package would outlive the fix on another.
+    const localProblems = PACKAGES.map((p) => {
+      const picked = overlay.querySelector(`input[name="src-${p.name}"]:checked`);
+      const typed = document.getElementById(`local-${p.name}`).value;
+      return {
+        name: p.name,
+        problem: picked?.value === LOCAL ? localSourceProblem(p.name, typed) : null,
+      };
+    });
+    for (const row of localProblems) {
+      const line = document.getElementById(`local-problem-${row.name}`);
+      line.textContent = row.problem ?? "";
+      line.hidden = row.problem === null;
+    }
+    const badLocal = localProblems.find((row) => row.problem !== null);
+    if (badLocal !== undefined) {
+      showTab("packages");
+      document.getElementById(`local-${badLocal.name}`).focus();
+      return false;
+    }
 
     // Refused rather than rounded, and reported where it was typed. A line
     // length that silently became something else would be a dialog answering a
