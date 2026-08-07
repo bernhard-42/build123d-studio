@@ -28,8 +28,9 @@ from debugger import debug_python  # noqa: F401 - re-exported for main.py's use
 class RunSession:
     """One running file. At most one at a time, like a debug session."""
 
-    def __init__(self, python, on_output, on_exit):
+    def __init__(self, python, supervisor, on_output, on_exit):
         self._python = python
+        self._supervisor = supervisor
         self._on_output = on_output
         self._on_exit = on_exit
         self._process = None
@@ -51,14 +52,21 @@ class RunSession:
         self._stopping.clear()
         try:
             self._process = subprocess.Popen(
-                # -u so the output arrives while it runs rather than in a lump
-                # at the end. A script that prints its progress is the ordinary
-                # case here, and block buffering would make every one of them
-                # look like it had hung until it finished.
-                [self._python, "-u", path],
+                # Through the supervisor, which is what makes the script die
+                # with us. It runs the file as plain `python -u <file>` in a
+                # process of its own - -u so output arrives while it runs rather
+                # than in a lump at the end, because a script printing its
+                # progress is the ordinary case and block buffering makes every
+                # one of them look hung until it finishes.
+                [self._python, self._supervisor, self._python, "-u", path],
                 env=env,
                 cwd=cwd,
-                stdin=subprocess.DEVNULL,
+                # A pipe rather than DEVNULL, and never written to. It is the
+                # whole contract: the supervisor blocks reading it, and gets EOF
+                # the moment this process goes, whatever took it. The script
+                # itself still sees an empty stdin - the supervisor gives it
+                # DEVNULL of its own.
+                stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
             )
@@ -74,7 +82,17 @@ class RunSession:
         return self._process is not None and self._process.poll() is None
 
     def stop(self):
-        """Kill it, and say nothing on the way out.
+        """Close the pipe, and say nothing on the way out.
+
+        Closing rather than killing, because killing the supervisor is the one
+        thing that would leave the script running - its watcher would never get
+        to act. EOF is the same signal it takes when this process dies, so Stop
+        and a crash go down identical paths.
+
+        Deliberately does not wait. The supervisor gives the script SIGTERM, two
+        seconds, then SIGKILL, and none of that is worth holding a quit for: if
+        this process exits first, the pipe closes anyway and the outcome is the
+        same.
 
         _stopping is set first so the exit watcher stays quiet: the frontend
         asked for this and is not waiting to be told what it already knows.
@@ -85,9 +103,10 @@ class RunSession:
             return
         self._stopping.set()
         try:
-            process.kill()
+            if process.stdin is not None:
+                process.stdin.close()
         except OSError as exc:
-            log(f"Could not stop the running file: {exc}")
+            log(f"Could not signal the running file to stop: {exc}")
 
     def _read_output(self):
         """Everything the file printed, stderr folded into stdout.

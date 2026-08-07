@@ -162,12 +162,20 @@ class Sidecar:
         # and the half that works on a kernel that has never run anything.
         self.completer = Completer(env_root, app_dir, on_diagnostics=self.on_diagnostics)
 
+        # What makes a Run File and a debuggee die with this process, whatever
+        # kills it. Both are spawned through it, and it is invoked by path
+        # rather than with `-m`: importing the build123d_studio package would
+        # pull ocp_vscode and OCP in behind it, which is seconds and hundreds of
+        # megabytes before the user's file has started.
+        supervisor = os.path.join(app_dir, "kernel", "build123d_studio", "_supervise.py")
+
         # The debugged file's own process, when there is one. Two worlds: the
         # kernel is not touched by any of it, so nothing here reaches into the
         # kernel's state and nothing in the kernel's state changes because a
         # session ran.
         self.debug = DebugSession(
             python=debug_python(env_root),
+            supervisor=supervisor,
             on_message=lambda message: self.channel.send("debug.message", message=message),
             on_output=lambda text: self.channel.send("debug.output", text=text),
             on_exit=lambda code: self.channel.send("debug.exited", code=code),
@@ -178,6 +186,7 @@ class Sidecar:
         # has to reach the viewer that is already on screen.
         self.run = RunSession(
             python=debug_python(env_root),
+            supervisor=supervisor,
             on_output=lambda text: self.channel.send("run.output", text=text),
             on_exit=lambda code: self.channel.send("run.exited", code=code),
         )

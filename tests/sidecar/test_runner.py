@@ -26,6 +26,10 @@ class RunSessionTest(unittest.TestCase):
         self.exited = threading.Event()
         self.session = RunSession(
             python=sys.executable,
+            supervisor=os.path.join(
+                os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+                "kernel", "build123d_studio", "_supervise.py",
+            ),
             on_output=self.output.append,
             on_exit=self._record_exit,
         )

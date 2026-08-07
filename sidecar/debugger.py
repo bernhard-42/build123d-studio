@@ -73,8 +73,9 @@ class DebugSession:
     application working.
     """
 
-    def __init__(self, python, on_message, on_output, on_exit):
+    def __init__(self, python, supervisor, on_message, on_output, on_exit):
         self._python = python
+        self._supervisor = supervisor
         self._on_message = on_message
         self._on_output = on_output
         self._on_exit = on_exit
@@ -116,6 +117,19 @@ class DebugSession:
 
         command = [
             self._python,
+            # Through the supervisor, exactly as a Run File is, and for a reason
+            # this process cannot solve for itself: measured, debugpy suspends
+            # every thread at a breakpoint, so a watcher living *inside* the
+            # debuggee cannot notice the sidecar going while execution is
+            # paused - and a debuggee paused for ever is the worst thing to
+            # leave behind, holding an interpreter with OCP loaded.
+            #
+            # debugpy's own `--parent-session-pid` looks like the answer and is
+            # not: measured, it reaches pydevd as `ppid` and is used only to
+            # report a launcher pid in a PydevdPythonInfo response. Nothing
+            # monitors it.
+            self._supervisor,
+            self._python,
             "-Xfrozen_modules=off",
             "-m", "debugpy",
             "--connect", f"127.0.0.1:{port}",
@@ -129,7 +143,10 @@ class DebugSession:
         try:
             self._process = subprocess.Popen(
                 command, env=env, cwd=cwd,
-                stdin=subprocess.DEVNULL,
+                # The supervisor's contract: a pipe that is never written to, so
+                # a read there returns EOF the moment this process goes. The
+                # debuggee itself still gets DEVNULL, from the supervisor.
+                stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             )
         except OSError as exc:
@@ -160,6 +177,11 @@ class DebugSession:
         Waited for rather than signalled and forgotten: the sidecar's own exit
         is an os._exit that runs no cleanup, so a terminate nobody waits on
         leaves a Python process holding the user's geometry behind.
+
+        The supervisor is asked by closing its pipe rather than by being killed,
+        because killing it is the one thing that would strand the debuggee - its
+        watcher would never get to act. It gives the debuggee SIGTERM, two
+        seconds, then SIGKILL.
         """
         self._stopping.set()
         self._close_listener()
@@ -175,11 +197,15 @@ class DebugSession:
         if process is None:
             return
         try:
-            process.terminate()
+            if process.stdin is not None:
+                process.stdin.close()
             process.wait(timeout=5)
         except subprocess.TimeoutExpired:
-            process.kill()
-            process.wait(timeout=5)
+            # Deliberately not killed. Killing the supervisor is the one action
+            # that would leave the debuggee running, because its watcher would
+            # never get to act - and if we are here, something is wrong enough
+            # that the sweep at the next start is the right owner of it.
+            log("The debug supervisor did not exit in time")
         except OSError:
             pass
         log("Debug session stopped")
