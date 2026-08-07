@@ -4,6 +4,12 @@
 
 :root,
 :root[data-theme="dark"] {
+  /* Not decoration: this is what tells the engine to paint the parts of the UI
+     that are not ours. A scrollbar thumb can be styled and its *track* cannot -
+     without this it stays the light default, which is why the toolbar's
+     horizontal scrollbar was a white bar across a dark window. It governs the
+     native form controls in Settings for the same reason. */
+  color-scheme: dark;
   --bg: #1e1e1e;
   --bg-pane: #252526;
   --fg: #d4d4d4;
@@ -28,6 +34,7 @@
 }
 
 :root[data-theme="light"] {
+  color-scheme: light;
   --bg: #f3f3f3;
   --bg-pane: #ffffff;
   --fg: #1f1f1f;
