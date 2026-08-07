@@ -293,12 +293,41 @@ export async function upgradePackages(onLine) {
  * nothing in the lock has changed, so an ordinary sync is a no-op. Only
  * `--reinstall-package` makes it happen.
  *
+ * The staging is not optional, and leaving it out was a bug. What uv reinstalls
+ * *from* is the environment's own pyproject and lock, and those are generated
+ * from the settings rather than being the settings - so a source just changed
+ * in this dialog has not reached them. Without this, --reinstall-package
+ * faithfully put back the source that was selected before, and only restarting
+ * applied the new one, because ensureEnvironment stages on every launch.
+ *
  * The name comes from PACKAGES, so what reaches the command line is a constant
  * in this repository rather than anything a user typed.
  */
 export async function reinstallPackage(name, onLine) {
   const { path: envRoot } = await resolveEnvRoot();
-  const code = await runUv(["sync", "--reinstall-package", name], envRoot, { onLine });
+  const usesShippedLock = await stageProjectFiles(
+    envRoot,
+    await loadPackageSources(),
+    customPackages(),
+  );
+
+  if (!usesShippedLock) {
+    // A path or branch source is in play, so the lock has to learn about it
+    // before anything can be installed from it. No --upgrade: this reinstalls
+    // one package, it does not move the others.
+    const lockCode = await runUv(["lock"], envRoot, { onLine });
+    if (lockCode !== 0) {
+      throw new Error(`uv lock failed with exit code ${lockCode}`);
+    }
+  }
+
+  // --frozen exactly where syncSelection uses it: with the shipped lock in
+  // force there is nothing to resolve, and the reinstall should put back what
+  // this release was tested against rather than re-deciding it.
+  const args = usesShippedLock
+    ? ["sync", "--frozen", "--reinstall-package", name]
+    : ["sync", "--reinstall-package", name];
+  const code = await runUv(args, envRoot, { onLine });
   if (code !== 0) {
     throw new Error(`uv sync failed with exit code ${code}`);
   }
