@@ -1,6 +1,7 @@
 import { events, os } from "@neutralinojs/lib";
 
 import { quoteFor } from "./quoting.js";
+import { createRegistry } from "./running.js";
 import * as log from "./log.js";
 
 // Thin wrappers over Neutralino's spawnProcess.
@@ -148,6 +149,27 @@ export async function spawn(command, { cwd, envs, onStdOut, onStdErr } = {}) {
  *
  * @returns {Promise<number>} exit code
  */
+// Everything run() starts, so that a quit can collect whatever is still going.
+//
+// Deliberately here and not in spawn(). The sidecar is spawned directly and is
+// the one child that must never be killed - its teardown is its own, reached by
+// closing its stdin - so tracking a layer lower captures exactly the
+// fire-and-forget processes that had no teardown at all, and nothing else.
+const live = createRegistry();
+
+/**
+ * Kill anything still running, and say how many that was.
+ *
+ * For the way out, and it has to be awaited: app.exit() immediately afterwards
+ * would otherwise beat the kill requests to the native side. See running.js for
+ * why any of this exists.
+ */
+export async function stopRunning() {
+  return live.stopAll({
+    onError: (handle, error) => log.warn(`Could not stop pid ${handle.pid}:`, error),
+  });
+}
+
 export async function run(command, { cwd, envs, onLine } = {}) {
   let buffer = "";
 
@@ -163,8 +185,18 @@ export async function run(command, { cwd, envs, onLine } = {}) {
     }
   };
 
-  const proc = await spawn(command, { cwd, envs, onStdOut: emit, onStdErr: emit });
-  const code = await proc.exited;
+  const proc = live.track(
+    await spawn(command, { cwd, envs, onStdOut: emit, onStdErr: emit })
+  );
+  let code;
+  try {
+    code = await proc.exited;
+  } finally {
+    // Whether it ended or threw. A handle left behind here would be killed at
+    // quit long after its process had gone, and on a reused id that is somebody
+    // else's process.
+    live.forget(proc);
+  }
 
   if (buffer.length > 0 && onLine !== undefined) {
     onLine(buffer);

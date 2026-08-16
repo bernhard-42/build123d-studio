@@ -5,6 +5,7 @@ import "./icons.css";
 import { ensureEnvironment } from "./bootstrap/setup.js";
 import { appDir, recordAppLocation } from "./bootstrap/envroot.js";
 import { openTarget } from "./args.js";
+import { stopRunning } from "./proc.js";
 import {
   acknowledge,
   appendLog,
@@ -128,6 +129,24 @@ async function shutdown() {
     await ipc.stopSidecar();
   } catch (error) {
     log.warn("Sidecar shutdown:", error);
+  }
+
+  // uv, and whatever it started, and the curl or tar that may be fetching it.
+  // Nothing else collects these: Neutralino kills nothing of its own at exit,
+  // and unlike the sidecar they hold no contract that takes them with us. A
+  // first run interrupted here used to leave an install writing into the
+  // environment of an application that had gone.
+  //
+  // Killing uv part-way is safe by construction - every start runs uv sync,
+  // which finishes an interrupted one - and is much better than the two
+  // installs in one environment that a relaunch would otherwise meet.
+  try {
+    const stopped = await stopRunning();
+    if (stopped > 0) {
+      log.info(`Stopped ${stopped} process(es) still running at quit`);
+    }
+  } catch (error) {
+    log.warn("Stopping what was still running:", error);
   } finally {
     await app.exit();
   }
