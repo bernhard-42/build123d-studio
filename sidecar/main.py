@@ -1379,21 +1379,39 @@ class Sidecar:
             try:
                 if self._warm_timer is not None:
                     self._warm_timer.cancel()
+                # The kernel first, because its fallback is the weakest.
+                #
+                # Every child here holds a contract that takes it with us if
+                # this never reaches it - a pty that closes, a pipe that ends,
+                # a process id it was told to watch. The kernel's is a Python
+                # thread polling for its parent, and a user computation inside
+                # one long OCCT call holds the GIL for its whole duration, so
+                # that thread cannot run and the kernel cannot notice we have
+                # gone. A boolean on a large assembly is minutes of exactly
+                # that, and it is also the moment somebody is most likely to
+                # give up and close the window.
+                #
+                # So it goes before anything that can spend the deadline. It is
+                # asked politely, which is unchanged and still right: what
+                # actually collects a kernel that cannot answer is
+                # jupyter_client's own escalation to a group kill, and a
+                # signal needs nothing of the GIL.
+                self._stopping("the kernel", self.kernel, "shutdown")
                 self._stopping("the language server", self.completer, "stop")
                 self._stopping("the debug session", self.debug, "stop")
-                # Before the kernel, like the debugger: it is a child process
-                # holding the same environment, and quitting the application
-                # must not leave a script running against a viewer that has gone.
+                # Before the model channel, like the debugger: it is a child
+                # process holding the same environment, and quitting the
+                # application must not leave a script running against a viewer
+                # that has gone.
                 self._stopping("the running file", self.run, "stop")
                 self._stopping("the measurement backend", self.measurements, "stop")
                 self._stopping("the console", self.console, "stop")
-                self._stopping("the kernel", self.kernel, "shutdown")
                 self._stopping("the model channel", self.models, "stop")
                 self._stopping("the webview channel", self.channel, "close")
-                # Last, and after the kernel: releasing the lock is what tells
-                # the next instance's sweep that this directory can go, and the
-                # connection file inside it is meaningless once the kernel it
-                # describes has stopped.
+                # Last, and after the kernel above: releasing the lock is what
+                # tells the next instance's sweep that this directory can go,
+                # and the connection file inside it is meaningless once the
+                # kernel it describes has stopped.
                 #
                 # The lock always goes; the directory may not, because on Windows
                 # a kernel process that has been asked to stop but has not yet

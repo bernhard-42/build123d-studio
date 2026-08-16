@@ -76,8 +76,8 @@ class ShutdownTest(unittest.TestCase):
     def test_everything_is_stopped_once_in_order(self):
         self.sidecar.stop()
         self.assertEqual(self.stopped, [
-            "completer", "debug", "run", "measurements",
-            "console", "kernel", "models", "channel", "instance",
+            "kernel", "completer", "debug", "run", "measurements",
+            "console", "models", "channel", "instance",
         ])
 
     def test_asking_twice_stops_everything_once(self):
@@ -118,6 +118,51 @@ class ShutdownTest(unittest.TestCase):
         self.sidecar.debug = Recorder("debug", self.stopped, raises=RuntimeError("no"))
         self.sidecar.stop()
         self.assertIn("instance", self.stopped)
+
+    def test_the_kernel_is_gone_before_the_deadline_can_fire(self):
+        """The kernel goes first because its fallback is the weakest.
+
+        Every other child holds a contract that takes it with us if stop()
+        never reaches it - a pty that closes, a pipe that ends, a process id it
+        was told to watch. The kernel's is a Python thread polling for its
+        parent, and a user computation inside one long OCCT call holds the GIL
+        for its whole duration, so that thread cannot run and the kernel cannot
+        notice we have gone. Left running it holds a loaded geometry kernel and
+        whatever the namespace was carrying.
+
+        So the property is not "the kernel is stopped" - it was, eventually,
+        sixth. It is that it is already stopped at the moment the deadline
+        fires, whatever else is holding things up.
+
+        Un-applied by putting the kernel back after the language server: the
+        snapshot taken when the watchdog fires does not contain it.
+        """
+        stopped = self.stopped
+        fired = []
+
+        class Watched(Sidecar):
+            def _give_up_stopping(self):
+                # The real one calls os._exit, which cannot be tested from
+                # inside the process it exits. What is captured instead is what
+                # had been stopped by the time it fired.
+                fired.append(list(stopped))
+
+        sidecar = Watched(env_root=self.root, app_dir=self.root, instance=self.instance)
+        for name in ["completer", "debug", "run", "measurements",
+                     "console", "kernel", "models", "channel", "instance"]:
+            setattr(sidecar, name, Recorder(name, stopped))
+        # The language server is what used to spend the whole budget, and it is
+        # the step that sat in front of the kernel.
+        sidecar.completer = Recorder("completer", stopped, delay=1.5)
+
+        deadline = main.SHUTDOWN_DEADLINE
+        main.SHUTDOWN_DEADLINE = 0.2
+        self.addCleanup(setattr, main, "SHUTDOWN_DEADLINE", deadline)
+
+        sidecar.stop()
+
+        self.assertEqual(len(fired), 1, "the deadline never fired, so this proves nothing")
+        self.assertIn("kernel", fired[0], f"the kernel was still running: {fired[0]}")
 
     def test_a_step_that_hangs_is_named_and_left(self):
         """The deadline, and the sentence that makes the next one cheap.
