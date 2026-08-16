@@ -23,6 +23,12 @@ export const calls = [];
 
 /** Paths to contents. Directories are the entries of `dirs`. */
 const files = new Map();
+// When each file was last written. A real stat carries one and the
+// changed-on-disk check compares it, so a stub without one would quietly
+// exercise only the degraded, size-only half of that check. Counted rather
+// than clocked, so a test never depends on how fast it runs.
+const times = new Map();
+let tick = 1;
 const dirs = new Set(["/"]);
 
 /** Where the harness is told to answer a dialog from, one answer per call. */
@@ -63,6 +69,7 @@ function missing(path) {
 export function given(path, contents) {
   ensureParents(path);
   files.set(path, contents);
+  times.set(path, ++tick);
 }
 
 /** Seed a directory. */
@@ -135,6 +142,8 @@ if (globalThis.__HARNESS_SETTINGS__ != null) {
 export function reset() {
   calls.length = 0;
   files.clear();
+  times.clear();
+  tick = 1;
   dirs.clear();
   dirs.add("/");
   dialogAnswers.length = 0;
@@ -196,6 +205,7 @@ export const filesystem = {
     record("writeFile", [path, contents]);
     ensureParents(path);
     files.set(path, contents);
+    times.set(path, ++tick);
   },
 
   async appendFile(path, contents) {
@@ -217,7 +227,11 @@ export const filesystem = {
     }
     ensureParents(to);
     files.set(to, files.get(from));
+    // The destination is newly written as far as anyone looking at it is
+    // concerned, which is what an atomic save is: every save lands through here.
+    times.set(to, ++tick);
     files.delete(from);
+    times.delete(from);
   },
 
   async createDirectory(path) {
@@ -229,7 +243,7 @@ export const filesystem = {
   async getStats(path) {
     record("getStats", [path]);
     if (dirs.has(path)) {
-      return { isFile: false, isDirectory: true, size: 0 };
+      return { isFile: false, isDirectory: true, size: 0, createdAt: 1, modifiedAt: 1 };
     }
     if (!files.has(path)) {
       missing(path);
@@ -238,6 +252,8 @@ export const filesystem = {
     return {
       isFile: true,
       isDirectory: false,
+      createdAt: 1,
+      modifiedAt: times.get(path) ?? 1,
       // Bytes, as the real one reports, rather than the string's length - the
       // two differ the moment a file has a character outside ASCII in it, and a
       // size threshold measured in the wrong unit is a threshold in the wrong

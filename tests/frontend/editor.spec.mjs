@@ -301,6 +301,107 @@ test.describe("the editing contributions", () => {
   });
 });
 
+test.describe("a file that changed on disk", () => {
+  /**
+   * D5. Nothing compared anything: openPath deliberately never re-reads a file
+   * already in a tab, and the only external change ever noticed was deletion,
+   * on a manual refresh. So editing a file in another program - or in a second
+   * window of this one, which is a supported workflow - and then saving here
+   * replaced those edits without a word.
+   *
+   * The other program is the stub writing the file directly, which is exactly
+   * what a formatter, a git checkout or a second window does.
+   *
+   * Un-applied by removing the changedSince check from saveBuffer: no dialog
+   * appears and the first assertion below finds the outside edit gone.
+   */
+  const onDisk = (page, path) =>
+    page.evaluate((p) => String(globalThis.__NEUTRALINO_STUB__.wrote(p) ?? ""), path);
+
+  async function editedElsewhere(page) {
+    await openApp(page);
+    // Somebody else writes it while it sits in the tab.
+    await page.evaluate(
+      (p) => globalThis.__NEUTRALINO_STUB__.given(p, "THEIRS = 1\n"),
+      `${PROJECT}/part.py`,
+    );
+    await caretToEnd(page);
+    await page.keyboard.type("MINE");
+    await page.keyboard.press("Meta+s");
+    await expect(page.locator(".confirm-overlay")).toBeVisible();
+  }
+
+  test("it asks rather than replacing what somebody else wrote", async ({ page }) => {
+    await editedElsewhere(page);
+
+    const text = await page.locator(".confirm-overlay").innerText();
+    expect(text).toContain("changed on disk");
+    expect(await onDisk(page, `${PROJECT}/part.py`), "it was written before asking")
+      .toBe("THEIRS = 1\n");
+  });
+
+  test("Cancel leaves both the file and the buffer alone", async ({ page }) => {
+    await editedElsewhere(page);
+    await page.locator('.confirm-overlay [data-answer="cancel"]').click();
+
+    expect(await onDisk(page, `${PROJECT}/part.py`)).toBe("THEIRS = 1\n");
+    await expect(
+      page.locator(".tab-active .tab-close.tab-dirty"),
+      "the buffer must still know it has unsaved work",
+    ).toHaveCount(1);
+  });
+
+  test("Overwrite is allowed, because it was asked for", async ({ page }) => {
+    await editedElsewhere(page);
+    await page.locator('.confirm-overlay [data-answer="save"]').click();
+
+    await expect.poll(() => onDisk(page, `${PROJECT}/part.py`)).toContain("MINE");
+    await expect(page.locator(".tab-active .tab-close.tab-dirty")).toHaveCount(0);
+  });
+
+  test("Reload takes their version and does not write ours", async ({ page }) => {
+    await editedElsewhere(page);
+    await page.locator('.confirm-overlay [data-answer="discard"]').click();
+
+    await expect.poll(() => editorText(page)).toContain("THEIRS = 1");
+    expect(await onDisk(page, `${PROJECT}/part.py`)).toBe("THEIRS = 1\n");
+    await expect(
+      page.locator(".tab-active .tab-close.tab-dirty"),
+      "a reloaded buffer matches disk",
+    ).toHaveCount(0);
+  });
+
+  test("and an untouched file is never asked about", async ({ page }) => {
+    // The false positive matters as much: a dialog on every save is one people
+    // learn to click through without reading.
+    await openApp(page);
+
+    await caretToEnd(page);
+    await page.keyboard.type("MINE");
+    await page.keyboard.press("Meta+s");
+
+    await expect.poll(() => onDisk(page, `${PROJECT}/part.py`)).toContain("MINE");
+    await expect(page.locator(".confirm-overlay")).toHaveCount(0);
+  });
+
+  test("and neither is a second save straight after the first", async ({ page }) => {
+    // The stamp has to be re-read after a save, or the file we just wrote looks
+    // like somebody else's work the next time round.
+    await openApp(page);
+
+    await caretToEnd(page);
+    await page.keyboard.type("ONE");
+    await page.keyboard.press("Meta+s");
+    await expect.poll(() => onDisk(page, `${PROJECT}/part.py`)).toContain("ONE");
+
+    await page.keyboard.type("TWO");
+    await page.keyboard.press("Meta+s");
+
+    await expect.poll(() => onDisk(page, `${PROJECT}/part.py`)).toContain("TWO");
+    await expect(page.locator(".confirm-overlay")).toHaveCount(0);
+  });
+});
+
 test.describe("Save As does not land on a file nobody asked about", () => {
   /**
    * D7. The native dialog vets the name the user typed, and .py is appended

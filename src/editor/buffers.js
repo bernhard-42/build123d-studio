@@ -17,7 +17,8 @@
  */
 
 // The injected model operations:
-// { create(text), dispose(model), versionOf(model), textOf(model) }.
+// { create(text), dispose(model), versionOf(model), textOf(model),
+//   replaceText(model, text) }.
 let models = null;
 
 const buffers = new Map();
@@ -211,6 +212,43 @@ export function contentsOf(key) {
 /** Whether a buffer is still open, for a caller holding a key across an await. */
 export function exists(key) {
   return buffers.get(key) !== undefined;
+}
+
+/**
+ * What the file looked like when this buffer last agreed with it.
+ *
+ * Set on load and after every successful save, and read immediately before the
+ * next one. Its whole purpose is to notice that somebody else wrote the file in
+ * between - see ondisk.js.
+ */
+export function setDiskStamp(key, stamp) {
+  const buffer = buffers.get(key);
+  if (buffer === undefined) {
+    return;
+  }
+  buffer.diskStamp = stamp;
+}
+
+/** The stamp recorded for a buffer, or null if it never had one. */
+export function diskStamp(key) {
+  const buffer = buffers.get(key);
+  return buffer === undefined ? null : (buffer.diskStamp ?? null);
+}
+
+/**
+ * Replace a buffer's text with what is on disk, and say which version that is.
+ *
+ * An edit rather than a new model, so the tab, the caret's history and the undo
+ * stack all survive - reloading is not the same as closing and opening, and
+ * somebody who reloads by mistake must be able to undo it.
+ */
+export function replaceText(key, text) {
+  const buffer = buffers.get(key);
+  if (buffer === undefined) {
+    return null;
+  }
+  models.replaceText(buffer.model, text);
+  return models.versionOf(buffer.model);
 }
 
 /**

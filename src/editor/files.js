@@ -12,9 +12,12 @@ import {
   getCurrentFile,
   bufferContents,
   bufferExists,
+  bufferStamp,
   bufferNeedsSaving,
   markMissingFiles,
   markSaved,
+  reloadBufferText,
+  setBufferStamp,
   openBuffer,
   setCurrentFile,
   showBuffer,
@@ -27,6 +30,7 @@ import { unsavedPrompt } from "./unsaved.js";
 import { hideFolder, revealInTree, showFolder } from "./sidebar.js";
 import { describeSize, isLarge, looksBinary, SNIFF_BYTES } from "./filetype.js";
 import { formatOnSave } from "./formatting.js";
+import { changedSince, hasTimestamp, stampOf } from "./ondisk.js";
 import { askThreeWay, askTwoWay, notifyFailure, notifyRefusal } from "../confirm.js";
 import { writeFileSafely } from "./safewrite.js";
 import { getSetting, setSetting } from "../store.js";
@@ -563,7 +567,14 @@ export async function restoreWorkspace() {
   for (const tab of saved === null ? [] : saved.tabs) {
     try {
       const content = await filesystem.readFile(tab.path);
-      opened.set(tab.path, openBuffer({ path: tab.path, text: content, caret: tab.caret }));
+      const key = openBuffer({ path: tab.path, text: content, caret: tab.caret });
+      // Stamped here as well as in openPath, and this is the path that matters
+      // most: a restored session is where nearly every open file comes from, so
+      // a buffer without a stamp here would be one the changed-on-disk check
+      // stays silent about for the whole session - and a file left open
+      // overnight is exactly the one something else has written to.
+      recordStamp(key, await stampAt(tab.path));
+      opened.set(tab.path, key);
     } catch {
       log.info(`Not reopening a file that is no longer readable: ${tab.path}`);
     }
@@ -720,6 +731,10 @@ export async function openPath(path) {
     return null;
   }
   showInTab({ path, text: content });
+  // What the file looked like when this buffer agreed with it. Read after the
+  // content rather than before, so a write landing between the two is noticed
+  // at the next save rather than recorded as though it were ours.
+  recordStamp(bufferForPath(path), await stampAt(path));
   await rememberFolder(path);
   syncKernelDirectory();
   await saveWorkspace();
@@ -784,6 +799,32 @@ function describe(error) {
   return String(error);
 }
 
+/** What is on disk at a path right now, or null when there is nothing there. */
+async function stampAt(path) {
+  try {
+    return stampOf(await filesystem.getStats(path));
+  } catch {
+    // Not there. Every caller here treats that as "nothing to compare".
+    return null;
+  }
+}
+
+// Said once per session rather than per save: a platform that reports no
+// modification time makes the check below size-only, which is worth knowing
+// when reading a log about a file that was overwritten anyway.
+let saidAboutTimestamps = false;
+
+function recordStamp(key, stamp) {
+  if (stamp !== null && !hasTimestamp(stamp) && !saidAboutTimestamps) {
+    saidAboutTimestamps = true;
+    log.warn(
+      "This platform reports no file modification time; the changed-on-disk"
+      + " check can only compare sizes.",
+    );
+  }
+  setBufferStamp(key, stamp);
+}
+
 /** Whether anything at all is at a path - a file, a folder, or a link. */
 async function somethingIsAt(path) {
   try {
@@ -838,6 +879,34 @@ export async function saveFile({ saveAs = false } = {}) {
   } finally {
     saving.delete(key);
   }
+}
+
+/**
+ * Take what is on disk into the buffer, instead of writing over it.
+ *
+ * An edit rather than a fresh buffer, so the tab and the undo stack survive:
+ * somebody who reloads by mistake has just lost their work to a button, and
+ * being able to undo it is the difference between a choice and a trap.
+ *
+ * Returns null, which every caller reads as "not saved" - because it was not.
+ * Run and Debug abort on it, and a quit stops rather than discarding the
+ * buffer, which is right: reloading answered the conflict, not the request.
+ */
+async function reloadFrom(key, path) {
+  let content;
+  try {
+    content = await filesystem.readFile(path);
+  } catch (error) {
+    log.error(`Could not reload ${path}:`, error);
+    await notifyFailure("Could not reload", `${path}\n\n${describe(error)}`);
+    return null;
+  }
+  const versionId = reloadBufferText(key, content);
+  markSaved(key, versionId);
+  recordStamp(key, await stampAt(path));
+  refreshTabs();
+  log.info(`Reloaded ${path} rather than overwriting it`);
+  return null;
 }
 
 async function saveBuffer(key, saveAs) {
@@ -914,6 +983,34 @@ async function saveBuffer(key, saveAs) {
   // reading after the write would mark as saved every keystroke typed while it
   // was in flight, so the tab would lose its dot and quitting would ask
   // nothing about work that never reached the disk.
+  // Has anybody else written this file since we last agreed with it?
+  //
+  // Checked here, after the format and immediately before the write, because
+  // this is the last moment at which the answer is still true. Nothing used to
+  // compare anything: openPath deliberately never re-reads a file already in a
+  // tab, and the only external change ever noticed was deletion, on a manual
+  // refresh. So a file edited in another program - or in a second window of
+  // this one - was replaced without a word.
+  const before = bufferStamp(key);
+  const now = await stampAt(path);
+  if (changedSince(before, now)) {
+    const answer = await askThreeWay({
+      title: "It changed on disk",
+      detail: `${path} was modified by something else since it was opened here.`,
+      save: "Overwrite",
+      discard: "Reload",
+      cancel: "Cancel",
+    });
+    if (answer === "cancel") {
+      return null;
+    }
+    if (answer === "discard") {
+      return reloadFrom(key, path);
+    }
+    // Overwrite: their edits go, which is what was asked for.
+    log.warn(`Overwriting ${path}, which had changed on disk`);
+  }
+
   const contents = bufferContents(key);
   if (contents === null) {
     // Closed while it was being formatted. Nothing to write, and nothing to
@@ -950,6 +1047,10 @@ async function saveBuffer(key, saveAs) {
     log.warn(`Saved ${path}, but another buffer already holds that path`);
   }
   markSaved(key, contents.versionId);
+  // Written by us, so this is now the state we agree with. Read back rather
+  // than assumed: the size on disk is the encoded length, and the time is the
+  // filesystem's rather than ours.
+  recordStamp(key, await stampAt(path));
   refreshTabs();
   await rememberFolder(path);
   syncKernelDirectory();

@@ -611,6 +611,23 @@ export function markSaved(key, versionId) {
   notifyDirtyChanged();
 }
 
+/** What the file looked like when this buffer last agreed with it. */
+export function setBufferStamp(key, stamp) {
+  buffers.setDiskStamp(key, stamp);
+}
+
+/** The stamp recorded for a buffer. */
+export function bufferStamp(key) {
+  return buffers.diskStamp(key);
+}
+
+/** Replace a buffer with what is on disk; returns the version that produced. */
+export function reloadBufferText(key, text) {
+  const versionId = buffers.replaceText(key, text);
+  notifyDirtyChanged();
+  return versionId;
+}
+
 /** A buffer's text and version, read as one instant. */
 export function bufferContents(key) {
   return buffers.contentsOf(key);
@@ -773,6 +790,7 @@ export function initEditor() {
     dispose: (model) => model.dispose(),
     versionOf: (model) => model.getAlternativeVersionId(),
     textOf: (model) => model.getValue(),
+    replaceText: (model, text) => model.setValue(text),
   });
 
   // Give Cut, Copy and Paste their chords back, so the context menu shows them
