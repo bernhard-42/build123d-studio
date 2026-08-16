@@ -85,6 +85,12 @@ async function discardTemporary({ filesystem }, temporary) {
  * wrote the other window's content. The identity is the same one the log
  * stamps its lines with, passed in rather than imported because this module
  * takes its whole world as arguments.
+ *
+ * It makes the name longer, which matters only where a path length is capped -
+ * Windows, at 260 unless long paths are enabled. What that costs is bounded and
+ * worth stating: a temporary that cannot be created falls through to the direct
+ * write below, which since the same change puts the file back if it fails. So a
+ * deep path loses atomicity and never content.
  */
 function temporaryFor({ instanceId }, path) {
   return `${path}.${instanceId}.b123d-tmp`;

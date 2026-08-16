@@ -784,6 +784,17 @@ function describe(error) {
   return String(error);
 }
 
+/** Whether anything at all is at a path - a file, a folder, or a link. */
+async function somethingIsAt(path) {
+  try {
+    await filesystem.getStats(path);
+    return true;
+  } catch {
+    // Nothing there, which is what a Save As to a new name expects.
+    return false;
+  }
+}
+
 // Buffers with a save in flight, and the promise each caller should wait on.
 //
 // A second Cmd-S while the first is still formatting used to start a second
@@ -840,7 +851,41 @@ async function saveBuffer(key, saveAs) {
     if (path === "" || path === undefined) {
       return null;
     }
+    const chosen = path;
     path = withPythonExtension(path);
+
+    // The dialog asked about the name the user typed, and .py is added after
+    // it has closed. So typing "bracket" where a bracket.py already exists got
+    // no overwrite prompt from anybody - the dialog had vetted a name that does
+    // not exist, and the write went to one that does.
+    //
+    // Only when the extension was actually added, which is also what makes this
+    // right on a platform whose own dialog appends it: there the name it vetted
+    // already carried .py, so its own overwrite prompt has been seen and asking
+    // again would be a second dialog about the same file.
+    if (path !== chosen && await somethingIsAt(path)) {
+      const answer = await askTwoWay({
+        title: "Replace the existing file?",
+        detail: `${path} already exists.\n\n.py was added to the name you typed, so the save would write to it.`,
+        confirm: "Replace",
+        cancel: "Cancel",
+      });
+      if (answer !== "confirm") {
+        return null;
+      }
+    }
+
+    // And a file another tab is holding cannot be taken from it. Two buffers on
+    // one path have no correct behaviour left between them: both dirty against
+    // the same bytes, and whichever saves last wins silently.
+    const holder = bufferForPath(path);
+    if (holder !== null && holder !== key) {
+      await notifyRefusal(
+        "Could not save there",
+        `${path} is open in another tab.\n\nClose it first, or save somewhere else.`,
+      );
+      return null;
+    }
   }
 
   // Formatted before it is written, never after: what lands on disk and what

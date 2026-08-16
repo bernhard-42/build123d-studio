@@ -301,6 +301,98 @@ test.describe("the editing contributions", () => {
   });
 });
 
+test.describe("Save As does not land on a file nobody asked about", () => {
+  /**
+   * D7. The native dialog vets the name the user typed, and .py is appended
+   * after it has closed - so typing "bracket" where bracket.py already exists
+   * got no overwrite prompt from anybody. The dialog had approved a name that
+   * does not exist; the write went to one that does.
+   */
+  const EXISTING = `${PROJECT}/bracket.py`;
+
+  async function openWithBracket(page) {
+    const handles = await open(page, {
+      files: { ...FILES, [EXISTING]: "BRACKET = 1\n" },
+      settings: { workspace: WORKSPACE },
+    });
+    await expect(page.locator(".tab-active .tab-label")).toHaveText("part.py");
+    return handles;
+  }
+
+  const onDisk = (page, path) =>
+    page.evaluate((p) => String(globalThis.__NEUTRALINO_STUB__.wrote(p) ?? ""), path);
+
+  async function saveAsTyping(page, typed) {
+    await caretToEnd(page);
+    await page.keyboard.type("MINE");
+    await page.evaluate(
+      (target) => globalThis.__NEUTRALINO_STUB__.answerDialogWith(target),
+      typed,
+    );
+    // Save As has no chord; it is a menu item, and Neutralino delivers a click
+    // as a mainMenuItemClicked event carrying the id.
+    await page.evaluate(() =>
+      globalThis.__NEUTRALINO_STUB__.emit("mainMenuItemClicked", { id: "file.saveAs" }),
+    );
+  }
+
+  test("the extension it adds cannot overwrite silently", async ({ page }) => {
+    await openWithBracket(page);
+
+    // Without the .py, which is the whole case: the dialog approves it.
+    await saveAsTyping(page, `${PROJECT}/bracket`);
+
+    await expect(page.locator(".confirm-overlay")).toBeVisible();
+    expect(await page.locator(".confirm-overlay").innerText()).toContain("bracket.py");
+  });
+
+  test("and cancelling it leaves the file alone", async ({ page }) => {
+    await openWithBracket(page);
+
+    await saveAsTyping(page, `${PROJECT}/bracket`);
+    await expect(page.locator(".confirm-overlay")).toBeVisible();
+    await page.locator('.confirm-overlay [data-answer="cancel"]').click();
+
+    await expect
+      .poll(() => onDisk(page, EXISTING), { message: "the file was replaced anyway" })
+      .toBe("BRACKET = 1\n");
+  });
+
+  test("a path another tab holds is refused rather than taken from it", async ({ page }) => {
+    // Two buffers on one path have no correct behaviour left between them:
+    // both dirty against the same bytes, and whichever saves last wins.
+    await open(page, {
+      files: { ...FILES, [EXISTING]: "BRACKET = 1\n" },
+      settings: {
+        workspace: {
+          folder: PROJECT,
+          tabs: [{ path: `${PROJECT}/part.py`, caret: null }, { path: EXISTING, caret: null }],
+          active: `${PROJECT}/part.py`,
+        },
+      },
+    });
+    await expect(page.locator(".tab-active .tab-label")).toHaveText("part.py");
+
+    await saveAsTyping(page, EXISTING);
+
+    // A refusal is a native message box rather than the in-page overlay: the
+    // overlay is for questions, this is a statement.
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          globalThis.__NEUTRALINO_STUB__
+            .calls()
+            .filter((call) => call.name === "showMessageBox")
+            .map((call) => call.args.join(" "))
+            .join("\n"),
+        ),
+      )
+      .toContain("another tab");
+    expect(await onDisk(page, EXISTING), "the other tab's file was written")
+      .toBe("BRACKET = 1\n");
+  });
+});
+
 test.describe("a save carries its own buffer", () => {
   /**
    * D1: the window is live while a save is in flight.

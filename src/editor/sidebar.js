@@ -28,7 +28,7 @@ import {
   targetFolder,
   visibleEntries,
 } from "./tree.js";
-import { notifyFailure } from "../confirm.js";
+import { notifyFailure, notifyRefusal } from "../confirm.js";
 import { getSetting, setSetting } from "../store.js";
 import { refreshLayout } from "../layout/splitter.js";
 import * as log from "../log.js";
@@ -437,6 +437,17 @@ function cancelCreating() {
 }
 
 /** Write it, and show what was made rather than leaving it to be found. */
+/** Whether anything at all is at a path - a file, a folder, or a link. */
+async function somethingIsAt(path) {
+  try {
+    await filesystem.getStats(path);
+    return true;
+  } catch {
+    // Nothing there, which is the ordinary case for a name being created.
+    return false;
+  }
+}
+
 async function commitCreating(name) {
   if (pending === null) {
     return;
@@ -444,6 +455,28 @@ async function commitCreating(name) {
   const { kind, folder } = pending;
   const path = joinPath(folder, name);
   pending = null;
+
+  // Looked for immediately before writing, because the check that got here
+  // cannot be trusted to be current.
+  //
+  // The name was vetted against `children`, which is the listing this tree read
+  // when the folder was last opened - and there is no watcher behind it, so it
+  // can be arbitrarily old. A file created since by an export script, a git
+  // checkout, or a second window passes that check, and the writeFile below
+  // would empty it to nothing and open it as a blank buffer. If it was not
+  // already open in a tab, that content is not recoverable from anywhere.
+  //
+  // Neutralino has no create-if-absent, so looking first is the best available
+  // rather than a guarantee; it narrows the window from "since the folder was
+  // last read" to "since a moment ago".
+  if (await somethingIsAt(path)) {
+    render();
+    await notifyRefusal(
+      kind === "folder" ? "Could not create the folder" : "Could not create the file",
+      `${path} already exists.\n\nIt was created after this folder was last read.`,
+    );
+    return;
+  }
 
   try {
     if (kind === "folder") {

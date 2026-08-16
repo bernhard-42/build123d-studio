@@ -101,6 +101,32 @@ test.describe("naming it in the tree", () => {
     expect(await wrote(page, `${PROJECT}/part.py`)).toBe("PART = 1\n");
   });
 
+  test("a file that appeared since the folder was read is not written over", async ({ page }) => {
+    // D3. The name is checked against the listing this tree read when the
+    // folder was opened, and nothing watches for changes - so a file created
+    // since by an export script, a git checkout or a second window passes that
+    // check. Writing then empties it to nothing and opens it blank, and if it
+    // was not already in a tab there is nowhere left to get it back from.
+    //
+    // The stub creates it after the tree has listed the folder, which is
+    // exactly what those three do.
+    await openApp(page);
+    await page.evaluate(
+      (p) => globalThis.__NEUTRALINO_STUB__.given(p, "IMPORTANT = 1\n"),
+      `${PROJECT}/notes.py`,
+    );
+
+    await page.locator("#tree-new-file").click();
+    await page.locator("#tree-new-name").fill("notes.py");
+    await page.keyboard.press("Enter");
+
+    await expect
+      .poll(() => wrote(page, `${PROJECT}/notes.py`), {
+        message: "the file that appeared was emptied",
+      })
+      .toBe("IMPORTANT = 1\n");
+  });
+
   test("it lands beside the selected file, not at the root", async ({ page }) => {
     await openApp(page);
     await page.locator(".tree-dir", { hasText: "parts" }).click();
