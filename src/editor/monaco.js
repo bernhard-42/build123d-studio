@@ -600,14 +600,25 @@ export function bufferForPath(path) {
   return buffers.findByPath(path);
 }
 
-/** Record the buffer as matching disk - after a load or a successful save. */
-export function markSaved() {
-  const key = buffers.activeKeyOf();
-  if (key === null) {
-    return;
-  }
-  buffers.markSaved(key);
+/**
+ * Record a buffer as matching disk, at the version that was written.
+ *
+ * Keyed, and given the version, because the buffer being saved is not reliably
+ * the one on screen by the time a save finishes - see saveFile.
+ */
+export function markSaved(key, versionId) {
+  buffers.markSaved(key, versionId);
   notifyDirtyChanged();
+}
+
+/** A buffer's text and version, read as one instant. */
+export function bufferContents(key) {
+  return buffers.contentsOf(key);
+}
+
+/** Whether a buffer is still open. */
+export function bufferExists(key) {
+  return buffers.exists(key);
 }
 
 // Whether the buffer matches disk is the one piece of editor state the rest of
@@ -678,13 +689,14 @@ export function getCurrentFile() {
   return buffer === null ? null : buffer.path;
 }
 
-/** After a Save As: the same buffer, under a new name. */
-export function setCurrentFile(path) {
-  const key = buffers.activeKeyOf();
-  if (key === null) {
-    return;
-  }
-  buffers.setPath(key, path);
+/**
+ * After a Save As: that buffer, under a new name.
+ *
+ * Keyed for the same reason markSaved is. Answers whether it took: a path
+ * another buffer already holds is refused rather than duplicated.
+ */
+export function setCurrentFile(key, path) {
+  return buffers.setPath(key, path);
 }
 
 export function focus() {
@@ -760,6 +772,7 @@ export function initEditor() {
     create: (text) => monaco.editor.createModel(text, "python"),
     dispose: (model) => model.dispose(),
     versionOf: (model) => model.getAlternativeVersionId(),
+    textOf: (model) => model.getValue(),
   });
 
   // Give Cut, Copy and Paste their chords back, so the context menu shows them

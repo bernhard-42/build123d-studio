@@ -10,7 +10,8 @@ import {
   closeBuffer,
   formatBuffer,
   getCurrentFile,
-  getValue,
+  bufferContents,
+  bufferExists,
   bufferNeedsSaving,
   markMissingFiles,
   markSaved,
@@ -783,8 +784,53 @@ function describe(error) {
   return String(error);
 }
 
+// Buffers with a save in flight, and the promise each caller should wait on.
+//
+// A second Cmd-S while the first is still formatting used to start a second
+// save of the same buffer: two writes to one temporary, and whichever finished
+// last put its content there - which, if the first was the slower, is the older
+// text, left behind a tab that reads clean. Returning the promise rather than
+// refusing keeps every caller's contract: null means the user cancelled, and a
+// second asker gets the first's answer instead of a cancellation it never made.
+const saving = new Map();
+
+/**
+ * Write a buffer to disk.
+ *
+ * **The buffer is captured at entry and carried through**, which is the whole
+ * shape of this function. There are two awaits in it - a format that can take
+ * as long as the sidecar takes, and the write itself - and the editor is live
+ * across both: a click on another tab changes which buffer is "current" while
+ * this is running. Everything below therefore names its buffer by key and
+ * reads its text from that buffer's own model, rather than asking what is on
+ * screen and getting an answer about a different file.
+ *
+ * What that cost when it did ask: the text of whichever buffer the user had
+ * switched to was written into the path this one had captured, and then *that*
+ * buffer was re-pathed to this file and marked clean. Two tabs claiming one
+ * path, one file holding another file's contents, and nothing dirty left to
+ * prompt about at quit.
+ */
 export async function saveFile({ saveAs = false } = {}) {
-  let path = getCurrentFile();
+  const key = activeBufferKey();
+  if (key === null) {
+    return null;
+  }
+  const inFlight = saving.get(key);
+  if (inFlight !== undefined) {
+    return inFlight;
+  }
+  const attempt = saveBuffer(key, saveAs);
+  saving.set(key, attempt);
+  try {
+    return await attempt;
+  } finally {
+    saving.delete(key);
+  }
+}
+
+async function saveBuffer(key, saveAs) {
+  let path = bufferPath(key);
 
   if (saveAs || path === null) {
     path = await os.showSaveDialog("Save", {
@@ -818,8 +864,23 @@ export async function saveFile({ saveAs = false } = {}) {
     }
   }
 
+  // The text and the version it is on, from the captured buffer and as one
+  // instant. The version is what markSaved is told below: taking a fresh
+  // reading after the write would mark as saved every keystroke typed while it
+  // was in flight, so the tab would lose its dot and quitting would ask
+  // nothing about work that never reached the disk.
+  const contents = bufferContents(key);
+  if (contents === null) {
+    // Closed while it was being formatted. Nothing to write, and nothing to
+    // report: closing a buffer already asked about its unsaved work.
+    log.info("Not saved: the buffer was closed while it was being formatted");
+    return null;
+  }
+
   try {
-    const written = await writeFileSafely({ filesystem, log, instanceId: log.instanceId }, path, getValue());
+    const written = await writeFileSafely(
+      { filesystem, log, instanceId: log.instanceId }, path, contents.text,
+    );
     if (written !== path) {
       log.info(`Saved ${path}, which resolves to ${written}`);
     }
@@ -834,8 +895,16 @@ export async function saveFile({ saveAs = false } = {}) {
     await notifyFailure("Could not save", `${path} was not saved.\n\n${describe(error)}`);
     throw error;
   }
-  setCurrentFile(path);
-  markSaved();
+  if (!bufferExists(key)) {
+    // Closed during the write. The bytes are on disk, which is what was asked
+    // for; there is no longer a buffer to re-path or mark clean.
+    log.info(`Saved ${path}, whose buffer was closed while it was being written`);
+    return path;
+  }
+  if (!setCurrentFile(key, path)) {
+    log.warn(`Saved ${path}, but another buffer already holds that path`);
+  }
+  markSaved(key, contents.versionId);
   refreshTabs();
   await rememberFolder(path);
   syncKernelDirectory();

@@ -301,6 +301,107 @@ test.describe("the editing contributions", () => {
   });
 });
 
+test.describe("a save carries its own buffer", () => {
+  /**
+   * D1: the window is live while a save is in flight.
+   *
+   * saveFile has two awaits in it - the format, which takes as long as the
+   * sidecar takes, and the write - and it used to read the buffer *after* them
+   * by asking what was on screen. A click on another tab in between therefore
+   * changed which buffer it meant, having already decided which path it was
+   * writing to.
+   *
+   * Reproduced here by holding the format request open, which is what the real
+   * one does for as long as black takes: a quarter of a millisecond a line, so
+   * seconds on a large file, against a thirty second timeout. Nothing here is
+   * timing-dependent - the request is answered when the test says so.
+   *
+   * Un-applied by reading getValue() and calling markSaved()/setCurrentFile()
+   * without a key, as before: the first assertion finds other.py's text inside
+   * part.py, and the second finds two tabs called part.py.
+   */
+  const OTHER = `${PROJECT}/other.py`;
+  const OTHER_SOURCE = "OTHER_FILE = 1\n";
+
+  async function openTwo(page) {
+    const handles = await open(page, {
+      files: { ...FILES, [OTHER]: OTHER_SOURCE },
+      settings: {
+        workspace: {
+          folder: PROJECT,
+          tabs: [{ path: `${PROJECT}/part.py`, caret: null }, { path: OTHER, caret: null }],
+          active: `${PROJECT}/part.py`,
+        },
+      },
+    });
+    await expect(page.locator(".tab-active .tab-label")).toHaveText("part.py");
+    return handles;
+  }
+
+  function onDisk(page, path) {
+    return page.evaluate(
+      (p) => String(globalThis.__NEUTRALINO_STUB__.wrote(p) ?? ""),
+      path,
+    );
+  }
+
+  async function saveAndSwitchAway(page, sidecar) {
+    // Held, so the save is still in flight when the tab changes.
+    sidecar.answer("editor.format", () => undefined);
+
+    await caretToEnd(page);
+    await page.keyboard.type("MINE");
+    await page.keyboard.press("Meta+s");
+    await expect
+      .poll(() => sidecar.held.filter((frame) => frame.type === "editor.format").length)
+      .toBe(1);
+
+    await page.locator(".tab", { hasText: "other.py" }).click();
+    await expect(page.locator(".tab-active .tab-label")).toHaveText("other.py");
+
+    // black declining to change the buffer, which is the ordinary answer for a
+    // file somebody is part-way through typing.
+    sidecar.release("editor.format", { source: null });
+  }
+
+  test("the file that was saved gets its own text, not the tab switched to", async ({ page }) => {
+    const { sidecar } = await openTwo(page);
+
+    await saveAndSwitchAway(page, sidecar);
+
+    await expect.poll(() => onDisk(page, `${PROJECT}/part.py`)).toContain("MINE");
+    expect(
+      await onDisk(page, `${PROJECT}/part.py`),
+      "the other tab's text was written into this file",
+    ).not.toContain("OTHER_FILE");
+  });
+
+  test("the tab switched to is not renamed to the file that was saved", async ({ page }) => {
+    const { sidecar } = await openTwo(page);
+
+    await saveAndSwitchAway(page, sidecar);
+    await expect.poll(() => onDisk(page, `${PROJECT}/part.py`)).toContain("MINE");
+
+    const labels = await page.locator(".tab .tab-label").allTextContents();
+    expect(labels.filter((label) => label === "part.py"), "two tabs claim one file")
+      .toHaveLength(1);
+    expect(labels).toContain("other.py");
+  });
+
+  test("and the buffer that was written is the one marked clean", async ({ page }) => {
+    const { sidecar } = await openTwo(page);
+
+    await saveAndSwitchAway(page, sidecar);
+    await expect.poll(() => onDisk(page, `${PROJECT}/part.py`)).toContain("MINE");
+
+    await page.locator(".tab", { hasText: "part.py" }).click();
+    await expect(
+      page.locator(".tab-active .tab-close.tab-dirty"),
+      "the saved buffer still claims unsaved work",
+    ).toHaveCount(0);
+  });
+});
+
 test.describe("formatting", () => {
   const TIDY = "b = Box(1, 2, 3)\n";
 

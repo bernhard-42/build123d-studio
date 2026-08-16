@@ -23,6 +23,8 @@ import {
   initBuffers,
   isDirty,
   keys,
+  contentsOf,
+  exists,
   markSaved,
   open,
   setPath,
@@ -50,6 +52,9 @@ function fakeModels() {
     },
     versionOf(model) {
       return model.version;
+    },
+    textOf(model) {
+      return model.text;
     },
   };
   return { api, created };
@@ -131,10 +136,90 @@ test("saving one buffer does not clean another", () => {
   edit(get(saved).model);
   edit(get(other).model);
 
-  markSaved(saved);
+  markSaved(saved, api.versionOf(get(saved).model));
 
   assert.equal(isDirty(saved), false);
   assert.equal(isDirty(other), true);
+});
+
+// --- what was written, not what is there now ---
+
+test("a buffer is clean at the version that was written, not the latest", () => {
+  // The write is not instant, and the editor is live while it runs. Stamping
+  // whatever version the model is on when it finishes marks as saved every
+  // keystroke typed in between: the tab loses its dot, quitting asks nothing,
+  // and the typing is gone.
+  const { api } = fakeModels();
+  initBuffers(api);
+
+  const key = open({ path: "/p/a.py", text: "" });
+  edit(get(key).model);
+  const written = contentsOf(key);
+
+  edit(get(key).model); // typed while the write was in flight
+  markSaved(key, written.versionId);
+
+  assert.equal(isDirty(key), true, "the keystrokes during the save were lost");
+});
+
+test("text and version are read as one instant", () => {
+  const { api } = fakeModels();
+  initBuffers(api);
+
+  const key = open({ path: "/p/a.py", text: "written" });
+  const contents = contentsOf(key);
+
+  assert.equal(contents.text, "written");
+  assert.equal(contents.versionId, api.versionOf(get(key).model));
+});
+
+test("contents of a buffer that has gone are nothing", () => {
+  const { api } = fakeModels();
+  initBuffers(api);
+
+  const key = open({ path: "/p/a.py", text: "" });
+  close(key);
+
+  assert.equal(contentsOf(key), null);
+  assert.equal(exists(key), false);
+});
+
+// --- one file, one buffer ---
+
+test("a path another buffer already holds is refused", () => {
+  // Two tabs on one path is a state with no correct behaviour left in it:
+  // both dirty against the same bytes, last save wins silently, and closing
+  // either offers to discard work the other still holds.
+  const { api } = fakeModels();
+  initBuffers(api);
+
+  const first = open({ path: "/p/a.py", text: "" });
+  const second = open({ path: "/p/b.py", text: "" });
+
+  assert.equal(setPath(second, "/p/a.py"), false);
+  assert.equal(get(second).path, "/p/b.py", "the buffer kept its own path");
+  assert.equal(get(first).path, "/p/a.py");
+});
+
+test("a buffer keeping its own path is not a collision", () => {
+  // Every ordinary save re-paths a buffer to where it already was.
+  const { api } = fakeModels();
+  initBuffers(api);
+
+  const key = open({ path: "/p/a.py", text: "" });
+
+  assert.equal(setPath(key, "/p/a.py"), true);
+  assert.equal(get(key).path, "/p/a.py");
+});
+
+test("an untitled buffer can still be named", () => {
+  const { api } = fakeModels();
+  initBuffers(api);
+
+  const key = open({ path: null, text: "" });
+
+  assert.equal(setPath(key, "/p/new.py"), true);
+  assert.equal(get(key).path, "/p/new.py");
 });
 
 test("undoing back to the saved version is clean again", () => {

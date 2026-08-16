@@ -16,7 +16,8 @@
  * that has no window.
  */
 
-// The injected model operations: { create(text), dispose(model), versionOf(model) }.
+// The injected model operations:
+// { create(text), dispose(model), versionOf(model), textOf(model) }.
 let models = null;
 
 const buffers = new Map();
@@ -156,21 +157,60 @@ export function active() {
 export function setPath(key, path) {
   const buffer = buffers.get(key);
   if (buffer === null || buffer === undefined) {
-    return;
+    return false;
+  }
+  // No two buffers may name one file. Two tabs claiming the same path is a
+  // state with no correct behaviour left in it: both are dirty against the same
+  // bytes, whichever saves last wins silently, and closing either one offers to
+  // discard work the other still holds. It became reachable when a save re-pathed
+  // whichever buffer happened to be on screen rather than the one it wrote.
+  for (const [other, held] of buffers) {
+    if (other !== key && held.path === path) {
+      return false;
+    }
   }
   buffer.path = path;
+  return true;
 }
 
-/** Record a buffer as matching disk - after a load or a successful save. */
-export function markSaved(key) {
+/**
+ * Record a buffer as matching disk, at the version that was written.
+ *
+ * The version is an argument and not a reading taken here, and that is the
+ * whole of it. Stamping whatever version the model is on *now* marks as saved
+ * every keystroke typed while the write was in flight: the tab loses its dot,
+ * quitting asks nothing, and the typing is gone. The caller read the text and
+ * the version together, and passes back the one it actually wrote.
+ */
+export function markSaved(key, versionId) {
   const buffer = buffers.get(key);
   if (buffer === undefined) {
     return;
   }
-  buffer.savedVersionId = models.versionOf(buffer.model);
+  buffer.savedVersionId = versionId;
   // Saving a file that had been deleted writes it back, so it is not missing
   // any more - which is also the way out of the struck-through state.
   buffer.missing = false;
+}
+
+/**
+ * A buffer's text and the version it is on, read together.
+ *
+ * One call because they have to be one instant. Reading the text and then
+ * asking for the version is a window in which an edit lands between them, and
+ * the buffer is then marked clean at a version whose text was never written.
+ */
+export function contentsOf(key) {
+  const buffer = buffers.get(key);
+  if (buffer === undefined) {
+    return null;
+  }
+  return { text: models.textOf(buffer.model), versionId: models.versionOf(buffer.model) };
+}
+
+/** Whether a buffer is still open, for a caller holding a key across an await. */
+export function exists(key) {
+  return buffers.get(key) !== undefined;
 }
 
 /**
