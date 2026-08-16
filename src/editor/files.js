@@ -819,7 +819,7 @@ export async function saveFile({ saveAs = false } = {}) {
   }
 
   try {
-    const written = await writeFileSafely({ filesystem, log }, path, getValue());
+    const written = await writeFileSafely({ filesystem, log, instanceId: log.instanceId }, path, getValue());
     if (written !== path) {
       log.info(`Saved ${path}, which resolves to ${written}`);
     }

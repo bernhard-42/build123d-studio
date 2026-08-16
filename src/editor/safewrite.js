@@ -77,6 +77,51 @@ async function discardTemporary({ filesystem }, temporary) {
 }
 
 /**
+ * The scratch name to write beside the target.
+ *
+ * Named for the instance, because two windows can have the same file open and
+ * a shared scratch name makes their saves collide: one overwrites the other's
+ * temporary and then moves it into place, so a save that reported success
+ * wrote the other window's content. The identity is the same one the log
+ * stamps its lines with, passed in rather than imported because this module
+ * takes its whole world as arguments.
+ */
+function temporaryFor({ instanceId }, path) {
+  return `${path}.${instanceId}.b123d-tmp`;
+}
+
+/** What is in a file now, or null when there is nothing there to lose. */
+async function contentOf({ filesystem }, path) {
+  try {
+    return await filesystem.readFile(path);
+  } catch {
+    // No file yet, which is a Save As or a new file. Nothing to put back.
+    return null;
+  }
+}
+
+/**
+ * Undo a direct write that failed, so the file is as it was.
+ *
+ * writeFile opens the target and empties it before the new content is there,
+ * so a write that fails has already destroyed whatever was in it. That is the
+ * one outcome this module exists to prevent, and on the fallback path it is
+ * reached exactly when the filesystem is already refusing things - so this is
+ * best effort by nature and says so rather than throwing over it.
+ */
+async function putBack({ filesystem, log }, path, original) {
+  try {
+    if (original === null) {
+      await filesystem.remove(path);
+    } else {
+      await filesystem.writeFile(path, original);
+    }
+  } catch (error) {
+    log.error(`${path} could not be put back as it was:`, error);
+  }
+}
+
+/**
  * Write a file without ever truncating the existing one.
  *
  * writeFile opens the target and truncates it before the new contents are
@@ -107,7 +152,7 @@ async function discardTemporary({ filesystem }, temporary) {
 export async function writeFileSafely(deps, requestedPath, content) {
   const { filesystem, log } = deps;
   const path = await resolveTarget(deps, requestedPath);
-  const temporary = `${path}.b123d-tmp`;
+  const temporary = temporaryFor(deps, path);
   const permissions = await permissionsOf(deps, path);
 
   // Whether the temporary holds the whole of the user's work, which is what
@@ -124,9 +169,23 @@ export async function writeFileSafely(deps, requestedPath, content) {
     log.warn("Could not save through a temporary file, writing directly:", error);
   }
 
+  // What is on disk now, read before anything empties it.
+  //
+  // The direct write below is not atomic - that is the whole point of it - so
+  // if it fails, the file it was replacing is already gone. That is the one
+  // outcome this module exists to prevent, and it is reachable: a full disk
+  // refuses the temporary and can refuse this too. Held here so it can be put
+  // back, which turns a failed save from "the file is destroyed" into "the
+  // file is as it was and the buffer is still modified".
+  //
+  // Cheap, and only on this path. A source file is small and the fallback runs
+  // only once something has already gone wrong.
+  const original = await contentOf(deps, path);
+
   try {
     await filesystem.writeFile(path, content);
   } catch (error) {
+    await putBack(deps, path, original);
     if (temporaryIsComplete) {
       // Both writes failed, and the temporary is now the only copy of the work.
       // Naming it is the entire value left here.

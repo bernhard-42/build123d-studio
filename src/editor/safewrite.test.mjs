@@ -20,8 +20,9 @@ import { writeFileSafely } from "./safewrite.js";
  * `files` is the disk. `fail` names operations that should reject: "write:path"
  * for one particular write, "write" for all of them, and so on.
  */
-function fakeFilesystem({ files = {}, fail = [], permissions = null, resolve = null } = {}) {
+function fakeFilesystem({ files = {}, fail = [], truncateThenFail = [], permissions = null, resolve = null } = {}) {
   const calls = [];
+  const noRoomOnce = new Set(truncateThenFail);
   const refuses = (operation, path) => fail.includes(operation) || fail.includes(`${operation}:${path}`);
   const guard = (operation, path) => {
     calls.push({ operation, path });
@@ -50,8 +51,38 @@ function fakeFilesystem({ files = {}, fail = [], permissions = null, resolve = n
         throw new Error("refused");
       }
     },
+    readFile: async (path) => {
+      guard("read", path);
+      if (!(path in files)) {
+        throw new Error("no such file");
+      }
+      return files[path];
+    },
     writeFile: async (path, data) => {
-      guard("write", path);
+      calls.push({ operation: "write", path });
+      // Two different failures, and the difference is the whole of D4.
+      //
+      // A write refused because the file or its directory cannot be opened
+      // fails before anything is touched - that is `fail`, and it is what a
+      // permission problem looks like. A write that gets as far as opening the
+      // target has already emptied it, and only then discovers there is no
+      // room for the new content - that is `truncateThenFail`, and it is what
+      // a full disk looks like. The fake only ever modelled the first, which
+      // is why the destructive branch could sit here unnoticed behind tests
+      // asserting the original survived.
+      if (noRoomOnce.has(path)) {
+        // Once, because emptying the file is what frees the room: the disk had
+        // no space for a second copy beside the original, and has space for the
+        // original again the moment the original is gone. That is what makes
+        // putting it back possible, and it is the case that matters - a disk
+        // that can never accept anything again cannot be recovered from here.
+        noRoomOnce.delete(path);
+        files[path] = "";
+        throw new Error(`no space: write ${path}`);
+      }
+      if (refuses("write", path)) {
+        throw new Error(`refused: write ${path}`);
+      }
       files[path] = data;
     },
     move: async (source, destination) => {
@@ -67,7 +98,7 @@ function fakeFilesystem({ files = {}, fail = [], permissions = null, resolve = n
 }
 
 const silent = { info: () => {}, warn: () => {}, error: () => {} };
-const deps = (filesystem) => ({ filesystem, log: silent });
+const deps = (filesystem) => ({ filesystem, log: silent, instanceId: "abcd1234" });
 
 test("writes through a temporary and moves it into place", async () => {
   const filesystem = fakeFilesystem({ files: { "/w/part.py": "old" } });
@@ -79,8 +110,8 @@ test("writes through a temporary and moves it into place", async () => {
   // The order is the guarantee: the target is never opened for writing.
   assert.deepEqual(
     filesystem.calls.filter((c) => c.operation === "write" || c.operation === "move"),
-    [{ operation: "write", path: "/w/part.py.b123d-tmp" },
-      { operation: "move", path: "/w/part.py.b123d-tmp" }],
+    [{ operation: "write", path: "/w/part.py.abcd1234.b123d-tmp" },
+      { operation: "move", path: "/w/part.py.abcd1234.b123d-tmp" }],
   );
 });
 
@@ -97,7 +128,7 @@ test("follows a symlink instead of replacing it", async () => {
   assert.equal(filesystem.files["/repo/part.py"], "new");
   assert.equal(filesystem.files["/w/part.py"], undefined, "the link must be untouched");
   for (const call of filesystem.calls) {
-    assert.notEqual(call.path, "/w/part.py.b123d-tmp",
+    assert.notEqual(call.path, "/w/part.py.abcd1234.b123d-tmp",
       "the temporary belongs beside the real file, not beside the link");
   }
 });
@@ -117,7 +148,7 @@ test("falls back when the temporary itself cannot be written", async () => {
   // write broke and the fallback now covers.
   const filesystem = fakeFilesystem({
     files: { "/w/part.py": "old" },
-    fail: ["write:/w/part.py.b123d-tmp"],
+    fail: ["write:/w/part.py.abcd1234.b123d-tmp"],
   });
   await writeFileSafely(deps(filesystem), "/w/part.py", "new");
 
@@ -127,13 +158,13 @@ test("falls back when the temporary itself cannot be written", async () => {
 test("a partial temporary is cleaned up rather than left as a fake backup", async () => {
   const filesystem = fakeFilesystem({
     files: { "/w/part.py": "old" },
-    fail: ["write:/w/part.py.b123d-tmp"],
+    fail: ["write:/w/part.py.abcd1234.b123d-tmp"],
   });
   await writeFileSafely(deps(filesystem), "/w/part.py", "new");
 
   assert.ok(filesystem.calls.some((c) => c.operation === "remove"),
     "the fragment must be removed");
-  assert.equal(filesystem.files["/w/part.py.b123d-tmp"], undefined);
+  assert.equal(filesystem.files["/w/part.py.abcd1234.b123d-tmp"], undefined);
 });
 
 test("when both writes fail, the error names the temporary holding the work", async () => {
@@ -144,9 +175,9 @@ test("when both writes fail, the error names the temporary holding the work", as
 
   await assert.rejects(
     () => writeFileSafely(deps(filesystem), "/w/part.py", "new"),
-    /Your content is in \/w\/part\.py\.b123d-tmp/,
+    /Your content is in \/w\/part\.py\.abcd1234\.b123d-tmp/,
   );
-  assert.equal(filesystem.files["/w/part.py.b123d-tmp"], "new",
+  assert.equal(filesystem.files["/w/part.py.abcd1234.b123d-tmp"], "new",
     "the only copy of the work must survive");
   assert.equal(filesystem.files["/w/part.py"], "old", "the original is untouched");
 });
@@ -159,7 +190,66 @@ test("when nothing could be written at all, the original survives and nothing is
 
   await assert.rejects(() => writeFileSafely(deps(filesystem), "/w/part.py", "new"));
   assert.equal(filesystem.files["/w/part.py"], "old");
-  assert.equal(filesystem.files["/w/part.py.b123d-tmp"], undefined);
+  assert.equal(filesystem.files["/w/part.py.abcd1234.b123d-tmp"], undefined);
+});
+
+test("two instances do not share a scratch name", async () => {
+  // Both windows have part.py open and both save. With one shared temporary
+  // the second overwrites the first's and then moves it into place, so a save
+  // that reported success wrote the other window's content.
+  const filesystem = fakeFilesystem({ files: { "/w/part.py": "old" }, fail: ["move"] });
+  const other = { filesystem, log: silent, instanceId: "99887766" };
+
+  await writeFileSafely(other, "/w/part.py", "theirs");
+
+  const written = filesystem.calls.filter((c) => c.operation === "write").map((c) => c.path);
+  assert.ok(written.includes("/w/part.py.99887766.b123d-tmp"),
+    `the scratch name must name the instance: ${written.join(", ")}`);
+  assert.ok(!written.includes("/w/part.py.abcd1234.b123d-tmp"));
+});
+
+test("a new file that cannot be written leaves nothing behind", async () => {
+  // Save As onto a full disk. There is no original to put back, and an empty
+  // file where the user asked for one is worse than no file: it looks saved.
+  const filesystem = fakeFilesystem({ files: {}, fail: ["write"] });
+
+  await assert.rejects(() => writeFileSafely(deps(filesystem), "/w/new.py", "new"));
+  assert.equal(filesystem.files["/w/new.py"], undefined,
+    "an empty file was left where the save failed");
+});
+
+test("a write that empties the file and then fails puts it back", async () => {
+  // The full disk. The temporary needs room for a second copy and is refused;
+  // the direct write gets as far as opening the target - which empties it -
+  // and then finds there is no room either. Before this, that left the user
+  // with an empty file and their only remaining copy in the editor.
+  const filesystem = fakeFilesystem({
+    files: { "/w/part.py": "old" },
+    fail: ["write:/w/part.py.abcd1234.b123d-tmp"],
+    truncateThenFail: ["/w/part.py"],
+  });
+
+  await assert.rejects(() => writeFileSafely(deps(filesystem), "/w/part.py", "new"));
+  assert.equal(filesystem.files["/w/part.py"], "old",
+    "a failed save must leave the file as it was, not empty it");
+});
+
+test("and when the move failed too, the work is still named", async () => {
+  // Same, but the temporary was written before the disk filled: the original
+  // goes back and the new content is in the temporary the message names.
+  const filesystem = fakeFilesystem({
+    files: { "/w/part.py": "old" },
+    fail: ["move"],
+    truncateThenFail: ["/w/part.py"],
+  });
+
+  await assert.rejects(
+    () => writeFileSafely(deps(filesystem), "/w/part.py", "new"),
+    /Your content is in \/w\/part\.py\.abcd1234\.b123d-tmp/,
+  );
+  assert.equal(filesystem.files["/w/part.py"], "old", "the original is put back");
+  assert.equal(filesystem.files["/w/part.py.abcd1234.b123d-tmp"], "new",
+    "the only copy of the work must survive");
 });
 
 test("the target's permissions survive the replacement", async () => {
