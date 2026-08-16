@@ -1438,6 +1438,40 @@ class Sidecar:
         os._exit(0)
 
 
+def watch_stdin(sidecar):
+    """Take the sidecar down when the application closes our stdin.
+
+    stdin closing is how the app says "we are going away", and it stays the
+    signal even though messages travel over the socket, because it cannot be
+    missed if the webview dies abruptly: the operating system closes this end
+    when the parent goes, however it goes.
+
+    Watched from a thread of its own, started before anything is brought up.
+    Read on the main thread it was only reached *after* startup had finished -
+    so a quit arriving during a launch was not heard until the launch ended,
+    and wait_for_ready alone allows sixty seconds of that. A quit during
+    startup is an ordinary quit; it is the moment a first run is slowest and
+    most likely to be abandoned.
+
+    The thread does the whole teardown rather than waking the main one, which
+    is the point: waiting for the main thread would be waiting for exactly the
+    startup being abandoned.
+    """
+
+    def watch():
+        for _ in sys.stdin:
+            pass
+        log("stdin closed, shutting down")
+        sidecar.stop()
+        # The same argument as at the end of main(): returning here would hand
+        # over to an interpreter teardown that joins websockets' non-daemon
+        # connection thread, which may be inside this very shutdown.
+        sys.stderr.flush()
+        os._exit(0)
+
+    threading.Thread(target=watch, name="stdin-watch", daemon=True).start()
+
+
 def main():
     parser = argparse.ArgumentParser("build123d-studio sidecar")
     parser.add_argument("--env-root", required=True, help="Python environment root")
@@ -1483,6 +1517,12 @@ def main():
         log("Removed the pre-instance kernel.json from the environment root")
 
     sidecar = Sidecar(env_root=args.env_root, app_dir=args.app_dir, instance=instance)
+
+    # Before anything is brought up, so that a quit is heard during startup and
+    # not only after it. Nothing has been spawned yet at this point, so there is
+    # nothing this could be too early for.
+    watch_stdin(sidecar)
+
     sidecar.channel.bind()
 
     try:
@@ -1503,14 +1543,22 @@ def main():
     finally:
         faulthandler.cancel_dump_traceback_later()
 
+    # Nothing left for this thread to do, and it must not return: returning
+    # hands over to CPython's teardown while the sidecar is still up. So it
+    # waits, and there are two ways out. The stdin watch above exits the
+    # process; SIGINT arrives here and nowhere else, which is the path a
+    # sidecar restart takes on POSIX - the frontend signals the group and this
+    # is what turns that into a teardown.
+    #
+    # With a timeout because a bare wait is not interruptible by a signal on
+    # every platform, and being interruptible is the whole reason to wait here
+    # rather than to join the watch thread.
+    quitting = threading.Event()
     try:
-        # stdin closing is how the app says "we are going away". It stays the
-        # shutdown signal even though messages now travel over the socket,
-        # because it cannot be missed if the webview dies abruptly.
-        for _ in sys.stdin:
+        while not quitting.wait(timeout=1.0):
             pass
-    finally:
-        log("stdin closed, shutting down")
+    except KeyboardInterrupt:
+        log("Interrupted, shutting down")
         sidecar.stop()
 
     # Exited rather than returned, and this is not tidiness.

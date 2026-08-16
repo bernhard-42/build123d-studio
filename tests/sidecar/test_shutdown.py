@@ -16,6 +16,10 @@ and the deadline, none of which is about what a kernel or a language server
 does when asked to stop.
 """
 
+import os
+import shutil
+import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -271,6 +275,76 @@ class StartupAbandonedTest(unittest.TestCase):
         sidecar.start()
 
         self.assertEqual(started, ["models", "measurements", "kernel", "console"])
+
+
+class StdinDuringStartupTest(unittest.TestCase):
+    """A quit that lands mid-launch, against the real process.
+
+    The other tests here drive stop() directly. This one is about *when* stdin
+    is read, which is a property of main() and of nothing smaller: the read
+    used to be reached only once startup had returned, so a sidecar told to go
+    while it was still launching a kernel carried on launching it. Sixty
+    seconds of wait_for_ready sit inside that window, and a first run - cold
+    imports, a slow machine - is exactly when somebody gives up and closes it.
+
+    So it spawns the shipped entry point and closes its stdin. The sidecar is
+    held in startup by having nobody connect: it announces its port and then
+    waits for a webview, which is where a real one would be during a launch.
+
+    Un-applied by moving watch_stdin() back below sidecar.start(): nothing
+    reads stdin until the wait for a client times out, and the assertion below
+    fails on the clock.
+    """
+
+    # Comfortably inside the sidecar's own wait for a client, so arriving
+    # under it cannot be that timeout being mistaken for a shutdown.
+    HEARD = 10.0
+
+    def test_the_sidecar_goes_when_stdin_closes_during_startup(self):
+        repo = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        root = tempfile.mkdtemp(prefix="studio-stdin-")
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+
+        process = subprocess.Popen(
+            [sys.executable, os.path.join(repo, "sidecar", "main.py"),
+             "--env-root", root, "--app-dir", repo],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+        self.addCleanup(self._reap, process)
+
+        # The handshake line means bound and announced, so the next thing it
+        # does is wait for the client that this test never provides.
+        announced = process.stdout.readline()
+        self.assertIn(b"listening", announced, f"no handshake: {announced!r}")
+
+        # Still running when stdin is closed, or the timing below measures a
+        # sidecar that had already fallen over for some reason of its own.
+        self.assertIsNone(process.poll(), "the sidecar exited before it was asked to")
+
+        started = time.monotonic()
+        process.stdin.close()
+        try:
+            process.wait(timeout=self.HEARD * 3)
+        except subprocess.TimeoutExpired:
+            self.fail("the sidecar never noticed its stdin close")
+        heard = time.monotonic() - started
+
+        self.assertLess(heard, self.HEARD, f"stdin took {heard:.1f}s to be heard")
+
+    def _reap(self, process):
+        if process.poll() is None:
+            process.kill()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
+        for stream in (process.stdout, process.stdin):
+            try:
+                stream.close()
+            except OSError:
+                pass
 
 
 if __name__ == "__main__":
