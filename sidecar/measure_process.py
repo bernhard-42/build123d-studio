@@ -31,6 +31,7 @@ crosses once per measurement session rather than once per show, and a selection
 is a handful of ids.
 """
 
+import os
 import struct
 import sys
 
@@ -96,7 +97,22 @@ def main():
     the first answered ping - it knows both ends and this does not need to.
     """
     stdin = sys.stdin.buffer
-    stdout = sys.stdout.buffer
+    # The real stdout, taken before anything can print to it, and then closed
+    # off: from here on `sys.stdout` *is* stderr, so anything that prints ends
+    # up in the log beside every other line this process writes.
+    #
+    # This is not tidiness. The shared backend prints what it is doing -
+    # "Identifiers received '/Group/Solid/edges/edges_4'" - because in OCP CAD
+    # Viewer that stream is a terminal somebody watches. Here stdout is the
+    # protocol: length-prefixed JSON, one reply per request. A single printed
+    # sentence is read by the sidecar as a length prefix, and it then waits for
+    # a message that will never come - measurements stop answering, and because
+    # that read holds the lock a freshly shown model needs, the next `show()`
+    # blocks with it. One `print` in a library, and the application appears to
+    # hang minutes later.
+    stdout = os.fdopen(os.dup(sys.stdout.fileno()), "wb")
+    sys.stdout = sys.stderr
+
     measurements = Measurements()
 
     while True:

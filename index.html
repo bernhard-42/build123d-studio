@@ -146,6 +146,15 @@
               <span class="kernel-status" id="kernel-status" title="Kernel state">
                 <span class="dot" id="kernel-dot"></span><span id="kernel-label">starting</span>
               </span>
+              <!-- What the kernel indicator beside it does not cover: the model
+                   channel, the measurement backend, the language server and the
+                   console, each of which can die on its own and leave a window
+                   that looks entirely well. Hidden while everything is, so the
+                   toolbar says nothing when there is nothing to say, and it
+                   opens the Backend tab because that is where the reason is. -->
+              <button type="button" class="kernel-status health-chip" id="health-chip" hidden>
+                <span class="dot"></span><span id="health-label"></span>
+              </button>
               <span class="toolbar-spacer"></span>
               <button class="btn" id="btn-settings" title="Settings">
                 <span class="icon icon-settings"></span>
@@ -193,6 +202,13 @@
                       data-console-panel="console">Console</button>
               <button class="console-tab" id="console-tab-rundebug" role="tab"
                       data-console-panel="rundebug">Run/Debug</button>
+              <!-- The measurement backend's own account: which shape was
+                   clicked, what it indexed, why a measurement could not be
+                   taken. It runs in a process of its own and its troubles are
+                   frequent enough that a log file nobody can find is the wrong
+                   place for them. Read-only: there is nothing to type at. -->
+              <button class="console-tab" id="console-tab-backend" role="tab"
+                      data-console-panel="backend">Backend</button>
               <!-- Beside the output they act on, rather than up in the editor's
                    tab strip where they were lost among the file tabs. -->
               <div class="debug-bar" id="debug-bar" hidden>
@@ -217,7 +233,10 @@
               </div>
             </div>
             <div class="console-panels" id="console-panels">
-              <div class="pane-console" id="pane-console"></div>
+              <div class="pane-console" id="pane-console" hidden></div>
+              <div class="pane-backend" id="pane-backend">
+                <div class="backend-output" id="backend-output"></div>
+              </div>
               <div class="pane-debug" id="pane-debug" hidden>
                 <div class="debug-output" id="debug-output"></div>
                 <div class="debug-prompt" id="debug-prompt">

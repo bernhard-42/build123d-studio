@@ -29,7 +29,12 @@ let input = null;
 // session - the frame they were about is gone with the process.
 let history = [];
 // Which panel is showing. The console until something else runs.
-let current = "console";
+// Backend, because that is what starting up looks like: the model channel, the
+// measurement backend, the kernel and the language server each saying how they
+// went. A start that works ends by switching to Console and giving the editor
+// focus; a start that does not leaves the reason on screen, which is the whole
+// point of beginning here.
+let current = "backend";
 // The last source the explorer was actually put on, so a tab click that changes
 // nothing does not throw away what the user had opened.
 let appliedSource = "kernel";
@@ -140,10 +145,11 @@ async function submit() {
  * @param {"console"|"rundebug"} panel
  */
 export function showConsolePanel(panel) {
-  const wanted = panel === "rundebug" ? "rundebug" : "console";
+  const wanted = ["rundebug", "backend"].includes(panel) ? panel : "console";
   current = wanted;
   document.getElementById("pane-console").hidden = wanted !== "console";
   document.getElementById("pane-debug").hidden = wanted !== "rundebug";
+  document.getElementById("pane-backend").hidden = wanted !== "backend";
   for (const tab of document.querySelectorAll(".console-tab")) {
     const active = tab.dataset.consolePanel === wanted;
     tab.classList.toggle("console-tab-active", active);
@@ -183,7 +189,11 @@ export function currentConsolePanel() {
  */
 export function applyPanelState() {
   const debugging = isDebugging();
-  const wanted = current === "console" ? "kernel" : (debugging ? "debug" : "none");
+  // Backend is neither the kernel nor the debugged process - it is a third
+  // process talking about geometry - so the panes beside it describe nothing,
+  // by the same rule that empties them for a Run/Debug tab with no session.
+  const wanted =
+    current === "console" ? "kernel" : (current === "rundebug" && debugging ? "debug" : "none");
   // The evaluate line is debugging's: it needs a frame to evaluate in.
   showEvaluateInput(current === "rundebug" && debugging);
   // And the explorer goes altogether when there is nothing for it to be about -
@@ -209,6 +219,51 @@ export function showEvaluateInput(visible) {
   }
 }
 
+// How many lines the Backend tab keeps. It is a running account rather than a
+// transcript to be searched - the file beside it is that - and an unbounded
+// node list in a pane nobody is looking at is a leak with a scrollbar.
+const BACKEND_LINES = 2000;
+
+/**
+ * One line from the measurement backend, as it printed it.
+ *
+ * Appended rather than replacing, and the pane follows the end only when it was
+ * already there: a user who has scrolled up to read something is reading it,
+ * and yanking them back to the bottom on the next line is the behaviour that
+ * makes a log pane useless while anything is happening.
+ */
+let lastBackendKey = null;
+
+export function appendBackendLine(text, key = text) {
+  const pane = document.getElementById("backend-output");
+  if (pane === null) {
+    return;
+  }
+  // The same rule the files use: one line per distinct message, a dot per
+  // repeat. A viewer notifying the same value or a retry loop otherwise fills
+  // the pane with one sentence, and what matters is always the line above it.
+  if (key === lastBackendKey && pane.lastElementChild !== null) {
+    pane.lastElementChild.textContent += ".";
+    pane.scrollTop = pane.scrollHeight;
+    return;
+  }
+  lastBackendKey = key;
+  const line = document.createElement("div");
+  line.textContent = text;
+  pane.appendChild(line);
+  while (pane.childElementCount > BACKEND_LINES) {
+    pane.removeChild(pane.firstElementChild);
+  }
+  // Always the end, rather than only when the view was already there.
+  //
+  // "Follow unless the reader has scrolled up" is the polite behaviour and it
+  // was wrong here twice over: this pane is what the application starts on, so
+  // the interesting line is always the newest, and the pane is hidden for most
+  // of a session - a hidden element measures zero, so "was it at the bottom"
+  // answered no and the tab kept showing its first ten lines for ever.
+  pane.scrollTop = pane.scrollHeight;
+}
+
 export function initDebugConsole() {
   output = document.getElementById("debug-output");
   input = document.getElementById("debug-input");
@@ -216,7 +271,10 @@ export function initDebugConsole() {
   for (const tab of document.querySelectorAll(".console-tab")) {
     tab.addEventListener("click", () => showConsolePanel(tab.dataset.consolePanel));
   }
-  showConsolePanel("console");
+  // Whatever the module says it starts on, which is the Backend tab: the
+  // startup is the thing worth looking at while the window fills, and a good
+  // start switches to the console at the end of `main`.
+  showConsolePanel(current);
 
   input.addEventListener("keydown", (event) => {
     if (event.key === "Enter") {

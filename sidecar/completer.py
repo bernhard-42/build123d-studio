@@ -163,10 +163,14 @@ class LanguageServer:
     suggestions, not the frame that carried it.
     """
 
-    def __init__(self, python_path, analysis=None, on_diagnostics=None):
+    def __init__(self, python_path, analysis=None, on_diagnostics=None, on_state=None):
         self._python_path = python_path
         self._analysis = analysis or {}
         self._on_diagnostics = on_diagnostics
+        # Told when it is up, so the application can say whether completion and
+        # diagnostics are actually available rather than leaving a user to
+        # deduce it from their absence.
+        self.on_state = on_state
         self._process = None
         self._replies = {}
         self._arrived = threading.Condition()
@@ -210,6 +214,8 @@ class LanguageServer:
             return False
         self.notify("initialized", {})
         log(f"basedpyright ready in {time.monotonic() - started:.1f}s")
+        if self.on_state is not None:
+            self.on_state("ready", "")
         return True
 
     def alive(self):
@@ -375,12 +381,13 @@ class Completer:
     above it has to know that a language server is involved at all.
     """
 
-    def __init__(self, env_root, app_dir, python_path=None, on_diagnostics=None):
+    def __init__(self, env_root, app_dir, python_path=None, on_diagnostics=None, on_state=None):
         self._on_diagnostics = on_diagnostics
         self._server = LanguageServer(
             python_path or sys.executable,
             analysis=analysis_settings(os.path.join(app_dir, "kernel")),
             on_diagnostics=self._diagnostics,
+            on_state=on_state,
         )
         # Where an unsaved buffer pretends to live. A real path when there is
         # one, because that is what lets the server resolve `import helpers`

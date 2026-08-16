@@ -62,6 +62,14 @@ const FILE_CHORDS = {
   [MENU.SAVE]: "mod+s",
   [MENU.CLOSE]: "mod+w",
   [MENU.TOGGLE_SIDEBAR]: "mod+b",
+  // VS Code's Toggle Debug Console, which is the panel this row is: ⇧⌘Y on
+  // macOS, Ctrl+Shift+Y elsewhere. `mod` is what makes that one entry.
+  //
+  // It shows as text beside the label rather than as a grey right-aligned
+  // accelerator, unlike the Command-plus-a-letter entries around it. That is
+  // Neutralino's documented limit, not a mistake: on macOS its `shortcut`
+  // field binds and displays only Command plus one character.
+  [MENU.TOGGLE_BOTTOM]: "mod+shift+y",
   [MENU.CUT]: "mod+x",
   [MENU.COPY]: "mod+c",
   [MENU.PASTE]: "mod+v",

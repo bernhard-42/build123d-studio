@@ -6,7 +6,22 @@ requires-python = "==3.14.*"
 
 dependencies = [
     # --- frozen: moves only when the application is rebuilt and retested ---
-    "ocp_vscode==4.0.1",
+    #
+    # The shared viewer half, and the only thing between this application and
+    # the same show pipeline OCP CAD Viewer for VS Code, the standalone viewer
+    # and Jupyter CadQuery run. It replaced `ocp_vscode==4.0.1`, which this
+    # application used to import `_convert` out of: a private function of
+    # another host, which is why that pin existed at all.
+    #
+    # No version and no URL: neither half of this chain is on PyPI yet and the
+    # repository is private, so there is nothing here that would resolve on its
+    # own. Where it comes from is the [tool.uv.sources] block at the end of this
+    # file - see the warning there, which is the temporary half of this.
+    "ocp-viewer-core",
+    # Declared rather than inherited from ocp-viewer-core, only so that the
+    # source below applies to it: a uv source redirects a dependency this
+    # project declares, and 3.5.0 is not on PyPI to be resolved any other way.
+    "ocp-tessellate>=3.5.0,<3.6.0",
     "ipykernel==7.3.0",
     "jupyter_client==8.9.1",
     "jupyter_console==6.6.3",
@@ -25,3 +40,19 @@ dependencies = [
 # This project exists only to pin an environment - there is no package to build.
 [tool.uv]
 package = false
+
+# ===========================================================================
+# TEMPORARY - two machine-specific paths, for testing the viewer-core adoption
+#
+# These point at working copies on one developer's disk. They exist because
+# `ocp-viewer-core` and `ocp-tessellate>=3.5.0` are both unpublished and the
+# core's repository is private, so nothing else resolves - and they make every
+# other machine's install fail, including CI's and any user's.
+#
+# The day both halves are on PyPI: delete this whole block, put the versions
+# back on the two dependencies above, and re-lock. Until then this file is not
+# shippable, and the release that ships it would install nothing.
+# ===========================================================================
+[tool.uv.sources]
+ocp-viewer-core = { path = "/Users/bernhard/Development/CAD/ocp-viewer-core", editable = true }
+ocp-tessellate = { path = "/Users/bernhard/Development/CAD/ocp-tessellate", editable = true }

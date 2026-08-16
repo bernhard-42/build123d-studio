@@ -286,6 +286,38 @@ body {
   background: var(--error-fg);
 }
 
+/* The subsystem chip: the kernel indicator's shape, because it says the same
+   kind of thing, and a button because clicking it goes to the reason.
+   `[hidden]` needs saying explicitly here for the same reason `.btn[hidden]`
+   does - the display above beats the user agent's rule. */
+.health-chip {
+  width: auto;
+  max-width: 12em;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: none;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.health-chip[hidden] {
+  display: none;
+}
+
+.health-chip:hover {
+  background: var(--hover);
+}
+
+.health-chip.degraded .dot {
+  background: var(--busy-fg);
+}
+
+.health-chip.failed .dot {
+  background: var(--error-fg);
+}
+
 /* = = = Debugging = = = */
 
 /* Marks in the strip left of the line numbers.
@@ -827,6 +859,23 @@ html body {
   grid-template-columns: var(--col-bottom-left, 1fr) var(--splitter) var(--col-bottom-right, 1fr);
 }
 
+/* With the console and the variables hidden, the editor and the viewer take the
+   whole window. The row and its splitter are hidden by the layout module; this
+   is what stops the grid keeping their two tracks open - a row track is a CSS
+   variable that apply() rewrites on every drag, so collapsing it there would
+   not survive the next one. */
+.app.no-bottom {
+  grid-template-rows: 1fr;
+}
+
+/* `display: grid` on .row beats the user agent's `[hidden] { display: none }`,
+   so the attribute alone did nothing at all - the row stayed on screen with
+   `hidden=""` on it. Exactly what `.btn[hidden]` exists for, one file up. */
+.row[hidden],
+.splitter[hidden] {
+  display: none;
+}
+
 .pane {
   overflow: hidden;
   background: var(--bg-pane);
@@ -939,6 +988,41 @@ html body {
   grid-template-columns: 1fr;
 }
 
+
+/* The Backend tab: the measurement process's own output, read-only. Same type
+   and scrolling as the run transcript beside it, because they are the same kind
+   of thing - a process talking - and two different treatments would only invite
+   the question which one is authoritative. */
+.pane-backend {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+}
+
+.pane-backend[hidden] {
+  display: none;
+}
+
+.backend-output {
+  flex: 1 1 auto;
+  min-height: 0;
+  /* One entry, one line, however long it is - and scroll sideways to read the
+     rest of it. Wrapping was tried and is worse here: a serialised config or a
+     stack trace becomes six rows, and a pane of them cannot be scanned at all,
+     because "how many entries are there" stops being answerable by looking. */
+  overflow: auto;
+  padding: 6px 8px;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre;
+  user-select: text;
+}
+
+.backend-empty {
+  opacity: 0.6;
+}
 
 .debug-output {
   flex: 1 1 auto;
@@ -1537,6 +1621,61 @@ html body {
 
 .settings-check input {
   margin: 0;
+}
+
+/* The Viewer tab: 36 settings, so they are rows rather than the label-above
+   layout the other panels use - a paragraph of explanation per setting would
+   make the panel unreadable, and their names are the viewer's own documented
+   ones. The name takes the space it needs and the control keeps a fixed width,
+   so a column of controls lines up however long the names are. */
+.settings-viewer-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 0 8px;
+}
+
+.settings-viewer-name {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.settings-viewer-row input,
+.settings-viewer-row select {
+  flex: 0 0 auto;
+  width: 11em;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 12px;
+}
+
+/* The four modifier bindings share one row, so they need to be narrower than
+   an ordinary control rather than pushing the row past the panel's width. */
+.settings-viewer-modifiers {
+  display: flex;
+  gap: 8px;
+}
+
+.settings-viewer-modifier {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--muted-fg, var(--fg));
+}
+
+.settings-viewer-modifier select {
+  width: 5.5em;
+}
+
+/* A checkbox inside the Viewer tab is one of a list rather than a lone setting
+   with a note above it, so it does not want the 14px the others carry. */
+.settings-panel[data-panel="viewer"] .settings-check {
+  margin-bottom: 8px;
 }
 
 .settings-actions {

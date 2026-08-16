@@ -228,3 +228,73 @@ test.describe("the window comes back where it was left", () => {
     expect(calls.filter((call) => call.name === "move")).toHaveLength(0);
   });
 });
+
+test.describe("hiding the console and the variables", () => {
+  /** The height the editor's row actually got, as a fraction of the app. */
+  async function topFraction(page) {
+    return page.evaluate(() => {
+      const app = document.getElementById("app").getBoundingClientRect().height;
+      return document.getElementById("row-top").getBoundingClientRect().height / app;
+    });
+  }
+
+  test("the chord gives the whole window to the editor and the viewer", async ({ page }) => {
+    await open(page, { files: FILES });
+
+    expect(await topFraction(page)).toBeLessThan(0.8);
+    await expect(page.locator("#row-bottom")).toBeVisible();
+
+    // VS Code's Toggle Debug Console, mirrored.
+    await page.keyboard.press("Control+Shift+Y");
+
+    await expect(page.locator("#row-bottom")).toBeHidden();
+    await expect(page.locator("#splitter-h")).toBeHidden();
+    // Not merely hidden: the grid gave its track back. Hiding the row alone
+    // left a full-height gap where it had been, which is the case a "is it
+    // display:none" assertion passes and a user sees immediately.
+    expect(await topFraction(page)).toBeGreaterThan(0.98);
+
+    await page.keyboard.press("Control+Shift+Y");
+    await expect(page.locator("#row-bottom")).toBeVisible();
+
+    // And on the Command key, which is what a macOS user presses. The binding
+    // takes either, so both have to be asserted - the one that was tested is
+    // not the one that gets used.
+    await page.keyboard.press("Meta+Shift+Y");
+    await expect(page.locator("#row-bottom")).toBeHidden();
+    await page.keyboard.press("Meta+Shift+Y");
+    await expect(page.locator("#row-bottom")).toBeVisible();
+
+    // And from a German keyboard, where the key printed Y sits where US-QWERTY
+    // has Z: `event.code` is "KeyZ" while the character is still Y. Matching
+    // the code meant the chord could not be pressed there at all, and ⇧⌘Z -
+    // the same physical key - worked instead. Playwright's press() cannot
+    // express this, because it derives key and code from one US-layout name.
+    const german = () =>
+      page.evaluate(() =>
+        window.dispatchEvent(
+          new KeyboardEvent("keydown", {
+            key: "Y",
+            code: "KeyZ",
+            metaKey: true,
+            shiftKey: true,
+            bubbles: true,
+          }),
+        ),
+      );
+    await german();
+    await expect(page.locator("#row-bottom")).toBeHidden();
+    await german();
+    await expect(page.locator("#row-bottom")).toBeVisible();
+    // The split it had is remembered rather than reset, because only the row
+    // was taken out of the grid - the fraction was never touched.
+    expect(await topFraction(page)).toBeLessThan(0.8);
+  });
+
+  test("a hidden row is still hidden after a restart", async ({ page }) => {
+    await open(page, { files: FILES, settings: { bottomHidden: true } });
+
+    await expect(page.locator("#row-bottom")).toBeHidden();
+    expect(await topFraction(page)).toBeGreaterThan(0.98);
+  });
+});

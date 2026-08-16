@@ -32,7 +32,27 @@ async function logRows() {
     return [row("Log", "not started")];
   }
 
+  // Three files, three subjects, and a support request usually wants more than
+  // the first: this application's own account, what the browser and the
+  // libraries inside it printed, and what the measurement backend said. Each is
+  // named only when it exists, for the same reason the rotated one is - a path
+  // to a file nobody wrote sends the reader looking for it.
   const rows = [row("Log", current)];
+  for (const [label, path] of [
+    ["Browser console", log.consolePath()],
+    ["Measurement backend", log.backendPath()],
+  ]) {
+    if (path === null) {
+      continue;
+    }
+    try {
+      await filesystem.getStats(path);
+      rows.push(row(label, path));
+    } catch {
+      // Nothing has been written to it in this installation.
+    }
+  }
+
   const previous = `${current}.1`;
   try {
     await filesystem.getStats(previous);

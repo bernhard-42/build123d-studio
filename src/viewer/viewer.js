@@ -1,288 +1,139 @@
-import { Display, Viewer } from "three-cad-viewer";
+import { Display, Timer, Viewer, resolveInstances } from "three-cad-viewer";
 // The package exposes its stylesheet as the "./css" export, not by dist path.
 import "three-cad-viewer/css";
+import { createPage } from "ocp-viewer-core";
 
-import { logo } from "./logo.js";
-import { rehydrate, resolveInstances } from "./rehydrate.js";
+import { rehydrate } from "./rehydrate.js";
 import { onPaneResize } from "../layout/splitter.js";
+import { copyText } from "../editing.js";
 import * as ipc from "../ipc.js";
 import * as log from "../log.js";
 import { onThemeChange, resolvedTheme } from "../theme.js";
 
 // The viewer pane.
 //
-// The option plumbing is ported from ocp_vscode's templates/viewer.html, which
-// is where the mapping from a show() config to three-cad-viewer's render and
-// viewer options is defined. What is *not* ported is its comms layer: the model
-// arrives here as one binary frame, and the notification callback goes back
-// over the same socket instead of vscode.postMessage.
+// Everything the viewer *does* - the option assembly, the camera policy, the
+// state restore, the notifier, the setter dispatch, the splash - is
+// ocp-viewer-core's `createPage`, the same page OCP CAD Viewer for VS Code, the
+// standalone viewer and Jupyter CadQuery draw. What is this host's, and all
+// that is left here, is the surface it draws on: a pane rather than a window,
+// measured against the splitters; the models arriving as binary frames on our
+// own IPC rather than as `window` messages; and the theme, which follows the
+// desktop unless the user has pinned it.
+//
+// That split is deliberate rather than economical. `createPage`'s message
+// dispatch *is* the feature set - a screenshot, an animation, a config applied
+// to a live viewer, a measurement answer - so a shell of our own would have
+// exactly the features it re-implemented, and would drift from the other three
+// viewers on every one of them.
 
-const SNAKE_TO_CAMEL = (s) => s.replace(/_([a-z0-9])/g, (_, c) => c.toUpperCase());
+// The pane, and what the viewer's own chrome takes out of it.
+const MIN_CAD_WIDTH = 250;
+const MIN_CAD_HEIGHT = 150;
 
-// Keys whose camelCase form is not what three-cad-viewer calls them.
-const KEY_OVERRIDES = {
-  default_edgecolor: "edgeColor",
-  clip_planes: "clipPlaneHelpers",
-  studio_4k_env_maps: "studio4kEnvMaps",
-};
-
-// prettier-ignore
-const RENDER_KEYS = [
-  "ambient_intensity", "direct_intensity", "metalness", "roughness",
-  "default_edgecolor", "default_opacity", "normal_len",
-];
-
-// prettier-ignore
-const VIEWER_KEYS = [
-  "axes", "axes0", "black_edges", "grid", "collapse", "ortho", "ticks",
-  "center_grid", "grid_font_size", "timeit", "tools", "glass", "up",
-  "transparent", "control", "pan_speed", "zoom_speed", "rotate_speed",
-  "clip_slider_0", "clip_slider_1", "clip_slider_2",
-  "clip_normal_0", "clip_normal_1", "clip_normal_2",
-  "clip_intersection", "clip_planes", "clip_object_colors",
-  "zebra_count", "zebra_opacity", "zebra_direction",
-  "zebra_color_scheme", "zebra_mapping_mode",
-  "studio_environment", "studio_env_intensity", "studio_env_rotation",
-  "studio_background", "studio_tone_mapping", "studio_exposure",
-  "studio_shadow_intensity", "studio_shadow_softness", "studio_ao_intensity",
-  "studio_texture_mapping", "studio_4k_env_maps",
-];
-
-let display = null;
-let viewer = null;
-let lastConfig = {};
+let page = null;
 
 function container() {
   return document.getElementById("pane-viewer");
 }
 
+/** The size of the surface, which for this host is a pane and not the window. */
 function paneSize() {
   const rect = container().getBoundingClientRect();
-  return { width: Math.max(rect.width, 100), height: Math.max(rect.height, 100) };
-}
-
-function pick(config, key, fallback) {
-  const value = config[key];
-  return value === undefined || value === null ? fallback : value;
-}
-
-// Canvas sizing, following ocp_vscode's viewer.html: the tree only takes width
-// when it is docked (in glass mode it floats over the canvas), and the viewer
-// draws its own toolbar row above the canvas, which the height must leave room
-// for. The difference here is that the measurements come from the pane rather
-// than from window.innerWidth/innerHeight.
-const MIN_CAD_WIDTH = 250;
-const MIN_CAD_HEIGHT = 150;
-// Fallback only, for the first layout before the toolbar exists in the DOM.
-const ASSUMED_TOOLBAR_HEIGHT = 65;
-const WIDTH_MARGIN = 20;
-
-function normalizeWidth(width, glass, tools, treeWidth) {
-  const reserved = glass || !tools ? 0 : treeWidth;
-  return Math.max(MIN_CAD_WIDTH - reserved, width - reserved - WIDTH_MARGIN);
-}
-
-/**
- * Height above the canvas that must come out of the pane.
- *
- * This is the canvas's own top offset, not the toolbar's height. Measuring the
- * toolbar alone (38 px) left the canvas overflowing the pane by 10 px - the
- * toolbar's 6 px offset plus a 4 px gap - which pushed the status line, pinned
- * to `bottom: 4px` inside the canvas, below the pane's clip. ocp_vscode's
- * hard-coded 65 px avoided the clipping but over-reserved, showing up as a
- * bottom margin visibly larger than the left and top ones.
- *
- * Taking the offset directly makes the canvas end exactly at the pane's edge
- * whatever the toolbar does.
- */
-function reservedHeight() {
-  const canvas = container().querySelector(".tcv_cad_view_glass, .tcv_cad_view");
-  if (canvas !== null) {
-    const offset = canvas.getBoundingClientRect().top - container().getBoundingClientRect().top;
-    if (offset > 0) {
-      return Math.round(offset);
-    }
-  }
-  // Before the canvas exists, approximate from the toolbar if it is there.
-  const toolbar = container().querySelector(".tcv_cad_toolbar");
-  if (toolbar !== null && toolbar.offsetHeight > 0) {
-    return toolbar.offsetHeight + 10;
-  }
-  return ASSUMED_TOOLBAR_HEIGHT;
-}
-
-function normalizeHeight(height) {
-  return Math.max(MIN_CAD_HEIGHT, height - reservedHeight());
-}
-
-function displayOptions(config) {
-  const size = paneSize();
-  const glass = pick(config, "glass", true);
-  const tools = pick(config, "tools", true);
-  const treeWidth = pick(config, "tree_width", 240);
-
   return {
-    glass,
-    tools,
-    treeWidth,
-    cadWidth: normalizeWidth(size.width, glass, tools, treeWidth),
-    height: normalizeHeight(size.height),
-    theme: pick(config, "theme", resolvedTheme()),
-    keymap: pick(config, "modifier_keys", undefined),
-    measureTools: true,
-    selectTool: true,
-    explodeTool: true,
-    // Off by default - the z-scale slider overlays the bottom-right of the
-    // canvas permanently, which costs more room in a pane than it does in a
-    // full window. Overridable per show() with zscale_tool=True.
-    zscaleTool: pick(config, "zscale_tool", false),
-    zebraTool: true,
-    // Distances and properties are computed by the real kernel geometry in the
-    // sidecar, not estimated from the mesh.
-    externalMeasurementBackend: true,
+    width: Math.max(rect.width, MIN_CAD_WIDTH),
+    height: Math.max(rect.height, MIN_CAD_HEIGHT),
   };
 }
 
-function mapOptions(config, keys) {
-  const options = {};
-  for (const key of keys) {
-    const value = config[key];
-    if (value === undefined || value === null) {
-      continue;
-    }
-    options[KEY_OVERRIDES[key] ?? SNAKE_TO_CAMEL(key)] = value;
-  }
-  return options;
-}
-
 /**
- * Notification callback: the viewer reports UI changes here.
+ * The channel the page reports on: `send(command, message)`.
  *
- * Selections drive measurement - the sidecar answers with exact values computed
- * from the BRep, so this is the path that makes the measure tools truthful
- * rather than mesh approximations.
+ * `status` carries the viewer's accumulated state with the latest change laid
+ * over it, which is what a `show()` reads through the sidecar - and what drives
+ * measurement, since a selection or an active tool rides on the change and is
+ * never accumulated.
  */
-function notify(change) {
+// Whether the sidecar has ever taken a report from us, and whether the current
+// run of dropped ones has been mentioned. Both exist to tell two situations
+// apart that look identical here.
+let everDelivered = false;
+let dropReported = false;
+
+function send(command, message) {
   if (!ipc.isConnected()) {
-    return;
-  }
-
-  // The viewer reports changes as {key: {new, old}}; the backend wants plain
-  // values, so flatten exactly as ocp_vscode's nc() does.
-  //
-  // Only this notification's keys are sent, not an accumulated snapshot.
-  // ocp_vscode's viewer.html keeps a running message object, which means a
-  // stale selectedShapeIDs rides along with every unrelated change and the
-  // backend re-measures a selection the user made minutes ago. Sending the
-  // delta is enough: activated_tool is sticky on the backend side.
-  const changes = {};
-  let changed = false;
-  for (const [key, value] of Object.entries(change)) {
-    if (value !== null && value !== undefined && value.new !== undefined) {
-      changes[key] = value.new;
-      changed = true;
+    // Two very different cases, and only one is worth a warning.
+    //
+    // Before the sidecar has ever connected there is simply nothing to send to:
+    // the splash logo is drawn as soon as the window exists, and the viewer
+    // reports its state as it draws - seventeen reports in a quarter of a
+    // second, all of them expected, none of them a fault. Those are debug
+    // lines, visible when the console is turned up and invisible otherwise.
+    //
+    // After it has connected, a dropped report *is* a fault - the viewer looks
+    // fine and measurements silently stop - so it is a warning, and once per
+    // episode rather than once per report, because a disconnected socket does
+    // not produce one of these, it produces a hundred.
+    if (everDelivered && !dropReported) {
+      dropReported = true;
+      log.warn(`Viewer reports are being dropped: the sidecar is not connected (${command})`);
+    } else if (!everDelivered) {
+      console.debug("viewer report before the sidecar connected, dropped:", command);
     }
-  }
-  if (!changed) {
     return;
   }
-
+  everDelivered = true;
+  dropReported = false;
   try {
-    ipc.send("viewer.changes", { changes });
-  } catch (error) {
-    log.warn("Could not forward viewer changes:", error);
-  }
-}
+    // Every notification the viewer makes, when the console is turned up.
+    // `console.debug` rather than a log call, so it obeys the level in
+    // Settings: at Errors this costs a function call and nothing else, and at
+    // Everything it is the whole conversation - which is what somebody
+    // reproducing a measurement or a camera problem actually needs to see.
+    console.debug("viewer notification", command, message);
 
-function showModel(shapes, config) {
-  const options = displayOptions(config);
-
-  if (display === null) {
-    container().innerHTML = "";
-    display = new Display(container(), options);
-  }
-
-  if (viewer === null) {
-    viewer = new Viewer(display, options, notify, null);
-  } else {
-    // clear() tears the scene down but keeps the WebGL context, viewer state
-    // and environment cache alive, so repeated show() calls stay cheap.
-    viewer.clear();
-  }
-
-  const renderOptions = mapOptions(config, RENDER_KEYS);
-  const viewerOptions = mapOptions(config, VIEWER_KEYS);
-
-  const resetCamera = pick(config, "reset_camera", "keep");
-  if (resetCamera === "reset") {
-    viewerOptions.zoom = pick(config, "zoom", 1.0);
-    if (config.position !== undefined) viewerOptions.position = config.position;
-    if (config.quaternion !== undefined) viewerOptions.quaternion = config.quaternion;
-    if (config.target !== undefined) viewerOptions.target = config.target;
-  }
-
-  viewer.render(shapes, renderOptions, viewerOptions);
-  viewer.glassMode(options.glass);
-  viewer.showTools(options.tools);
-
-  // The first layout is computed before the toolbar exists, so it uses the
-  // assumed height. Now that it is in the DOM, re-fit against the real one.
-  fitToPane();
-}
-
-/** Resize the canvas to the current pane, measuring the toolbar as it is now. */
-function fitToPane() {
-  if (viewer === null) {
-    return;
-  }
-  const options = displayOptions(lastConfig);
-  viewer.resizeCadView(options.cadWidth, options.treeWidth, options.height, options.glass);
-  probeGeometry();
-}
-
-/**
- * Report where the viewer's parts actually landed inside the pane.
- *
- * Sizing here is a chain of assumptions - which chrome is inside the canvas
- * container, which is a sibling, what the library reserves - and guessing at it
- * has already produced both a too-large bottom margin and a clipped status
- * line. Measuring is cheap and makes the next adjustment factual.
- */
-function probeGeometry() {
-  const pane = container().getBoundingClientRect();
-  const report = { pane: Math.round(pane.height) };
-  for (const [name, selector] of [
-    ["toolbar", ".tcv_cad_toolbar"],
-    ["canvas", ".tcv_cad_view_glass, .tcv_cad_view"],
-    ["status", ".tcv_status_line"],
-  ]) {
-    const element = container().querySelector(selector);
-    if (element === null) {
-      report[name] = null;
-      continue;
+    if (command === "status") {
+      console.debug("viewer report: forwarding status to the sidecar");
+      // Both page hosts copy a selection to the clipboard, so this one does
+      // too - the same feature everywhere is the rule, and the selection is
+      // already in the message.
+      if (Array.isArray(message.selected) && message.selected.length > 0) {
+        copyText(message.selected.join(","));
+      }
+      ipc.send("viewer.changes", { changes: message });
+    } else if (command === "screenshot") {
+      ipc.send("viewer.screenshot", message);
+    } else if (command === "log") {
+      log.info("viewer:", message);
+    } else {
+      log.warn(`Unhandled report from the viewer: ${command}`);
     }
-    const rect = element.getBoundingClientRect();
-    report[name] = {
-      top: Math.round(rect.top - pane.top),
-      bottom: Math.round(rect.bottom - pane.top),
-      height: Math.round(rect.height),
-    };
-  }
-  if (report.canvas === null) {
-    return;
-  }
-  report.overflowBelowPane = report.canvas.bottom - report.pane;
-
-  // Silent when it fits. A canvas taller than its pane is what clips the status
-  // line, and a shorter one is the dead margin at the bottom - both were real,
-  // and neither is obvious without numbers. One pixel of rounding is fine.
-  if (Math.abs(report.overflowBelowPane) > 1) {
-    log.warn("viewer canvas does not fit its pane", report);
+  } catch (error) {
+    log.warn("Could not forward a viewer report:", error);
   }
 }
 
 /**
- * Draw the OCP logo into the empty viewer at startup.
+ * The settings this host differs on, and only those.
+ *
+ * Every number the renderer itself defines comes from the core, so two viewers
+ * cannot drift apart on values neither of them chose. What is genuinely ours is
+ * glass mode - the tree floats over the canvas instead of taking 240 px out of
+ * a pane - and measurement, which is answered by the sidecar from the real BREP
+ * rather than estimated from the mesh.
+ */
+function overrides() {
+  return {
+    display: {
+      glass: true,
+      theme: resolvedTheme(),
+      externalMeasurementBackend: true,
+    },
+    viewer: {},
+  };
+}
+
+/** Draw the OCP logo into the empty viewer at startup.
  *
  * Two reasons, and the first is the important one:
  *
@@ -294,18 +145,12 @@ function probeGeometry() {
  *    environment maps - here rather than on the user's first show(), which
  *    measured 713 ms cold against 28-70 ms warm.
  *
- * The logo data is in the instanced base64 format, which three-cad-viewer
- * decodes itself, so it goes to render() untouched rather than through the
- * zero-copy path used for real models.
+ * The splash itself is the core's: one logo for every viewer, described once.
  */
 export function showLogo() {
   try {
-    const { data, config } = logo();
     const started = performance.now();
-    // Recorded like any other model's, so a pane resize before the first real
-    // show() re-fits against what is actually on screen rather than against {}.
-    lastConfig = config ?? {};
-    showModel(data, lastConfig);
+    page.showSplash({ theme: resolvedTheme() });
     log.info(`Logo rendered in ${(performance.now() - started).toFixed(0)} ms`);
   } catch (error) {
     log.warn("Could not render the startup logo:", error);
@@ -313,6 +158,21 @@ export function showLogo() {
 }
 
 export function initViewer() {
+  page = createPage({
+    Viewer,
+    Display,
+    Timer,
+    send,
+    overrides: overrides(),
+    theme: resolvedTheme(),
+    // A pane, not a window: our own container, our own size, and no `window`
+    // message or resize event to listen for - models arrive as binary frames
+    // and the surface changes when a splitter moves.
+    container: container(),
+    getSize: paneSize,
+    listen: false,
+  });
+
   ipc.onBinary(ipc.KIND_MODEL, (payload, header, buffer, payloadOffset) => {
     const started = performance.now();
     // A model with no geometry is refused rather than drawn.
@@ -327,10 +187,29 @@ export function initViewer() {
       return;
     }
     try {
+      // The buffers are views straight onto the frame: the sidecar sends the
+      // tessellation's arrays raw and this rebuilds the tree around them,
+      // which is why nothing here copies or parses a number.
       const data = rehydrate(header.data, buffer, payloadOffset);
-      const shapes = resolveInstances(data);
-      lastConfig = header.config ?? {};
-      showModel(shapes, lastConfig);
+      // Instances are resolved here rather than by the renderer: its own
+      // `decodeInstancedFormat` base64-decodes every instance first and would
+      // throw on the typed arrays we already hold. 5.0.3 exports the two halves
+      // separately for exactly this, and the second one takes the shapes tree
+      // and the already-decoded instances - `resolveInstances(data)` with the
+      // whole envelope silently produces a tree with no parts, which the page
+      // then drops without a word.
+      const shapes = resolveInstances(data.shapes, data.instances);
+      if (!Array.isArray(shapes?.parts)) {
+        // The page's own guard for this is silent, and a model that vanishes
+        // between the socket and the canvas is the worst thing to debug.
+        log.error("The tessellation has no parts in it; nothing was drawn");
+        return;
+      }
+      page.handleMessage({
+        type: "data",
+        data: { shapes },
+        config: header.config ?? {},
+      });
       log.info(
         `Model rendered: ${header.count ?? "?"} shapes, ` +
           `${(payload.byteLength / 1024).toFixed(0)} kB, ` +
@@ -341,21 +220,21 @@ export function initViewer() {
     }
   });
 
-  // Measurement answers from the sidecar's ViewerBackend.
-  ipc.on("viewer.response", (frame) => {
-    if (viewer !== null) {
-      viewer.handleBackendResponse(frame.response);
+  // Everything else the sidecar has for the viewer - a config block, a
+  // measurement answer, a screenshot request, the animation clock - arrives as
+  // one of the page's own messages, exactly as the other two page hosts deliver
+  // theirs. One dispatch, so no host can quietly have a branch another lacks.
+  ipc.on("viewer.message", (frame) => {
+    try {
+      page.handleMessage(frame.message);
+    } catch (error) {
+      log.error("Could not handle a viewer message:", error);
     }
   });
 
-  onPaneResize(fitToPane);
+  onPaneResize(() => page.resize());
 
   // setTheme restyles the existing scene, so the model does not have to be
   // re-sent when the appearance changes.
-  onThemeChange((theme) => {
-    lastConfig = { ...lastConfig, theme };
-    if (viewer !== null) {
-      viewer.setTheme(theme);
-    }
-  });
+  onThemeChange((theme) => page.setTheme(theme));
 }

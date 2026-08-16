@@ -2,6 +2,7 @@ import { window as neuWindow } from "@neutralinojs/lib";
 
 import { closeActiveTab, newFile, openFile, saveFile } from "./editor/files.js";
 import { toggleSidebar } from "./editor/sidebar.js";
+import { toggleBottomRow } from "./layout/splitter.js";
 import {
   focusAt,
   getCurrentFile,
@@ -13,6 +14,8 @@ import {
   runSelectionOrLine,
 } from "./editor/monaco.js";
 import { onDebugChange } from "./debug/session.js";
+import { showConsolePanel } from "./debug/console.js";
+import { anythingUnwell, onHealthChange, summary, worstState } from "./health.js";
 import * as ipc from "./ipc.js";
 import { showInfo } from "./info.js";
 import { showSettings } from "./settings.js";
@@ -31,6 +34,70 @@ function setKernelState(state) {
   container.classList.remove("idle", "busy", "dead");
   container.classList.add(state);
   label.textContent = state;
+}
+
+/**
+ * The subsystem chip: the half of the health model the kernel indicator misses.
+ *
+ * The indicator beside it speaks for the kernel alone, so everything else could
+ * die in silence - the model channel, the measurement backend, the language
+ * server, the console. The Backend tab already covers a bad *start*, because the
+ * application opens on it and only switches away when nothing is unwell. This is
+ * for what dies afterwards, which nothing was watching at all.
+ *
+ * Hidden while all is well rather than shown in green: a toolbar that always
+ * carries a status light teaches people not to look at it.
+ */
+function refreshHealthChip() {
+  const chip = document.getElementById("health-chip");
+  const label = document.getElementById("health-label");
+  if (chip === null) {
+    return;
+  }
+  const state = worstState();
+  const unwell = anythingUnwell();
+  chip.hidden = !unwell;
+  chip.classList.remove("degraded", "failed");
+  if (!unwell) {
+    return;
+  }
+  chip.classList.add(state);
+  label.textContent = state;
+  // Every subsystem, not only the worst one: two things failing at once is a
+  // different story from one, and the tooltip is where that fits.
+  chip.title = `${summary()}\n\nClick to open the Backend tab.`;
+}
+
+// Which subsystems have already had their failure shown. Edge-triggered, not
+// level-triggered: without this, every later report from any subsystem - and
+// they arrive throughout a session - would pull the pane back to Backend while
+// somebody was reading the console, for a failure they had already seen.
+const revealed = new Set();
+
+/**
+ * Bring the Backend tab forward when something newly fails.
+ *
+ * Only for `failed`. A failure means something has stopped working and the
+ * reason is already written in that pane, so putting it on screen is showing
+ * what happened rather than interrupting - there is no dialog and nothing to
+ * dismiss. `degraded` gets the chip and no more: it is still working, and taking
+ * a pane the user chose is too much for "something is worth knowing".
+ */
+function revealBackendOnFailure(entries) {
+  let fresh = false;
+  for (const entry of entries) {
+    if (entry.state === "failed" && !revealed.has(entry.name)) {
+      revealed.add(entry.name);
+      fresh = true;
+    } else if (entry.state !== "failed") {
+      // Recovered, so its next failure is news again - a measurement backend
+      // that is killed and respawned is exactly this case.
+      revealed.delete(entry.name);
+    }
+  }
+  if (fresh) {
+    showConsolePanel("backend");
+  }
 }
 
 // The buttons that put work on the kernel's shell channel. Debugging is not
@@ -219,6 +286,22 @@ export function initToolbar() {
     setKernelState(frame.state === "busy" ? "busy" : "idle");
   });
 
+  // The chip, and what it does when clicked. Subscribed before the sidecar is
+  // started, so a subsystem that reports badly during startup is on screen the
+  // moment it says so.
+  document.getElementById("health-chip").addEventListener("click", () => {
+    showConsolePanel("backend");
+  });
+  onHealthChange((entries) => {
+    refreshHealthChip();
+    revealBackendOnFailure(entries);
+  });
+  // Once now as well, because subsystems report from the moment the sidecar
+  // starts and this runs after some of them already have: a listener that only
+  // fires on the *next* change would leave a failed start unmarked until
+  // something unrelated happened to speak.
+  refreshHealthChip();
+
   // Running is off until the console has finished its handshake.
   //
   // Not because a Run needs the console - it does not - but because until then
@@ -251,6 +334,23 @@ export function initToolbar() {
   // has focus - the console pane takes most of the typing in practice.
   window.addEventListener("keydown", (event) => {
     if (!event.ctrlKey && !event.metaKey) {
+      return;
+    }
+    // Cmd/Ctrl-Shift-Y, VS Code's Toggle Debug Console, which is the panel
+    // this row is. Before the "nothing else held" guard below, because this
+    // one does hold Shift.
+    //
+    // `event.key`, not `event.code`, and that is a bug worth remembering:
+    // `code` names the *physical* key by its US-QWERTY position, so on a
+    // German keyboard the key printed Y arrives as `KeyZ`. Matching the code
+    // meant the chord could not be pressed at all there - ⇧⌘Z worked instead,
+    // which is the same physical key. A letter chord is the letter on the
+    // keycap, whatever the layout. Shift uppercases it, hence the fold.
+    if (event.shiftKey && !event.altKey && event.key.toLowerCase() === "y") {
+      event.preventDefault();
+      withErrorReporting("Toggle", async () => {
+        await toggleBottomRow();
+      });
       return;
     }
     // Exactly Cmd/Ctrl, nothing else held. Testing event.key alone meant

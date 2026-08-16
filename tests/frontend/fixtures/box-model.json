@@ -1,1 +1,215 @@
-{"header": {"type": "data", "config": {"_splash": false, "collapse": 1, "debug": false, "default_facecolor": [238, 130, 238], "default_thickedgecolor": [186, 85, 211], "default_vertexcolor": [186, 85, 211], "helper_scale": 1.0, "render_joints": false, "render_mates": false, "render_normals": false, "show_locals": true, "show_parent": false, "timeit": false, "reset_camera": "keep", "render_edges": true, "normal_len": 0}, "count": 1, "data": {"instances": [{"vertices": {"shape": [72], "dtype": "float32", "codec": "raw", "offset": 0, "length": 288}, "triangles": {"shape": [36], "dtype": "int32", "codec": "raw", "offset": 288, "length": 144}, "normals": {"shape": [72], "dtype": "float32", "codec": "raw", "offset": 432, "length": 288}, "edges": {"shape": [72], "dtype": "float32", "codec": "raw", "offset": 720, "length": 288}, "obj_vertices": {"shape": [24], "dtype": "float32", "codec": "raw", "offset": 1008, "length": 96}, "face_types": {"shape": [6], "dtype": "int32", "codec": "raw", "offset": 1104, "length": 24}, "edge_types": {"shape": [12], "dtype": "int32", "codec": "raw", "offset": 1128, "length": 48}, "triangles_per_face": {"shape": [6], "dtype": "int32", "codec": "raw", "offset": 1176, "length": 24}, "segments_per_edge": {"shape": [12], "dtype": "int32", "codec": "raw", "offset": 1200, "length": 48}}], "shapes": {"version": 3, "parts": [{"id": "/Group/Solid", "type": "shapes", "subtype": "solid", "name": "Solid", "shape": {"ref": 0}, "state": [1, 1], "color": "#e8b024", "alpha": 1.0, "material": null, "normalize_uvs": true, "texture": null, "loc": [[-0.5, -1.0, -1.5], [0.0, 0.0, 0.0, 1.0]], "renderback": false, "accuracy": null, "bb": null}], "loc": [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0]], "name": "Group", "id": "/Group", "normal_len": 0, "bb": {"xmin": -0.5, "xmax": 0.5, "ymin": -1.0, "ymax": 1.0, "zmin": -1.5, "zmax": 1.5}}}}, "payloadBase64": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAEBAAAAAAAAAAEAAAAAAAAAAAAAAAEAAAEBAAACAPwAAAAAAAAAAAACAPwAAAAAAAEBAAACAPwAAAEAAAAAAAACAPwAAAEAAAEBAAAAAAAAAAAAAAAAAAACAPwAAAAAAAAAAAAAAAAAAAAAAAEBAAACAPwAAAAAAAEBAAAAAAAAAAEAAAAAAAACAPwAAAEAAAAAAAAAAAAAAAEAAAEBAAACAPwAAAEAAAEBAAAAAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAACAPwAAAAAAAAAAAACAPwAAAEAAAAAAAAAAAAAAAAAAAEBAAAAAAAAAAEAAAEBAAACAPwAAAAAAAEBAAACAPwAAAEAAAEBAAQAAAAIAAAAAAAAAAQAAAAMAAAACAAAABQAAAAQAAAAGAAAABQAAAAYAAAAHAAAACwAAAAgAAAAJAAAACwAAAAoAAAAIAAAADwAAAA0AAAAMAAAADwAAAAwAAAAOAAAAEwAAABAAAAARAAAAEwAAABIAAAAQAAAAFwAAABUAAAAUAAAAFwAAABQAAAAWAAAAAACAvwAAAIAAAAAAAACAvwAAAIAAAAAAAACAvwAAAIAAAAAAAACAvwAAAIAAAAAAAACAPwAAAAAAAACAAACAPwAAAAAAAACAAACAPwAAAAAAAACAAACAPwAAAAAAAACAAAAAAAAAgL8AAACAAAAAAAAAgL8AAACAAAAAAAAAgL8AAACAAAAAAAAAgL8AAACAAAAAgAAAgD8AAAAAAAAAgAAAgD8AAAAAAAAAgAAAgD8AAAAAAAAAgAAAgD8AAAAAAAAAgAAAAIAAAIC/AAAAgAAAAIAAAIC/AAAAgAAAAIAAAIC/AAAAgAAAAIAAAIC/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAEBAAAAAAAAAAAAAAEBAAAAAAAAAAEAAAEBAAAAAAAAAAEAAAAAAAAAAAAAAAEAAAEBAAAAAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAACAPwAAAAAAAAAAAACAPwAAAAAAAEBAAACAPwAAAAAAAEBAAACAPwAAAEAAAEBAAACAPwAAAEAAAAAAAACAPwAAAEAAAEBAAACAPwAAAAAAAAAAAACAPwAAAEAAAAAAAAAAAAAAAAAAAAAAAACAPwAAAAAAAAAAAAAAAAAAAAAAAEBAAACAPwAAAAAAAEBAAAAAAAAAAEAAAAAAAACAPwAAAEAAAAAAAAAAAAAAAEAAAEBAAACAPwAAAEAAAEBAAAAAAAAAAAAAAEBAAAAAAAAAAAAAAAAAAAAAAAAAAEAAAEBAAAAAAAAAAEAAAAAAAACAPwAAAAAAAEBAAACAPwAAAAAAAAAAAACAPwAAAEAAAEBAAACAPwAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAAIAAAACAAAAAgAAAAIAAAACAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAA"}
+{
+  "header": {
+    "type": "data",
+    "config": {
+      "_splash": false,
+      "ambientIntensity": 1,
+      "angularTolerance": 0.2,
+      "axes": false,
+      "axes0": true,
+      "blackEdges": false,
+      "centerGrid": false,
+      "collapse": -1,
+      "control": "trackball",
+      "debug": false,
+      "defaultColor": "#e8b024",
+      "edgeColor": "#707070",
+      "defaultFacecolor": "Violet",
+      "defaultOpacity": 0.5,
+      "defaultThickedgecolor": "MediumOrchid",
+      "defaultVertexcolor": "MediumOrchid",
+      "deviation": 0.1,
+      "directIntensity": 1.1,
+      "explode": false,
+      "glass": true,
+      "grid": [
+        false,
+        false,
+        false
+      ],
+      "gridFontSize": 12,
+      "helperScale": 1.0,
+      "metalness": 0.3,
+      "keymap": {
+        "shift": "shiftKey",
+        "ctrl": "ctrlKey",
+        "meta": "metaKey",
+        "alt": "altKey"
+      },
+      "newTreeBehavior": true,
+      "ortho": true,
+      "panSpeed": 1,
+      "renderJoints": false,
+      "renderMates": false,
+      "renderNormals": false,
+      "resetCamera": "reset",
+      "rotateSpeed": 1,
+      "roughness": 0.65,
+      "showLocals": true,
+      "showParent": false,
+      "theme": "browser",
+      "ticks": 5,
+      "timeit": false,
+      "tools": true,
+      "transparent": false,
+      "treeWidth": 240,
+      "up": "Z",
+      "zoomSpeed": 1,
+      "_force_in_debug": false,
+      "renderEdges": true,
+      "normalLen": 0
+    },
+    "count": 1,
+    "data": {
+      "instances": [
+        {
+          "vertices": {
+            "shape": [
+              72
+            ],
+            "dtype": "float32",
+            "codec": "raw",
+            "offset": 0,
+            "length": 288
+          },
+          "triangles": {
+            "shape": [
+              36
+            ],
+            "dtype": "int32",
+            "codec": "raw",
+            "offset": 288,
+            "length": 144
+          },
+          "normals": {
+            "shape": [
+              72
+            ],
+            "dtype": "float32",
+            "codec": "raw",
+            "offset": 432,
+            "length": 288
+          },
+          "edges": {
+            "shape": [
+              72
+            ],
+            "dtype": "float32",
+            "codec": "raw",
+            "offset": 720,
+            "length": 288
+          },
+          "obj_vertices": {
+            "shape": [
+              24
+            ],
+            "dtype": "float32",
+            "codec": "raw",
+            "offset": 1008,
+            "length": 96
+          },
+          "face_types": {
+            "shape": [
+              6
+            ],
+            "dtype": "int32",
+            "codec": "raw",
+            "offset": 1104,
+            "length": 24
+          },
+          "edge_types": {
+            "shape": [
+              12
+            ],
+            "dtype": "int32",
+            "codec": "raw",
+            "offset": 1128,
+            "length": 48
+          },
+          "triangles_per_face": {
+            "shape": [
+              6
+            ],
+            "dtype": "int32",
+            "codec": "raw",
+            "offset": 1176,
+            "length": 24
+          },
+          "segments_per_edge": {
+            "shape": [
+              12
+            ],
+            "dtype": "int32",
+            "codec": "raw",
+            "offset": 1200,
+            "length": 48
+          }
+        }
+      ],
+      "shapes": {
+        "version": 3,
+        "parts": [
+          {
+            "id": "/Group/Solid",
+            "type": "shapes",
+            "subtype": "solid",
+            "name": "Solid",
+            "shape": {
+              "ref": 0
+            },
+            "state": [
+              1,
+              1
+            ],
+            "color": "#e8b024",
+            "alpha": 1.0,
+            "material": null,
+            "normalize_uvs": true,
+            "texture": null,
+            "loc": [
+              [
+                -0.5,
+                -1.0,
+                -1.5
+              ],
+              [
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ]
+            ],
+            "renderback": false,
+            "accuracy": null,
+            "bb": null
+          }
+        ],
+        "loc": [
+          [
+            0.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "name": "Group",
+        "id": "/Group",
+        "normal_len": 0,
+        "bb": {
+          "xmin": -0.5,
+          "xmax": 0.5,
+          "ymin": -1.0,
+          "ymax": 1.0,
+          "zmin": -1.5,
+          "zmax": 1.5
+        }
+      }
+    }
+  },
+  "payloadBase64": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAEBAAAAAAAAAAEAAAAAAAAAAAAAAAEAAAEBAAACAPwAAAAAAAAAAAACAPwAAAAAAAEBAAACAPwAAAEAAAAAAAACAPwAAAEAAAEBAAAAAAAAAAAAAAAAAAACAPwAAAAAAAAAAAAAAAAAAAAAAAEBAAACAPwAAAAAAAEBAAAAAAAAAAEAAAAAAAACAPwAAAEAAAAAAAAAAAAAAAEAAAEBAAACAPwAAAEAAAEBAAAAAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAACAPwAAAAAAAAAAAACAPwAAAEAAAAAAAAAAAAAAAAAAAEBAAAAAAAAAAEAAAEBAAACAPwAAAAAAAEBAAACAPwAAAEAAAEBAAQAAAAIAAAAAAAAAAQAAAAMAAAACAAAABQAAAAQAAAAGAAAABQAAAAYAAAAHAAAACwAAAAgAAAAJAAAACwAAAAoAAAAIAAAADwAAAA0AAAAMAAAADwAAAAwAAAAOAAAAEwAAABAAAAARAAAAEwAAABIAAAAQAAAAFwAAABUAAAAUAAAAFwAAABQAAAAWAAAAAACAvwAAAIAAAAAAAACAvwAAAIAAAAAAAACAvwAAAIAAAAAAAACAvwAAAIAAAAAAAACAPwAAAAAAAACAAACAPwAAAAAAAACAAACAPwAAAAAAAACAAACAPwAAAAAAAACAAAAAAAAAgL8AAACAAAAAAAAAgL8AAACAAAAAAAAAgL8AAACAAAAAAAAAgL8AAACAAAAAgAAAgD8AAAAAAAAAgAAAgD8AAAAAAAAAgAAAgD8AAAAAAAAAgAAAgD8AAAAAAAAAgAAAAIAAAIC/AAAAgAAAAIAAAIC/AAAAgAAAAIAAAIC/AAAAgAAAAIAAAIC/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAEBAAAAAAAAAAAAAAEBAAAAAAAAAAEAAAEBAAAAAAAAAAEAAAAAAAAAAAAAAAEAAAEBAAAAAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAACAPwAAAAAAAAAAAACAPwAAAAAAAEBAAACAPwAAAAAAAEBAAACAPwAAAEAAAEBAAACAPwAAAEAAAAAAAACAPwAAAEAAAEBAAACAPwAAAAAAAAAAAACAPwAAAEAAAAAAAAAAAAAAAAAAAAAAAACAPwAAAAAAAAAAAAAAAAAAAAAAAEBAAACAPwAAAAAAAEBAAAAAAAAAAEAAAAAAAACAPwAAAEAAAAAAAAAAAAAAAEAAAEBAAACAPwAAAEAAAEBAAAAAAAAAAAAAAEBAAAAAAAAAAAAAAAAAAAAAAAAAAEAAAEBAAAAAAAAAAEAAAAAAAACAPwAAAAAAAEBAAACAPwAAAAAAAAAAAACAPwAAAEAAAEBAAACAPwAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAAIAAAACAAAAAgAAAAIAAAACAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAA"
+}

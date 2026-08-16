@@ -48,9 +48,12 @@ test("macOS takes a single character, Command implied", () => {
 test("macOS can express nothing else, so it says nothing", () => {
   // Setting a key equivalent macOS cannot honour would be worse than leaving it
   // blank: the menu would advertise a shortcut that does not work.
+  //
+  // Command plus Shift is the one that came back: to Cocoa ⇧⌘S *is* the
+  // character "S", so it is offered in that form - see the case below.
   assert.equal(menuShortcut("Darwin", parseChord("shift+enter")), undefined);
   assert.equal(menuShortcut("Darwin", parseChord("ctrl+enter")), undefined);
-  assert.equal(menuShortcut("Darwin", parseChord("mod+shift+s")), undefined);
+  assert.equal(menuShortcut("Darwin", parseChord("mod+shift+s")), "S");
   assert.equal(menuShortcut("Darwin", parseChord("f5")), undefined);
 });
 
@@ -107,10 +110,12 @@ test("File carries the items tabs will need, separated into groups", () => {
   );
 });
 
-test("View carries the sidebar toggle", () => {
+test("View carries the two layout toggles", () => {
   const view = submenu(menu("Darwin"), "menu.view");
-  assert.deepEqual(view.map((entry) => entry.text), ["Toggle Sidebar"]);
+  assert.deepEqual(view.map((entry) => entry.text),
+                   ["Toggle Sidebar", "Toggle Console and Variables"]);
   assert.equal(view[0].id, MENU.TOGGLE_SIDEBAR);
+  assert.equal(view[1].id, MENU.TOGGLE_BOTTOM);
 });
 
 test("Close Folder sits with the other closing commands", () => {
@@ -295,4 +300,24 @@ test("Windows and Linux keep the real display shortcut and a plain label", () =>
 
   assert.equal(runCell.shortcut, "Shift + Enter");
   assert.equal(runCell.text, "Run Cell");
+});
+
+test("macOS gets an uppercase accelerator for a Shift chord", () => {
+  // ⇧⌘Y is the character "Y" to Cocoa. Undocumented in Neutralino, so the
+  // display is the only thing riding on it - the window's own keydown listener
+  // is what makes the chord work.
+  assert.equal(menuShortcut("Darwin", parseChord("mod+shift+y")), "Y");
+  assert.equal(menuShortcut("Darwin", parseChord("mod+y")), "y");
+});
+
+test("macOS refuses what it genuinely cannot express", () => {
+  // Control and Alt have no place in that field, and neither does a key that
+  // is not one character. Those keep the chord in the label instead.
+  assert.equal(menuShortcut("Darwin", parseChord("ctrl+y")), undefined);
+  assert.equal(menuShortcut("Darwin", parseChord("mod+alt+y")), undefined);
+  assert.equal(menuShortcut("Darwin", parseChord("mod+f5")), undefined);
+});
+
+test("elsewhere a Shift chord still reads as a display string", () => {
+  assert.equal(menuShortcut("Linux", parseChord("mod+shift+y")), "Ctrl + Shift + Y");
 });

@@ -244,9 +244,33 @@ function packageMac() {
   }
 
   const dmg = join(OUT, `${APP_SLUG}-${VERSION}-${targetName}.dmg`);
+
+  // Eject a copy of this image that is still mounted, before anything is
+  // removed. Installing from a dmg leaves its volume mounted, and `hdiutil
+  // create` then refuses - after `rmSync` and its own `-ov` have already
+  // deleted the previous file. The failure is silent in the ordinary sense:
+  // the packaging error goes to stderr, the counter has already advanced, and
+  // what is left in release/ is nothing at all.
+  //
+  // Ejecting first is the whole fix, and it is safe: this only ever detaches an
+  // image the packager itself is about to replace.
+  try {
+    execFileSync("hdiutil", ["detach", `/Volumes/${APP_NAME}`], { stdio: "ignore" });
+    console.log(`ejected a mounted ${APP_NAME} volume`);
+  } catch {
+    // Not mounted, which is the common case.
+  }
+
   rmSync(dmg, { force: true });
   run("hdiutil", ["create", "-volname", APP_NAME, "-srcfolder", stage,
     "-ov", "-format", "UDZO", dmg]);
+
+  // Said rather than assumed: `run` throws on a non-zero exit, but a dmg that
+  // is not there afterwards is the one outcome nobody should have to discover
+  // by looking in the folder.
+  if (!existsSync(dmg)) {
+    throw new Error(`hdiutil reported success but ${dmg} is not there`);
+  }
   return dmg;
 }
 

@@ -396,11 +396,20 @@ export function usableChords(commandId, configured) {
 /**
  * DOM `KeyboardEvent.code` values, mapped to the tokens above.
  *
- * `code` rather than `key`, because `key` carries the *result* of the
- * modifiers: Shift-2 reports "@" on a US layout and `"` on a German one, and
- * Alt-something reports whatever character the layout produces. `code` names
- * the physical key, so a chord recorded here means the same thing that
- * `monacoBinding` will later register.
+ * `code` rather than `key` for everything that is not a letter, because `key`
+ * carries the *result* of the modifiers: Shift-2 reports "@" on a US layout and
+ * `"` on a German one, and Alt-something reports whatever character the layout
+ * produces. `code` names the physical key, which is what those chords mean.
+ *
+ * **Letters are the exception, and it took a bug report to see it.** `code`
+ * names the physical key by its position on a US keyboard, so on a German one
+ * the keycap printed Y arrives as `KeyZ` - and recording ⇧⌘Y there stored
+ * `mod+shift+z`. That is wrong twice over: it is not the chord the user
+ * pressed, and it is not what fires afterwards either, because Monaco
+ * dispatches on the legacy `keyCode`, which follows the layout for letters
+ * (`node_modules/monaco-editor/esm/vs/base/browser/keyboardEvent.js`, where
+ * `extractKeyCode` reads `e.keyCode`). So a letter chord is the letter on the
+ * keycap, and `chordFromEvent` takes it from `key`.
  *
  * Built rather than listed for the ranges, so it cannot drift from NAMED_KEYS.
  */
@@ -448,8 +457,29 @@ for (const digit of "0123456789") {
  * @param {string} platform NL_OS: "Windows", "Darwin" or "Linux"
  * @param {KeyboardEvent} event
  */
+/**
+ * The token for the key that was pressed: the keycap for a letter, the physical
+ * key for everything else.
+ *
+ * A letter is taken from `event.key` so that an international layout records
+ * what is printed on the key - see the CODES comment for why the two disagree
+ * and which one fires. `key` is uppercased while Shift is held, hence the fold.
+ *
+ * With Alt held on macOS a letter key produces a symbol rather than a letter
+ * (Alt-D is "∂"), so that falls through to the physical key. It is the best
+ * available answer: the browser offers no way to ask what the unmodified key
+ * would have produced, and WebKit has no `navigator.keyboard.getLayoutMap`.
+ */
+function keyToken(event) {
+  const character = typeof event.key === "string" ? event.key.toLowerCase() : "";
+  if (/^[a-z]$/.test(character)) {
+    return character;
+  }
+  return CODES[event.code];
+}
+
 export function chordFromEvent(platform, event) {
-  const key = CODES[event.code];
+  const key = keyToken(event);
   if (key === undefined) {
     return null;
   }

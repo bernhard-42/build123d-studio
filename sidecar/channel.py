@@ -175,6 +175,17 @@ class Channel:
             target=self._run_lane, args=(lane,), name=f"lane-{name}", daemon=True
         ).start()
 
+    def lane_depths(self):
+        """How much work is waiting on each lane, for a report about a stall.
+
+        The depths are the difference between "this one thing is slow" and
+        "everything is queued behind one thing", which is what an afternoon went
+        on establishing by hand.
+        """
+        with self._lanes_lock:
+            lanes = dict(self._lanes)
+        return {name: lane.qsize() for name, lane in lanes.items()}
+
     def _lane(self, name):
         """The queue of an already-open lane.
 

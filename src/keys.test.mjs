@@ -294,6 +294,11 @@ test("a chord-less command is menu-only rather than a mistake", () => {
 
 const press = (code, modifiers = {}) => ({
   code,
+  // What a US keyboard produces for the codes used below, so that a test which
+  // says nothing about the layout behaves like the common case. A layout that
+  // disagrees passes `key` explicitly, which is the whole point of the cases
+  // further down.
+  key: /^Key[A-Z]$/.test(code) ? code.slice(3).toLowerCase() : undefined,
   ctrlKey: false,
   metaKey: false,
   shiftKey: false,
@@ -383,4 +388,43 @@ test("the shipped defaults do not conflict with each other", () => {
   // The one that would be embarrassing to ship broken.
   const defaults = Object.fromEntries(COMMANDS.map((c) => [c.id, c.chords]));
   assert.deepEqual(findChordConflicts(defaults), []);
+});
+
+test("a letter chord is the letter on the keycap, not the key underneath it", () => {
+  // A German keyboard: the keycap printed Y sits where US-QWERTY has Z, so the
+  // event carries code "KeyZ" and key "Y". Recording the code stored
+  // `mod+shift+z` - neither the chord the user pressed nor the one that would
+  // fire, since Monaco dispatches on the layout-dependent legacy keyCode.
+  assert.equal(
+    chordFromEvent("Darwin", { code: "KeyZ", key: "Y", metaKey: true, shiftKey: true }),
+    "mod+shift+y",
+  );
+  // And the same keystroke on a US keyboard, where the two agree.
+  assert.equal(
+    chordFromEvent("Darwin", { code: "KeyY", key: "Y", metaKey: true, shiftKey: true }),
+    "mod+shift+y",
+  );
+});
+
+test("a non-letter still means the physical key, because Shift changes it", () => {
+  // Shift-2 is "@" on a US layout and '"' on a German one. The chord is the
+  // key, not what it printed, or the same binding would be a different chord
+  // on every keyboard.
+  assert.equal(
+    chordFromEvent("Darwin", { code: "Digit2", key: '"', metaKey: true, shiftKey: true }),
+    "mod+shift+2",
+  );
+  assert.equal(
+    chordFromEvent("Darwin", { code: "F5", key: "F5", metaKey: true }),
+    "mod+f5",
+  );
+});
+
+test("an Alt letter falls back to the physical key, having produced a symbol", () => {
+  // Alt-D on macOS reports key "∂". There is no way to ask what the key would
+  // have produced unmodified, so the physical key is the best answer available.
+  assert.equal(
+    chordFromEvent("Darwin", { code: "KeyD", key: "∂", metaKey: true, altKey: true }),
+    "mod+alt+d",
+  );
 });

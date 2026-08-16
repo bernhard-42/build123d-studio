@@ -31,11 +31,14 @@ from instance import Instance, remove_legacy_connection_file, sweep
 from kernel import Kernel
 from measure_service import MeasurementService
 from modelsock import ModelSocket
+from ocp_viewer_core.screenshot import save_png_data_url
 from pty_console import PtyConsole
+from stall import StallWatch
 
 # The kernel-side inspector, reached without binding a name in the user's
 # namespace - the variable explorer would otherwise list its own helper.
 INSPECTOR = '__import__("build123d_studio.inspector", fromlist=["inspector"])'
+
 
 # Serial lanes for handlers too slow to run on the receive thread. Two, not one,
 # so a restart cannot queue behind an inspection - see the registrations below.
@@ -101,6 +104,16 @@ IDLE_REFRESH_TIMEOUT = 5
 # going to finish, not a slow one.
 STARTUP_WATCHDOG = 120
 
+# And how long the way out may take before this process stops asking politely
+# and simply goes. Every step of stop() is meant to be bounded and every child
+# has a contract that takes it with us, so reaching this is a fault - which is
+# why it says which step it was on before it exits.
+#
+# It exists because that fault happened: seven sidecars were found on this
+# machine outliving the application that started them, each still holding a
+# kernel, a console and a measurement backend. See stop() for the deadlock.
+SHUTDOWN_DEADLINE = 8
+
 
 class Sidecar:
     def __init__(self, env_root, app_dir, instance):
@@ -134,7 +147,9 @@ class Sidecar:
         #
         # The service wraps a deferred import - see measure_service.py for why
         # the measurement backend is not imported at the top of this file.
-        self.measurements = MeasurementService()
+        self.measurements = MeasurementService(
+            on_state=lambda state, detail: self.report("measurement", state, detail)
+        )
 
         # The kernel warm-up is held back until the console is up; see
         # warm_kernel.
@@ -160,7 +175,12 @@ class Sidecar:
 
         # Static completion, read from the buffer. The other half of the answer
         # and the half that works on a kernel that has never run anything.
-        self.completer = Completer(env_root, app_dir, on_diagnostics=self.on_diagnostics)
+        self.completer = Completer(
+            env_root,
+            app_dir,
+            on_diagnostics=self.on_diagnostics,
+            on_state=lambda state, detail: self.report("completion", state, detail),
+        )
 
         # What makes a Run File and a debuggee die with this process, whatever
         # kills it. Both are spawned through it, and it is invoked by path
@@ -205,9 +225,44 @@ class Sidecar:
         # Held so it can be cancelled: see console_start.
         self._warm_timer = None
 
-        # Where the kernel-side build123d-studio package delivers tessellated models.
+        # Who owns the way out, and what it is doing. A quit arrives twice - the
+        # `shutdown` frame and stdin closing - and running the teardown twice at
+        # once is what left seven sidecars on this machine. See stop().
+        self._stop_lock = threading.Lock()
+        self._stopped = False
+        self._stop_step = None
+
+        # Kernel requests that have been sent and not yet answered, by msg_id.
+        # See watch_stall: nothing here cancels anything, it only decides when
+        # the log stops being silent about a request that is taking too long.
+        self._stalls = {}
+        self._stalls_lock = threading.Lock()
+
+        # Where the kernel-side build123d-studio package delivers models, the
+        # mapping behind them, viewer configs and the two questions a show asks.
         # The port is OS-assigned, so nothing can collide.
-        self.models = ModelSocket(on_model=self.on_model)
+        self.models = ModelSocket(
+            on_model=self.on_model,
+            on_mapping=self.on_mapping,
+            on_config=self.on_viewer_config,
+            on_command=self.on_viewer_command,
+        )
+
+        # The viewer's live state, as the frontend reports it. Every host keeps
+        # a picture like this rather than asking its browser synchronously: the
+        # renderer notifies as things change, and a show reads the last thing
+        # it said. Replaced wholesale rather than mutated, because it is written
+        # on the measure lane and read on the model socket's thread.
+        self._viewer_status = {}
+
+        # True while the splash logo is the only thing on screen. Its whole
+        # purpose is one guard: stopping reset_camera=KEEP from inheriting the
+        # logo's camera. The logo is drawn by the frontend at startup and never
+        # travels through here, so any model arriving on the model socket is by
+        # definition a real one - which is the entire tracking this host needs,
+        # and it costs no decoding of a header that is otherwise passed through
+        # as the bytes the kernel produced.
+        self._splash = True
 
         # Inline: these only forward, and none of them waits on a lock. Running
         # them on the receive thread is what keeps a keystroke ahead of
@@ -231,6 +286,7 @@ class Sidecar:
         # deserialises a BRep per face, edge and vertex of the model, and the
         # About dialog walks the installed distributions.
         self.channel.on("viewer.changes", self.on_viewer_changes, lane=MEASURE)
+        self.channel.on("viewer.screenshot", self.on_viewer_screenshot, lane=MEASURE)
         self.channel.on("vars.refresh", self.on_vars_refresh, lane=INSPECT)
         self.channel.on("app.info", self.on_app_info, lane=INSPECT)
 
@@ -286,16 +342,29 @@ class Sidecar:
     # --- lifecycle ---
 
     def start(self):
-        self.models.start()
+        # Each part says how it went as it goes, rather than the application
+        # deciding afterwards that everything must have worked. A start that
+        # looks fine with one part dead is the expensive failure: every symptom
+        # after it - a show that draws nothing, a measurement that answers
+        # nothing - points somewhere else.
+        try:
+            port = self.models.start()
+            self.report("viewer", "ready", f"model channel on port {port}")
+        except Exception as exc:  # noqa: BLE001 - reported, not swallowed
+            self.report("viewer", "failed", str(exc))
+            raise
 
         # Spawned here and not waited for. Its import is the same native stack
         # the kernel is about to load in its own process - 3.3 s each on a warm
         # Windows start - and the two now overlap instead of adding up, which is
         # the whole point of it having a process of its own.
         self.measurements.start()
+        self.report("measurement", "starting", "loading the geometry kernel")
 
         info = self.kernel_start()
+        self.report("kernel", "ready", "started")
         self.console_start()
+        self.report("console", "ready", "")
 
         # jedi's first call builds its view of the environment and costs half a
         # second. On the lane, so it is paid while the splash is still up rather
@@ -335,7 +404,6 @@ class Sidecar:
             model_token=self.models.token,
             on_iopub=self.on_iopub,
             on_died=self.on_kernel_died,
-            isolation_port=self.channel.port,
         )
         return self.kernel.start()
 
@@ -347,6 +415,7 @@ class Sidecar:
         and everything in it is not, and the way back is a kernel restart rather
         than a backend one.
         """
+        self.report("kernel", "failed", "the kernel process exited")
         self.channel.send("kernel.died")
 
     def console_start(self):
@@ -440,7 +509,9 @@ class Sidecar:
             return
         self._warmed.set()
         try:
-            self.kernel.warm_up()
+            # Watched, because this is the line that went unanswered for two
+            # minutes on 2026-08-15 and the log said nothing more about it.
+            self.watch_stall(self.kernel.warm_up(), "Kernel warm-up")
         except Exception as exc:  # noqa: BLE001 - a failed warm-up only costs speed
             log(f"Kernel warm-up failed: {exc}")
 
@@ -459,6 +530,12 @@ class Sidecar:
         # carry it, and it is the difference between "somebody ran code" and
         # "the console asked a question" - see the refresh below.
         parent_type = message["parent_header"].get("msg_type")
+
+        # Before the internal filter, deliberately: the warm-up is the request
+        # most worth watching and it is internal, so a stall watch cancelled
+        # after that return would never be cancelled at all.
+        if msg_type == "status" and content.get("execution_state") == "idle":
+            self.finish_stall(message["parent_header"].get("msg_id"))
 
         # Warm-up and inspection requests produce status traffic of their own.
         # Treating that as user activity would make the explorer refresh in
@@ -554,28 +631,203 @@ class Sidecar:
 
     # --- kernel -> viewer ---
 
-    def on_model(self, header_bytes, mapping_bytes, payload):
+    def on_model(self, header_bytes, payload):
         """Forward a tessellated model to the viewer pane.
 
         The header is passed straight through as the bytes the kernel produced -
         no decode/encode round trip - and the payload keeps its raw buffers all
         the way to the webview, where they become typed-array views with no copy.
         """
-        self.measurements.load(mapping_bytes)
+        self._splash = False
         log(f"Model received: header {len(header_bytes)} B, payload {len(payload)} B")
         self.channel.send_binary(KIND_MODEL, payload, header_bytes=header_bytes)
 
+    def on_mapping(self, mapping_bytes):
+        """Keep the id-to-shape mapping of the model just drawn.
+
+        Its own message rather than a field of the model's: it is serialised
+        BRep that only the measurement process can use, and sending it to the
+        webview would roughly double the traffic for data it cannot read.
+        """
+        self.measurements.load(mapping_bytes)
+
+    def on_viewer_config(self, config):
+        """Apply a config block to the viewer that is already on screen."""
+        self.to_viewer({"type": "ui", "config": config})
+
+    def on_viewer_command(self, request):
+        """Answer the kernel's questions, and pass its two commands on.
+
+        Both reads a show makes are answered from this process: the status out
+        of the picture the frontend pushes up, and the workspace config off the
+        settings file. Neither asks the browser anything synchronously - no host
+        does - which is what keeps a show from waiting on a webview.
+
+        The two commands that are not questions are answered as soon as they
+        have been passed on. `save_screenshot` waits for the file to appear on
+        disk rather than for a reply, which is how it works in every host.
+        """
+        command = request.get("command")
+        if command == "status":
+            return self._viewer_status
+        if command == "splash":
+            # Not a setting, which is why it is the only part of the workspace
+            # config that comes from here: whether the logo is still the only
+            # thing on screen is this process's fact, and the kernel asking its
+            # own settings file could not know it - nor could a second kernel,
+            # a Run File or a debuggee.
+            return {"_splash": self._splash}
+
+        kind = request.get("type")
+        if kind in ("screenshot", "set_relative_time"):
+            self.to_viewer(request)
+            return {"ok": True}
+
+        log(f"Unknown viewer command from the kernel: {request}")
+        return {"error": f"unknown command: {command or kind}"}
+
+    # --- when something takes too long ---
+
+    def watch_stall(self, msg_id, what):
+        """Watch one kernel request, and say what is going on if it does not end.
+
+        Keyed on the request's msg_id, because that is the only handle both ends
+        of the sentence share: the request is sent from a lane and its idle
+        arrives on the iopub pump, and nothing else connects the two.
+        """
+        if msg_id is None:
+            return
+        watch = StallWatch(f"{what} ({msg_id[:8]})", self.describe, log)
+        with self._stalls_lock:
+            self._stalls[msg_id] = watch
+        watch.start()
+
+    def finish_stall(self, msg_id):
+        """The kernel answered. Stop watching, and time it if anybody was told."""
+        if msg_id is None:
+            return
+        with self._stalls_lock:
+            watch = self._stalls.pop(msg_id, None)
+        if watch is not None:
+            watch.finish()
+
+    def describe(self):
+        """One line naming every part that could be the reason nothing is moving.
+
+        Everything here is asked of the part itself rather than tracked from
+        outside, so it cannot go stale. The order is the order somebody reads it
+        in: is the kernel there, is it ours or the user's code that is running,
+        is the model channel mid-message, is the measurement backend answering,
+        and what is queued behind all of it.
+        """
+        alive = self.kernel.is_alive() if self.kernel is not None else None
+        kernel = {None: "kernel unknown", True: "kernel alive", False: "kernel GONE"}[alive]
+        busy = "busy" if self._kernel_busy.is_set() else "idle"
+
+        models = self.models.state() if self.models is not None else {}
+        measurement = self.measurements.state() if self.measurements is not None else {}
+
+        # Only the lanes with anything on them, and an explicit word when there
+        # are none - a list of seven zeroes is not read, and "lanes empty" is.
+        depths = {name: depth for name, depth in self.channel.lane_depths().items() if depth > 0}
+        lanes = (
+            "lanes empty"
+            if len(depths) == 0
+            else "lanes " + " ".join(f"{name}={depth}" for name, depth in sorted(depths.items()))
+        )
+
+        return (
+            f"{kernel}, we think it is {busy}; "
+            f"model channel reading={models.get('reading')} queued={models.get('queued')}; "
+            f"measurement alive={measurement.get('alive')} busy={measurement.get('busy')} "
+            f"model={measurement.get('model')}; {lanes}"
+        )
+
+    def report(self, name, state, detail=""):
+        """Say how one part of the application is doing, on screen as well as in
+        the log.
+
+        Everything below the window has a lifecycle - the model channel, the
+        measurement backend, the kernel, the language server, the console - and
+        until now each announced itself into the log and told the user nothing.
+        The failure that costs the most is not the loud one: it is a start that
+        looks fine while one part is dead, because every symptom afterwards is
+        the wrong shape. `show()` draws nothing, a measurement answers nothing,
+        completion is silent - and the application knew all along.
+
+        Three states, and no more, because a person acts on three: `ready`,
+        `degraded` (it is working, with something worth knowing) and `failed`.
+        """
+        log(f"Subsystem {name}: {state}" + (f" - {detail}" if detail != "" else ""))
+        self.channel.send("subsystem", name=name, state=state, detail=detail)
+
+    def to_viewer(self, message):
+        """Hand one message to the page.
+
+        One frame carrying the page's own message objects rather than a frame
+        type per command: the shared page has a single dispatch, and both other
+        page hosts deliver into it the same way - the extension posts into its
+        webview and the standalone's shim posts what came off its socket. A
+        vocabulary of ours here would be a second dispatch to keep in step.
+        """
+        self.channel.send("viewer.message", message=message)
+
+    def on_viewer_screenshot(self, message):
+        """Write the image the viewer just handed back.
+
+        `save_screenshot` polls for this file rather than waiting for a reply,
+        which is why the write is atomic - see the core's screenshot module.
+        """
+        save_png_data_url(message.get("data"), message.get("filename"))
+
     def on_viewer_changes(self, message):
-        """Answer a viewer selection with exact geometry.
+        """Answer a viewer selection with exact geometry, and keep the status.
 
         The viewer's measure tools would otherwise work off the triangulated
         mesh, where a circle is a fan of triangles and its radius depends on the
         tessellation tolerance. The response here is computed from the BRep the
         mesh came from, so the numbers are the model's, not the mesh's.
+
+        The same message is what a later `status` is answered from. What arrives
+        is the accumulated picture with this change laid over it - event keys, a
+        selection or the active tool, ride only on the change itself and are
+        never accumulated, so a selection made minutes ago cannot be replayed
+        into an unrelated update.
         """
-        response = self.measurements.handle_changes(message.get("changes", {}))
+        changes = message.get("changes", {})
+        if len(changes) > 0:
+            self._viewer_status = changes
+
+        # Only two keys can produce a measurement, and asking the measurement
+        # process about anything else is a round trip to another process for a
+        # guaranteed None - hundreds of them while a camera is being dragged,
+        # each one a line in the log. The shared backend's own test is exactly
+        # this: it tracks the active tool, and `handle_activated_tool` returns
+        # immediately unless a selection came with the message.
+        if "activeTool" not in changes and "selectedShapeIDs" not in changes:
+            return
+
+        response = self.measurements.handle_changes(changes)
+
+        # What was clicked and what came of it - the line a support report needs.
+        # The paths are the viewer's own ids, the same ones the tree shows and
+        # the same ones the measurement backend prints when it answers, so a
+        # user can say "I clicked this" without knowing anything about either.
+        #
+        # It fires even when the answer is nothing, which is the case worth
+        # seeing: a selection that never left the viewer logs no line at all, a
+        # selection the backend cannot use logs "nothing", and they are
+        # indistinguishable from the screen.
+        selected = changes.get("selectedShapeIDs")
+        tool = changes.get("activeTool")
+        log(
+            "Measurement: "
+            + (f"tool={tool} " if tool is not None else "")
+            + (f"selected={selected} " if selected is not None else "")
+            + ("answered" if response is not None else "nothing")
+        )
         if response is not None:
-            self.channel.send("viewer.response", response=response)
+            self.to_viewer({"type": "backend_response", **response})
 
     # --- variable explorer ---
     #
@@ -715,6 +967,13 @@ class Sidecar:
         self._kernel_busy.set()
         self.channel.send("kernel.status", state="busy")
         log(f"Execute: {len(code)} chars, msg_id {msg_id}")
+
+        # A Run may legitimately take minutes - tessellating a real assembly
+        # does - so this is not a timeout and nothing is cancelled. It only
+        # means the log stops going quiet: at five seconds, and then every
+        # thirty, it says what the rest of the process was doing while nothing
+        # happened.
+        self.watch_stall(msg_id, "Execute")
 
     def on_interrupt(self, _message):
         self.kernel.interrupt()
@@ -994,6 +1253,21 @@ class Sidecar:
         nothing else about it is visible.
         """
         self.channel.send("kernel.restarting")
+        # Said as it happens, and this is the half that was missing.
+        #
+        # A restart is what a user reaches for *after* the kernel has died, so
+        # the subsystem is `failed` at this moment - and nothing ever took it
+        # back. The application worked perfectly afterwards, measurements and
+        # all, with a chip in the toolbar reading `failed` for the rest of the
+        # session. A state that can go bad and has no way back is worse than no
+        # state at all: it teaches the reader to ignore the one indicator that
+        # is meant to be worth looking at.
+        #
+        # `starting` rather than nothing, because it is what is true for the
+        # seconds this takes, and it is not a fault - so the chip goes away the
+        # moment the user asks for the restart rather than staying red while
+        # they watch it work.
+        self.report("kernel", "starting", "restarting")
         # Whatever the old kernel was in the middle of went with it. Left set,
         # completion would ask the replacement nothing for the rest of the
         # session, and the live half would quietly stop contributing.
@@ -1012,8 +1286,10 @@ class Sidecar:
             self.console_start()
         except Exception as exc:  # noqa: BLE001 - reported, not fatal
             self.channel.error("Restarting the kernel", exc)
+            self.report("kernel", "failed", f"restart failed: {exc}")
             self.channel.send("kernel.restart_failed", message=str(exc))
             return
+        self.report("kernel", "ready", "restarted")
         self.channel.send("kernel.restarted")
 
     def on_app_info(self, _message):
@@ -1030,37 +1306,102 @@ class Sidecar:
         os._exit(0)
 
     def stop(self):
-        if self._warm_timer is not None:
-            self._warm_timer.cancel()
-        if self.completer is not None:
-            self.completer.stop()
-        if self.debug is not None:
-            self.debug.stop()
-        # Before the kernel, like the debugger: it is a child process holding
-        # the same environment, and quitting the application must not leave a
-        # script running against a viewer that has gone.
-        if self.run is not None:
-            self.run.stop()
-        if self.measurements is not None:
-            self.measurements.stop()
-        if self.console is not None:
-            self.console.stop()
-        if self.kernel is not None:
-            self.kernel.shutdown()
-        if self.models is not None:
-            self.models.stop()
-        self.channel.close()
-        # Last, and after the kernel: releasing the lock is what tells the next
-        # instance's sweep that this directory can go, and the connection file
-        # inside it is meaningless once the kernel it describes has stopped.
-        #
-        # The lock always goes; the directory may not, because on Windows a
-        # kernel process that has been asked to stop but has not yet stopped
-        # still holds the connection file open. Logged rather than swallowed -
-        # the next instance's sweep is what finishes the job.
-        self.instance.release(
-            on_error=lambda directory, exc: log(f"Could not remove {directory}: {exc}")
-        )
+        """Shut everything down, once, and never take longer than the deadline.
+
+        **Once, whoever asks.** A quit asks twice by design - the frontend sends
+        `shutdown` and then closes stdin, so that a webview which dies before the
+        frame lands is still heard - and this used to run the whole chain on both
+        threads at the same time. That is how seven sidecars came to outlive
+        their application on this machine, each holding a kernel, a console and a
+        measurement backend: the two runs met in the middle, each waiting on
+        something the other had already taken.
+
+        Losing that race is worse than it sounds, and the reason is upstream:
+        websockets creates its connection thread **non-daemon**
+        (`sync/server.py:285`, 16.1.1). So the frame's handler runs stop() on a
+        thread the interpreter will *join* on the way out - and when the stdin
+        path finished first and returned, CPython's own teardown then waited for
+        ever on a thread stuck inside the same shutdown. Nothing was left to log
+        it: from the outside the process simply stayed.
+
+        So: one owner, the second caller waits for it and finds it done, and both
+        paths end in os._exit rather than in an interpreter teardown that joins
+        somebody else's thread.
+
+        **And bounded.** Every step below is meant to return, but "meant to" is
+        what the orphans disproved, so a watchdog leaves anyway and says which
+        step it was on. Every child holds a contract that takes it with us - the
+        kernel's parent poller, the language server's processId, the console's
+        pty, the supervisors' pipes - so exiting is enough to take the tree.
+        """
+        with self._stop_lock:
+            if self._stopped:
+                return
+            self._stopped = True
+
+            watchdog = threading.Timer(SHUTDOWN_DEADLINE, self._give_up_stopping)
+            watchdog.daemon = True
+            watchdog.start()
+            try:
+                if self._warm_timer is not None:
+                    self._warm_timer.cancel()
+                self._stopping("the language server", self.completer, "stop")
+                self._stopping("the debug session", self.debug, "stop")
+                # Before the kernel, like the debugger: it is a child process
+                # holding the same environment, and quitting the application
+                # must not leave a script running against a viewer that has gone.
+                self._stopping("the running file", self.run, "stop")
+                self._stopping("the measurement backend", self.measurements, "stop")
+                self._stopping("the console", self.console, "stop")
+                self._stopping("the kernel", self.kernel, "shutdown")
+                self._stopping("the model channel", self.models, "stop")
+                self._stopping("the webview channel", self.channel, "close")
+                # Last, and after the kernel: releasing the lock is what tells
+                # the next instance's sweep that this directory can go, and the
+                # connection file inside it is meaningless once the kernel it
+                # describes has stopped.
+                #
+                # The lock always goes; the directory may not, because on Windows
+                # a kernel process that has been asked to stop but has not yet
+                # stopped still holds the connection file open. Logged rather
+                # than swallowed - the next instance's sweep finishes the job.
+                self._stopping(
+                    "the instance directory",
+                    self.instance,
+                    "release",
+                    on_error=lambda directory, exc: log(f"Could not remove {directory}: {exc}"),
+                )
+            finally:
+                watchdog.cancel()
+                self._stop_step = None
+
+    def _stopping(self, what, owner, method, **arguments):
+        """Run one step of the shutdown, and remember which one is running.
+
+        Isolated, because a step that raises must not strand the ones after it -
+        the language server failing to die is no reason to leave a kernel behind
+        - and named, because the watchdog's whole value is being able to say
+        where it stopped.
+        """
+        if owner is None:
+            return
+        self._stop_step = what
+        try:
+            getattr(owner, method)(**arguments)
+        except Exception as exc:  # noqa: BLE001 - one bad step must not strand the rest
+            log(f"Stopping {what} failed: {exc}")
+
+    def _give_up_stopping(self):
+        """Leave, whatever is holding the shutdown up.
+
+        Exit 0 rather than a fault code: by here the frontend is either gone or
+        going, and the only reader left is the log - which gets the sentence
+        that matters. A non-zero exit would additionally raise the "the Python
+        backend stopped" banner in a window that is closing anyway.
+        """
+        log(f"Shutdown stuck on {self._stop_step} after {SHUTDOWN_DEADLINE}s; leaving anyway")
+        sys.stderr.flush()
+        os._exit(0)
 
 
 def main():
@@ -1137,7 +1478,17 @@ def main():
     finally:
         log("stdin closed, shutting down")
         sidecar.stop()
-    return 0
+
+    # Exited rather than returned, and this is not tidiness.
+    #
+    # Returning hands over to CPython's teardown, which joins every non-daemon
+    # thread - and websockets creates its connection thread as one
+    # (`sync/server.py:285`, 16.1.1). That thread is where the `shutdown` frame
+    # is handled, so on a normal quit the interpreter waited for a thread that
+    # was itself inside the shutdown. Ours are all daemons deliberately; this
+    # makes the one we do not own harmless too.
+    sys.stderr.flush()
+    os._exit(0)
 
 
 if __name__ == "__main__":

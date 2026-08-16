@@ -1220,7 +1220,8 @@ def main():
     # A token that is not valid ASCII. It used to be decoded with "replace",
     # which turns a stray byte into U+FFFD, and compare_digest refuses to
     # compare non-ASCII str at all - so a bad token raised TypeError and was
-    # reported as "Failed to read a model", blaming the kernel for a stranger.
+    # reported as "Failed to read a message from the kernel", blaming the kernel
+    # for a stranger.
     before = len(side.log)
     with socket.create_connection(("127.0.0.1", model_port), timeout=10) as peer:
         token = b"\xff\xfe" + b"x" * 41
@@ -1228,7 +1229,8 @@ def main():
         peer.sendall(struct.pack(">Q", len(body)) + body)
         peer.recv(1)
     rejected = side.wait_log("Rejected a model message with a bad token", 15)[0] is not None
-    blamed = [text for _, text in side.log[before:] if "Failed to read a model" in text]
+    blamed = [text for _, text in side.log[before:]
+              if "Failed to read a message from the kernel" in text]
     check("a non-ASCII token is rejected as a bad token", rejected and len(blamed) == 0,
           "; ".join(blamed[:1]))
 
@@ -1357,17 +1359,24 @@ def main():
     # by presenting a bad token, and both are the sidecar correctly saying so.
     # Listed rather than filtered by wording, so that a genuine failure with
     # similar words is not quietly swallowed with them.
-    provoked = ("Failed to read a model: timed out",
-                "Failed to read a model: Gave up with",
+    provoked = ("Failed to read a message from the kernel: timed out",
+                "Failed to read a message from the kernel: Gave up with",
                 # Both asked for above: a path that is not a file, and a second
                 # run while one is running. The sidecar refusing them is the
                 # behaviour under test, and it says so through this same log.
-                "Run failed to start:")
-    complaints = [text for _, text in side.log
+                "Run failed to start:",
+                # The kernel is killed above, deliberately, to hold that its
+                # death is noticed at all - so the sidecar saying so is the
+                # thing under test rather than a complaint. New since the
+                # subsystem reports arrived; the wording is `Sidecar.report`'s.
+                "Subsystem kernel: failed - the kernel process exited")
+    complaints = [(at, text) for at, text in side.log
                   if ("failed" in text or "timed out" in text or "Traceback" in text)
                   and not text.startswith(provoked)]
+    # With the time each was logged, because the text alone does not say which
+    # test caused it - and that is the first question anybody asks of this list.
     check("the sidecar reported no unexpected failures", len(complaints) == 0,
-          "; ".join(complaints[:3]))
+          "; ".join(f"{at:.1f}s {text}" for at, text in complaints[:3]))
 
     # --- nothing outlives this process, however it dies ---
     #
@@ -1425,6 +1434,60 @@ def main():
             pass
 
     side.stop()
+
+    # --- and the sidecar goes when the frontend does ---
+    #
+    # The other half of the contract above, and the half that was broken: the
+    # check before this one kills the sidecar, which nothing can survive, and
+    # says nothing about the sidecar *itself* going away when it is asked. On
+    # 2026-08-15 seven of them were found on this machine outliving the
+    # application that started them, each still holding a kernel, a console and
+    # a measurement backend - and every one of them had been asked properly.
+    #
+    # A quit asks twice by design: `stopSidecar` sends the frame and then closes
+    # stdin, so a webview that dies before the frame lands is still heard. Both
+    # are sent here for that reason - the deadlock only appeared when the two
+    # arrived together, because the teardown then ran on two threads at once and
+    # they met in the middle.
+    quitting = Sidecar(sys.executable, args.env_root, args.app_dir)
+    quitting.start()
+    quitting.wait_frame("ready", READY_TIMEOUT)
+    # With work of its own to lose, so this is a shutdown with a kernel, a
+    # console and a measurement backend in it rather than an empty one.
+    quitting.send("kernel.execute", code="import time\n1 + 1\n")
+    tree = [p for p in psutil.Process(quitting.proc.pid).children(recursive=True)
+            if p.status() != psutil.STATUS_ZOMBIE]
+
+    try:
+        quitting.send("shutdown")
+    except Exception:  # noqa: BLE001 - the socket may go with the process
+        pass
+    quitting.proc.stdin.close()
+
+    # Generously more than the sidecar's own SHUTDOWN_DEADLINE, which is what
+    # actually bounds this: reaching that is a fault, and it still exits.
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline and quitting.proc.poll() is None:
+        time.sleep(0.1)
+    check("the sidecar exits when its frontend goes", quitting.proc.poll() is not None,
+          "still running" if quitting.proc.poll() is None else "")
+
+    left = tree
+    deadline = time.monotonic() + 20
+    while time.monotonic() < deadline:
+        left = [p for p in left if p.is_running() and p.status() != psutil.STATUS_ZOMBIE]
+        if len(left) == 0:
+            break
+        time.sleep(0.2)
+    check("nothing outlives a quit", len(left) == 0,
+          "; ".join(describe(p) for p in left[:3]))
+
+    for process in left:
+        try:
+            process.kill()
+        except psutil.Error:
+            pass
+    quitting.stop()
 
     failed = [name for name, ok in results if not ok]
     print(f"\n{len(results) - len(failed)}/{len(results)} passed", flush=True)

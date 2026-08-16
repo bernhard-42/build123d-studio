@@ -118,7 +118,9 @@ export default [
   {
     files: ["src/**/*.js"],
     languageOptions: {
-      ecmaVersion: 2024,
+      // 2025 for import attributes: `import x from "./x.json" with { type: "json" }`,
+      // which node requires for a JSON import and which the viewer schema uses.
+      ecmaVersion: 2025,
       sourceType: "module",
       globals: browser,
     },
@@ -128,7 +130,9 @@ export default [
     // Build and packaging tooling, plus the tests, all of which run under Node.
     files: ["scripts/**/*.mjs", "*.config.js", "src/**/*.test.mjs"],
     languageOptions: {
-      ecmaVersion: 2024,
+      // 2025 for import attributes: `import x from "./x.json" with { type: "json" }`,
+      // which node requires for a JSON import and which the viewer schema uses.
+      ecmaVersion: 2025,
       sourceType: "module",
       globals: node,
     },

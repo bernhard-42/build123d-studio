@@ -12,11 +12,21 @@
  * before and after that work.
  *
  * The fixture is a real tessellation captured from the pinned environment
- * (`Box(1, 2, 3)` through ocp_vscode's `_convert`, split by the kernel's own
- * `split_buffers`), not a header written by hand. A hand-written one would only
- * ever prove that the test agrees with the test: rehydrate() reads dtypes,
+ * (`Box(1, 2, 3)` through the shared core's `_convert`, split by the kernel's
+ * own `split_buffers`), not a header written by hand. A hand-written one would
+ * only ever prove that the test agrees with the test: rehydrate() reads dtypes,
  * offsets and lengths that ocp_tessellate chose, and inventing them is
  * inventing the thing under test.
+ *
+ * **Recaptured when this host adopted `ocp_viewer_core`, and that is not
+ * bookkeeping.** The old capture carried its config in Python's names -
+ * `render_edges`, `reset_camera`, `helper_scale` - because the frontend used to
+ * do that conversion itself. The core converts once at the wire, so what
+ * arrives now is `renderEdges`, `resetCamera`, `helperScale`. Feeding the old
+ * frame to the new pipeline is feeding it a message no host produces: almost
+ * every key is unrecognised, the renderer silently keeps what it had, and the
+ * test measures the previous format rather than this one. A captured fixture
+ * has to be recaptured whenever the thing it captured changes.
  *
  * Proved by un-applying, once, when each case was written: the guard taken out
  * of the shipped source, the suite run, the file put back. What was removed,
@@ -80,6 +90,47 @@ test.describe("a model frame renders", () => {
       .toBeVisible();
 
     expect(problems, "rendering the model raised errors").toEqual([]);
+  });
+
+  test("what the browser prints reaches its own log file", async ({ page }) => {
+    // On macOS there is no developer console at all - Safari lists a WKWebView
+    // only when `isInspectable` is set, which no Neutralino release does - so a
+    // file is the only place a fault can be read from a user's machine. What
+    // matters there is what *nobody here wrote*: a renderer refusing a model, a
+    // failed request, a library's own warning.
+    //
+    // Raised deliberately rather than by provoking a real one. This asserted on
+    // three-cad-viewer's NaN bounding sphere while a bad fixture was producing
+    // it; the fixture was wrong, the warning went away, and the test went with
+    // it. What this application owns is the mirror, so that is what is tested -
+    // and `console.error` is the level Settings forwards by default.
+    await openApp(page);
+    await page.evaluate(() => console.error("probe: a library complaining"));
+
+    await expect
+      .poll(
+        () =>
+          page.evaluate(() =>
+            String(
+              globalThis.__NEUTRALINO_STUB__.wrote(
+                "/appdata/build123d-studio/console.log",
+              ) ?? "",
+            ),
+          ),
+        { message: "the browser's console output never reached console.log" },
+      )
+      .toContain("console.error: probe: a library complaining");
+
+    // And not into the application's own log, which stays the narrative a user
+    // is asked for rather than a firehose.
+    const own = await page.evaluate(() =>
+      String(
+        globalThis.__NEUTRALINO_STUB__.wrote(
+          "/appdata/build123d-studio/build123d-studio.log",
+        ) ?? "",
+      ),
+    );
+    expect(own).not.toContain("probe: a library complaining");
   });
 
   test("the canvas is given the pane's size rather than a default", async ({ page }) => {

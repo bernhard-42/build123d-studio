@@ -8,6 +8,9 @@ import { getSetting, setSetting } from "../store.js";
 // makes sense after the window is resized or moved to another display.
 
 const STORAGE_KEY = "layout";
+// Separate from the fractions, which are all numbers a drag produces: a boolean
+// among them would go through clamp() with the rest.
+const BOTTOM_HIDDEN_KEY = "bottomHidden";
 const MIN_FRACTION = 0.1;
 const SPLITTER_PX = 5;
 
@@ -21,6 +24,7 @@ const DEFAULTS = { rows: 0.62, columnsTop: 0.45, columnsBottom: 0.45, tree: 0.16
 
 let fractions = { ...DEFAULTS };
 let dragging = null;
+let bottomHidden = false;
 
 function clamp(value) {
   return Math.min(1 - MIN_FRACTION, Math.max(MIN_FRACTION, value));
@@ -33,6 +37,15 @@ function apply() {
   workspace.style.setProperty("--col-tree", `${workspace.clientWidth * fractions.tree}px`);
 
   const app = document.getElementById("app");
+  // The row and its splitter go together: hiding the row alone would leave a
+  // draggable five-pixel strip under a full-height editor, sizing something
+  // nobody can see. The class collapses the grid to one track - setting the
+  // row height to zero here would be undone by the next drag, because the
+  // height is a variable this function writes.
+  app.classList.toggle("no-bottom", bottomHidden);
+  document.getElementById("splitter-h").hidden = bottomHidden;
+  document.getElementById("row-bottom").hidden = bottomHidden;
+
   const height = app.clientHeight - SPLITTER_PX;
   app.style.setProperty("--row-top", `${height * fractions.rows}px`);
   app.style.setProperty("--row-bottom", `${height * (1 - fractions.rows)}px`);
@@ -125,6 +138,27 @@ export function refreshLayout() {
   notifyResize();
 }
 
+/** Whether the console and the variable explorer are hidden. */
+export function bottomRowHidden() {
+  return bottomHidden;
+}
+
+/**
+ * Show or hide the bottom row - the console, the run output and the variables.
+ *
+ * For working on a model with the whole window: the editor and the viewer take
+ * the height the row gives up. The split itself is remembered, because the
+ * fraction is not touched - only whether the row is in the grid at all.
+ */
+export async function toggleBottomRow() {
+  bottomHidden = !bottomHidden;
+  // Two of the panes that remain have to be told they grew: the viewer re-fits
+  // its canvas and xterm re-measures its rows. Monaco does its own.
+  refreshLayout();
+  await setSetting(BOTTOM_HIDDEN_KEY, bottomHidden);
+  return bottomHidden;
+}
+
 /**
  * Register a callback to run whenever pane sizes change - on drag end and on
  * window resize. Monaco does not need this (automaticLayout), the CAD viewer
@@ -136,6 +170,7 @@ export function onPaneResize(listener) {
 
 export async function initSplitters() {
   restore();
+  bottomHidden = getSetting(BOTTOM_HIDDEN_KEY) === true;
   apply();
 
   const bindings = [

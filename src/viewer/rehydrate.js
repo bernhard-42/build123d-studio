@@ -61,37 +61,3 @@ export function rehydrate(node, buffer, payloadOffset) {
   }
   return node;
 }
-
-/**
- * Resolve {ref: n} shape references against the instance table.
- *
- * three-cad-viewer does this itself in decodeInstancedFormat, but only along a
- * path that base64-decodes every instance first and would throw on the typed
- * arrays we already hold. Resolving here means the viewer receives a plain
- * shapes tree, skips its decode path entirely, and leaves our views untouched.
- */
-export function resolveInstances(data) {
-  const instances = data.instances ?? [];
-  const shapes = data.shapes;
-
-  const walk = (group) => {
-    if (!Array.isArray(group.parts)) {
-      return;
-    }
-    for (const part of group.parts) {
-      if (part.shape !== null && typeof part.shape === "object" && "ref" in part.shape) {
-        const ref = part.shape.ref;
-        if (ref < 0 || ref >= instances.length) {
-          throw new Error(`Shape ref ${ref} out of bounds (${instances.length} instances)`);
-        }
-        part.shape = instances[ref];
-      }
-      if (part.parts) {
-        walk(part);
-      }
-    }
-  };
-
-  walk(shapes);
-  return shapes;
-}

@@ -298,14 +298,13 @@ class Kernel:
     """Owns the kernel process and the sidecar's client to it."""
 
     def __init__(self, env_root, app_dir, connection_file, model_port, model_token,
-                 on_iopub, on_died, isolation_port):
+                 on_iopub, on_died):
         self.env_root = env_root
         self.app_dir = app_dir
         self.model_port = model_port
         self.model_token = model_token
         self.on_iopub = on_iopub
         self.on_died = on_died
-        self.isolation_port = isolation_port
 
         # Said once per kernel, not once per half-second. Cleared by start(), so
         # a replacement kernel can report its own death later.
@@ -559,20 +558,22 @@ class Kernel:
         env["BUILD123D_STUDIO_MODEL_PORT"] = str(self.model_port)
         env["BUILD123D_STUDIO_MODEL_TOKEN"] = self.model_token
 
-        # Isolate ocp_vscode's viewer discovery.
-        #
-        # _convert() reaches config.workspace_config(), which calls get_port()
-        # and then opens a websocket to whatever ocp_vscode viewer it finds, to
-        # read that viewer's settings. With a VS Code OCP viewer running on the
-        # default 3939, build123d-studio's show() would silently query *that* - a real
-        # cross-talk bug, and slower for it.
-        #
-        # Pointing OCP_PORT at the sidecar's own socket makes the discovery a
-        # no-op that can only ever reach a port we own: the connection is
-        # refused by the token check, ocp_vscode falls back to its defaults, and
-        # no other process on the machine is contacted. Picking some port
-        # believed to be closed would be a guess; this is a certainty.
-        env["OCP_PORT"] = str(self.isolation_port)
+        # Where this application's own settings live, so that `show()` can
+        # answer `workspace_config()` - the persistent half of a show's
+        # configuration - without asking anybody. It is the frontend's file and
+        # the kernel only ever reads it.
+        env["BUILD123D_STUDIO_SETTINGS"] = os.path.join(
+            os.path.dirname(os.path.normpath(self.env_root)), "settings.json"
+        )
+
+        # No OCP_PORT any more, and its absence is the point. It used to pin
+        # ocp_vscode's viewer discovery at a socket we own, because `_convert`
+        # reached that package's `workspace_config()` and would otherwise have
+        # opened a websocket to whatever OCP viewer happened to be running -
+        # with one in VS Code on the default 3939, this application's `show()`
+        # silently drew into *that*. Nothing here imports ocp_vscode now: the
+        # shared core asks this host's own `Comms`, which is a socket the
+        # sidecar owns, so there is no discovery left to isolate.
         return env
 
     def new_manager(self):
@@ -748,6 +749,11 @@ class Kernel:
         self._warm_msg_id = msg_id
         self._warm_started = time.monotonic()
         log("Kernel warm-up started: importing build123d")
+        # Returned so the caller can watch for the other half of that sentence.
+        # This is a send, not a wait - the import finishes when its idle comes
+        # back on iopub - so "the warm-up hung" is only ever observable by
+        # somebody holding this id. See Sidecar.warm_kernel.
+        return msg_id
 
     def _check_alive(self, generation):
         """Report a kernel process that has gone, once.
@@ -787,6 +793,20 @@ class Kernel:
             return
         log(f"Kernel warm-up finished in {time.monotonic() - self._warm_started:.1f}s")
         self._warm_msg_id = None
+
+    def is_alive(self):
+        """Whether the kernel process is still there. None if it cannot be asked.
+
+        Three answers rather than two, deliberately: "the check itself failed"
+        is not "the kernel is gone", and a report about a stall that conflated
+        them would point at the kernel every time the manager was mid-restart.
+        """
+        try:
+            if self.manager is None:
+                return None
+            return bool(self.manager.is_alive())
+        except Exception:  # noqa: BLE001 - a failed check is not a death
+            return None
 
     def is_internal(self, message):
         """True for iopub traffic caused by this class rather than by the user."""

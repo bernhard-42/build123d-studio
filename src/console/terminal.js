@@ -17,11 +17,6 @@ import { onThemeChange } from "../theme.js";
 
 let terminal = null;
 let fitAddon = null;
-// Whether the console process has produced anything yet. Module-level because
-// writeProgress is called from outside initTerminal, and the answer decides
-// whether this pane is a status area or somebody's transcript.
-let consoleSpoke = false;
-
 const encoder = new TextEncoder();
 
 function sendSize() {
@@ -83,7 +78,6 @@ export function initConsole() {
   ipc.onBinary(ipc.KIND_CONSOLE, (payload) => {
     if (firstOutput) {
       firstOutput = false;
-      consoleSpoke = true;
       // Drop the placeholder so the transcript starts at the real banner
       // rather than below a stale status line.
       terminal.reset();
@@ -111,7 +105,6 @@ export function initConsole() {
     terminal.reset();
     terminal.write("\x1b[2mRestarting the Python backend…\x1b[0m\r\n");
     firstOutput = true;
-    consoleSpoke = false;
   });
 
   ipc.on("kernel.restarted", () => {
@@ -135,19 +128,11 @@ export function initConsole() {
   };
 }
 
-/**
- * Show one line of the sidecar's startup progress, until the console speaks.
- *
- * Stops at the first byte from the pty, because from then on the pane is a
- * transcript of a real session and anything else written into it is something
- * the user did not type and cannot scroll away from.
- */
-export function writeProgress(line) {
-  if (terminal === null || terminal === undefined || consoleSpoke) {
-    return;
-  }
-  terminal.write(`\x1b[2m  ${line}\x1b[0m\r\n`);
-}
+// The sidecar's startup progress used to be written here in grey, until the
+// pty said its first word. It lives in the Backend tab now - which is the pane
+// the application starts on, and which keeps the lines afterwards instead of
+// having them scrolled away by the first prompt. This pane is a transcript of
+// a real session again, and nothing writes into it that the user did not type.
 
 /**
  * Re-measure and tell the pty, unless the pane is hidden.

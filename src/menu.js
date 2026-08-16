@@ -56,6 +56,7 @@ export const MENU = {
   CLOSE: "file.close",
   CLOSE_ALL: "file.closeAll",
   TOGGLE_SIDEBAR: "view.sidebar",
+  TOGGLE_BOTTOM: "view.bottom",
   CUT: "edit.cut",
   COPY: "edit.copy",
   PASTE: "edit.paste",
@@ -102,10 +103,21 @@ export function menuShortcut(platform, chord) {
     return parts.join(" + ");
   }
 
-  // Command plus exactly one character, and nothing else, is the only thing
-  // macOS can be told through this field.
-  const onlyMod = chord.mod && !chord.ctrl && !chord.shift && !chord.alt;
-  return onlyMod && character !== undefined ? character : undefined;
+  // Command plus one character is what the documentation describes: "Sets a
+  // key accelerator on macOS (e.g., `c` for `Command + C`)". It says nothing
+  // about Shift, and Cocoa's own convention is that an *uppercase* key
+  // equivalent implies it - ⇧⌘Y is the character "Y". So a mod+shift+letter
+  // chord is offered in that form, and if this build of Neutralino passes the
+  // string through to NSMenuItem, the item shows the accelerator right-aligned
+  // like its neighbours instead of carrying the chord in its label.
+  //
+  // Undocumented, therefore not depended on: if it is ignored, the item simply
+  // has no accelerator, the keystroke is still handled by the window's own
+  // listener, and the only loss is the display. Nothing else reads this.
+  if (character === undefined || chord.ctrl || chord.alt || !chord.mod) {
+    return undefined;
+  }
+  return chord.shift ? character.toUpperCase() : character;
 }
 
 /** The one character a key token stands for, or undefined if it is not one. */
@@ -258,7 +270,10 @@ export function buildMenu({
     {
       id: "menu.view",
       text: "View",
-      menuItems: [at(MENU.TOGGLE_SIDEBAR, "Toggle Sidebar")],
+      menuItems: [
+        at(MENU.TOGGLE_SIDEBAR, "Toggle Sidebar"),
+        at(MENU.TOGGLE_BOTTOM, "Toggle Console and Variables"),
+      ],
     },
     {
       id: "menu.edit",

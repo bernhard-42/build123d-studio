@@ -2,60 +2,27 @@
 
 The viewer's measure tools work on a triangulated mesh, so anything derived
 from it alone would be an approximation - a "circle" is a fan of triangles, and
-its radius depends on the tessellation tolerance. ocp_vscode solves this with
-ViewerBackend: it keeps the BRep shapes that produced the mesh and answers
-selection queries from those instead, so a radius is the radius.
+its radius depends on the tessellation tolerance. `ocp_viewer_core`'s
+ViewerBackend keeps the BRep shapes that produced the mesh and answers selection
+queries from those instead, so a radius is the radius.
 
-That class is reused here as-is for the part that matters - load_model(), which
-walks the model and indexes every face, edge and vertex by the same ids the
-viewer uses - and subclassed to return responses rather than send them.
+It is used unchanged now. This file used to subclass it to answer by *returning*
+rather than sending, and to skip a constructor that stored a port and opened a
+websocket back to a viewer - both of which the shared backend has since adopted
+outright: `ViewerBackend()` takes nothing, holds no transport, and `handle_event`
+returns the measurement or None. Jupyter CadQuery had always answered that way
+and this host had arrived at it independently, which is what settled it.
 
-The base class already has a return mode, but it is gated on a JUPYTER_CADQUERY
-environment variable that also rewires ocp_vscode's imports at module scope.
-That integration is known tech debt upstream, so build123d-studio overrides the two
-handlers instead of switching it on.
+What is left here is this host's own: when a model is indexed, which model an
+answer describes, and the notification shape the frontend sends.
 """
 
 import threading
 
 import orjson
-from ocp_vscode.backend import Tool, ViewerBackend
-from ocp_vscode.measure import get_distance, get_properties
+from ocp_viewer_core.backend import ViewerBackend
 
 from channel import log
-
-
-class MeasurementBackend(ViewerBackend):
-    """ViewerBackend that answers in-process."""
-
-    def __init__(self):
-        # Deliberately not calling super().__init__: it only stores a port and
-        # calls comms.set_port() to prepare a websocket back to a viewer, and
-        # there is no websocket here - the answer is returned to the caller.
-        self.port = None
-        self.model = None
-        self.activated_tool = None
-        self.filter_type = "none"
-        self.jcv_id = None
-
-    def handle_properties(self, shape_id):
-        """Volume, area, centre and so on for one selected shape."""
-        shape = self.model[shape_id]
-        response = get_properties(shape)
-        response["type"] = "backend_response"
-        response["subtype"] = "tool_response"
-        response["tool_type"] = Tool.Properties
-        return response
-
-    def handle_distance(self, id1, id2, center):
-        """Exact distance between two selected shapes."""
-        shape1 = self.model[id1]
-        shape2 = self.model[id2]
-        response = get_distance(shape1, shape2, center)
-        response["type"] = "backend_response"
-        response["subtype"] = "tool_response"
-        response["tool_type"] = Tool.Distance
-        return response
 
 
 class ShownModel:
@@ -99,11 +66,25 @@ class ShownModel:
         """
         with self._lock:
             if self._backend is None:
-                backend = MeasurementBackend()
+                backend = ViewerBackend()
                 backend.load_model(orjson.loads(self.mapping_bytes))
                 self._backend = backend
                 log("Measurement model indexed")
             return self._backend
+
+
+class _Loaded:
+    """A backend that is already indexed, with `ShownModel`'s shape.
+
+    So that `handle_changes` can take either without asking which it has: the
+    splash is built once and never rebuilt, a shown model indexes on first use.
+    """
+
+    def __init__(self, backend):
+        self._backend = backend
+
+    def backend(self):
+        return self._backend
 
 
 class Measurements:
@@ -111,10 +92,33 @@ class Measurements:
 
     def __init__(self):
         self._shown = None
+        # The splash, which is measurable before anything has been shown - and
+        # was not, for as long as this host had a measurement backend of its
+        # own. The logo is a real model with real BREP behind it, so a distance
+        # across it is a distance; the shared backend loads it in `start()` for
+        # exactly this, and until now nothing here called that.
+        #
+        # Built on demand rather than at construction: indexing it walks every
+        # face, edge and vertex, and a session where nobody measures the logo -
+        # which is most of them - should not pay for it.
+        self._splash = None
+        self._splash_lock = threading.Lock()
         # Tracked here rather than on the backend, so that a tool can be
         # activated without forcing the model to be indexed first. It belongs to
         # the session rather than to a model, which is why it survives a show().
         self._active_tool = None
+
+    def _splash_model(self):
+        """The logo, indexed, standing in for a model nobody has shown yet."""
+        with self._splash_lock:
+            if self._splash is None:
+                backend = ViewerBackend()
+                # Prints what it is doing, which reaches the Backend tab: this
+                # is the one indexing pass a user did not ask for, so it should
+                # say so rather than appear as a pause.
+                backend.start()
+                self._splash = _Loaded(backend)
+            return self._splash
 
     def load(self, mapping_bytes):
         """Take the mapping for a freshly shown model.
@@ -133,7 +137,7 @@ class Measurements:
         # Read once, used throughout. A show() arriving while this runs replaces
         # the attribute, and re-reading it halfway would be the same
         # check-then-use this class was restructured to remove.
-        shown = self._shown
+        shown = self._shown or self._splash_model()
         if shown is None:
             return None
 

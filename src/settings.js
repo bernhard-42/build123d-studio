@@ -58,10 +58,19 @@ import { getSetting, setSetting } from "./store.js";
 import { os } from "@neutralinojs/lib";
 import * as ipc from "./ipc.js";
 import * as log from "./log.js";
+import { backendPath, consoleLevel, consolePath, logPath, setConsoleLevel } from "./log.js";
 import { escapeHtml } from "./escape.js";
 import { closeOnBackdropClick } from "./backdrop.js";
 import { refreshToolbarTitles } from "./toolbar.js";
 import { resolvedTheme, setThemePreference } from "./theme.js";
+import {
+  GROUPS as VIEWER_GROUPS,
+  MODIFIERS,
+  STORAGE_KEY as VIEWER_KEY,
+  parseValue,
+  toStore,
+  withDefaults,
+} from "./viewer-settings.js";
 
 // Package sources.
 //
@@ -117,8 +126,10 @@ const TABS = [
   { id: "packages", label: "Packages" },
   { id: "newfile", label: "New file" },
   { id: "editor", label: "Editor" },
+  { id: "viewer", label: "Viewer" },
   { id: "debugging", label: "Debugging" },
   { id: "shortcuts", label: "Shortcuts" },
+  { id: "application", label: "Application" },
 ];
 const TAB_KEY = "settingsTab";
 
@@ -132,6 +143,72 @@ const TAB_KEY = "settingsTab";
 function rememberedTab() {
   const stored = getSetting(TAB_KEY);
   return TABS.some((tab) => tab.id === stored) ? stored : TABS[0].id;
+}
+
+/**
+ * One viewer setting as a control.
+ *
+ * Generated from the schema rather than written out, because the list is 36
+ * settings long and taken key for key from OCP CAD Viewer's own - hand-writing
+ * it here would be a second copy to keep in step, and the way those two drift
+ * is that nobody notices.
+ */
+function viewerRow(setting, value) {
+  const id = `viewer-${setting.key}`;
+  const label = escapeHtml(setting.label);
+  const name = `<span class="settings-viewer-name">${label}</span>`;
+
+  if (setting.type === "boolean") {
+    return `<label class="settings-check">
+      <input type="checkbox" id="${id}" ${value === true ? "checked" : ""} />
+      <span>${label}</span>
+    </label>`;
+  }
+
+  if (setting.type === "enum") {
+    const options = setting.options
+      .map(
+        (option) =>
+          `<option value="${escapeHtml(option)}" ${option === value ? "selected" : ""}>` +
+          `${escapeHtml(option)}</option>`,
+      )
+      .join("");
+    return `<label class="settings-viewer-row">${name}
+      <select id="${id}">${options}</select>
+    </label>`;
+  }
+
+  if (setting.type === "keymap") {
+    // Four bindings on one row: which physical modifier each name means. The
+    // viewer takes DOM property names, so the options are those and not the
+    // key captions - "metaKey" is Command here and Windows elsewhere.
+    const cells = Object.keys(setting.default)
+      .map((which) => {
+        const options = MODIFIERS.map(
+          (modifier) =>
+            `<option value="${modifier}" ${value?.[which] === modifier ? "selected" : ""}>` +
+            `${modifier.replace("Key", "")}</option>`,
+        ).join("");
+        return `<span class="settings-viewer-modifier">${escapeHtml(which)}
+          <select id="${id}-${which}">${options}</select>
+        </span>`;
+      })
+      .join("");
+    return `<div class="settings-viewer-row">${name}
+      <span class="settings-viewer-modifiers">${cells}</span>
+    </div>`;
+  }
+
+  const numeric = setting.type === "number" || setting.type === "integer";
+  const bounds = numeric
+    ? ` min="${setting.min ?? ""}" max="${setting.max ?? ""}" step="${
+        setting.step ?? (setting.type === "integer" ? 1 : "any")
+      }"`
+    : "";
+  return `<label class="settings-viewer-row">${name}
+    <input type="${numeric ? "number" : "text"}" id="${id}"
+           value="${escapeHtml(String(value))}"${bounds} spellcheck="false" />
+  </label>`;
 }
 
 function packageRow(pkg, selection, gitPresent, localPath) {
@@ -242,11 +319,53 @@ function upgradeAndResync() {
   });
 }
 
+/**
+ * What the Viewer tab's controls currently say.
+ *
+ * Reads by schema rather than by hand, for the same reason the panel is
+ * generated: 36 settings hand-read is 36 chances to forget one, and a
+ * forgotten one is a control that appears to work and stores nothing.
+ *
+ * A control that cannot be parsed - an emptied number box - contributes
+ * nothing, so whatever was stored for that key is left as it was.
+ */
+function readViewerControls() {
+  const values = {};
+  for (const group of VIEWER_GROUPS) {
+    for (const setting of group.settings) {
+      const element = document.getElementById(`viewer-${setting.key}`);
+      let raw = null;
+      if (setting.type === "keymap") {
+        raw = {};
+        for (const which of Object.keys(setting.default)) {
+          const select = document.getElementById(`viewer-${setting.key}-${which}`);
+          if (select !== null) {
+            raw[which] = select.value;
+          }
+        }
+      } else if (element === null) {
+        continue;
+      } else {
+        raw = setting.type === "boolean" ? element.checked : element.value;
+      }
+      const parsed = parseValue(setting.key, raw);
+      if (parsed !== null) {
+        values[setting.key] = parsed;
+      }
+    }
+  }
+  return values;
+}
+
 export async function showSettings({ tab = null } = {}) {
   close();
 
   const selection = packageSources();
   const gitPresent = await hasGit();
+  // The stored values over the schema's defaults, so a control that has never
+  // been touched shows what the viewer will actually do rather than an empty
+  // box - and what it shows is the shared core's number, not a copy.
+  const viewerValues = withDefaults(getSetting(VIEWER_KEY));
 
   const overlay = document.createElement("div");
   overlay.id = "settings-dialog";
@@ -340,16 +459,40 @@ export async function showSettings({ tab = null } = {}) {
           </label>
           <p class="info-note" id="settings-editor-problems" hidden></p>
 
+        </section>
+
+        <section class="settings-panel" data-panel="viewer" hidden>
+          <p class="info-note">
+            What the viewer starts a model with. These are the same settings OCP
+            CAD Viewer for VS Code stores, under the same names - which are also
+            the keyword arguments <code>show()</code> takes - so a value learnt
+            in one viewer means the same thing in the other. A setting you have
+            not changed is not stored at all, and the viewer's own default
+            applies. They take effect on the next <code>show()</code>.
+          </p>
+
           <p class="settings-group">Appearance</p>
           <p class="info-note">
-            Unticked and untouched, the editor follows the desktop's own light or
-            dark setting and changes with it. Ticking or unticking pins it, and
-            it stops following.
+            Unticked and untouched, the application follows the desktop's own
+            light or dark setting and changes with it. Ticking or unticking pins
+            it, and it stops following. It is the whole window's theme, not the
+            viewer's alone, which is why it is one setting rather than one per
+            surface.
           </p>
           <label class="settings-check">
             <input type="checkbox" id="settings-dark-mode" />
             <span>Dark mode</span>
           </label>
+
+${VIEWER_GROUPS.map(
+            (group) => `
+          <p class="settings-group">${escapeHtml(group.label)}</p>
+          ${group.settings.map((setting) => viewerRow(setting, viewerValues[setting.key])).join("\n          ")}`,
+          ).join("\n")}
+
+          <button class="settings-btn settings-template-reset" id="settings-viewer-default">
+            Restore defaults
+          </button>
         </section>
 
         <section class="settings-panel" data-panel="debugging" hidden>
@@ -377,6 +520,34 @@ export async function showSettings({ tab = null } = {}) {
             <input type="checkbox" id="settings-on-stop-breakpoints" />
             <span>Only at breakpoints, not at every step</span>
           </label>
+        </section>
+
+        <section class="settings-panel" data-panel="application" hidden>
+          <p class="settings-group">Debug console</p>
+          <p class="info-note">
+            There is no developer console to open on macOS - Safari lists an
+            embedded web view only when the application marks it inspectable,
+            which macOS has required since 13.3 and this toolkit does not do -
+            so the log file is where a fault has to be read from. What this
+            application logs itself is always written, to its own file; this is
+            how much of what the <em>browser</em> and the libraries inside it
+            print is captured, in a second file beside it.
+          </p>
+          <p class="info-note">
+            Errors is the useful default. Everything is for reproducing
+            something specific: a chatty library can fill the log and push the
+            line you need out of it, since it rotates at a megabyte.
+          </p>
+          <label class="settings-viewer-row">
+            <span class="settings-viewer-name">Forward from the browser console</span>
+            <select id="settings-console-level">
+              <option value="off">Nothing</option>
+              <option value="error">Errors</option>
+              <option value="warning">Errors and warnings</option>
+              <option value="everything">Everything</option>
+            </select>
+          </label>
+          <p class="info-note" id="settings-log-path"></p>
         </section>
 
         <section class="settings-panel" data-panel="shortcuts" hidden>
@@ -447,6 +618,24 @@ export async function showSettings({ tab = null } = {}) {
   // saves, so restoring and then cancelling leaves the stored template alone
   // like every other edit in this dialog. Without this there is no way back -
   // clearing the field is one keystroke and retyping twenty lines is not.
+  document.getElementById("settings-viewer-default").addEventListener("click", () => {
+    // The controls only, not the stored file: nothing is written until Apply,
+    // which is what makes Cancel mean cancel here as everywhere else.
+    for (const group of VIEWER_GROUPS) {
+      for (const setting of group.settings) {
+        if (setting.type === "keymap") {
+          for (const [which, modifier] of Object.entries(setting.default)) {
+            document.getElementById(`viewer-${setting.key}-${which}`).value = modifier;
+          }
+        } else if (setting.type === "boolean") {
+          document.getElementById(`viewer-${setting.key}`).checked = setting.default;
+        } else {
+          document.getElementById(`viewer-${setting.key}`).value = String(setting.default);
+        }
+      }
+    }
+  });
+
   document.getElementById("settings-template-default").addEventListener("click", () => {
     document.getElementById("settings-new-template").value = DEFAULT_NEW_FILE_TEMPLATE;
   });
@@ -568,6 +757,12 @@ export async function showSettings({ tab = null } = {}) {
   // What is on screen, not the preference: "system" resolves to one of the two
   // and a checkbox can only show which. Pinning happens on Apply, and only if
   // the box no longer agrees with what is showing.
+  document.getElementById("settings-console-level").value = consoleLevel();
+  document.getElementById("settings-log-path").textContent =
+    logPath() === null
+      ? ""
+      : `Logs: ${logPath()} for this application, ${consolePath()} for the browser console, ` +
+        `and ${backendPath()} for the measurement backend`;
   document.getElementById("settings-dark-mode").checked = resolvedTheme() === "dark";
   document.getElementById("settings-line-length").value = String(formatLineLength());
   document.getElementById("settings-format-on-save").checked = formatOnSave();
@@ -691,6 +886,24 @@ export async function showSettings({ tab = null } = {}) {
     const atBreakpointsOnly = document.getElementById("settings-on-stop-breakpoints").checked;
     if (atBreakpointsOnly !== onStopBreakpointsOnly()) {
       await setSetting(ON_STOP_BREAKPOINTS_ONLY_KEY, atBreakpointsOnly);
+    }
+
+    // Stored as *changes only*, the same rule the shortcut editor uses: a
+    // setting left at the viewer's default is absent rather than pinned, so a
+    // default that moves in the shared core moves for everyone who never
+    // touched it.
+    const level = document.getElementById("settings-console-level").value;
+    if (level !== consoleLevel()) {
+      // Applied here as well as stored: the reason to change it is to reproduce
+      // something now, and a setting that needed a restart to take effect would
+      // lose the very thing it was turned up for.
+      setConsoleLevel(level);
+      await setSetting("consoleLevel", level);
+    }
+
+    const viewerStored = toStore(readViewerControls());
+    if (JSON.stringify(viewerStored) !== JSON.stringify(getSetting(VIEWER_KEY) ?? {})) {
+      await setSetting(VIEWER_KEY, viewerStored);
     }
 
     const chosen = {};

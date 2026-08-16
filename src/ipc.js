@@ -2,6 +2,12 @@ import { decodeBinary, encodeBinary } from "./frame.js";
 import { spawn, quote } from "./proc.js";
 import * as log from "./log.js";
 
+// What `measure_service.py` puts in front of every line it reads from the
+// measurement process. Routed on rather than parsed: the sidecar owns both
+// ends, and the alternative - a second frame type for one stream - is more
+// protocol than the job needs.
+const BACKEND_PREFIX = "measure:";
+
 // Webview end of the sidecar link.
 //
 // The sidecar binds a random loopback port and announces it on stdout; that one
@@ -448,10 +454,23 @@ export async function startSidecar({ python, envRoot, appDir }) {
       // the log file a user is asked to send in.
       onStdErr: (data) => {
         for (const line of String(data).split("\n")) {
-          if (line.trim() !== "") {
-            log.info("sidecar:", line.trimEnd());
-            reportProgress(line.trim());
+          if (line.trim() === "") {
+            continue;
           }
+          // The measurement backend's own output, which the sidecar prefixes
+          // as it reads that process's stdout, goes to its own file: it is a
+          // different subject - which shape was clicked, what was indexed -
+          // and mixing it in costs the application log its narrative.
+          // The measurement process's own output keeps its own file, because
+          // it is a different subject to search afterwards - but on screen it
+          // is just the machinery talking, like everything else here, and the
+          // Backend tab gets it through the log like the rest.
+          if (line.startsWith(BACKEND_PREFIX)) {
+            log.backend(line.slice(BACKEND_PREFIX.length).trim());
+            continue;
+          }
+          log.info("sidecar:", line.trimEnd());
+          reportProgress(line.trim());
         }
       },
     })

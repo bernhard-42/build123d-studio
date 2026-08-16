@@ -1,242 +1,121 @@
-"""build123d-studio's kernel-side API: show() and friends.
+"""build123d Studio's kernel-side API: show() and friends.
 
-The tessellation itself is ocp_vscode's - ``_convert`` does the real work of
-turning build123d objects into meshes, and reimplementing it would be pointless
-duplication. What is replaced is only the delivery: ocp_vscode ends in
-``send_data``/``send_backend``, which open a websocket to a fixed port, and this
-package writes to the application's local socket instead.
+This host is a transport and a settings source. Everything above that - the
+show family, the configuration semantics, the tessellation, the camera policy,
+the measurement backend - is `ocp_viewer_core`, shared with OCP CAD Viewer for
+VS Code, the standalone viewer and Jupyter CadQuery, so that the same script
+behaves the same way in all four.
 
-The signatures mirror ocp_vscode's, so ``show(part)`` and the usual keyword
-arguments behave the way they do everywhere else in these tools.
+`from build123d_studio import show` sits beside `from ocp_vscode import show`
+and `from ocp_viewer import show`. Per-host imports, deliberately: a single
+universal import with the host discovered at runtime makes cross-talk
+representable, and there is a receipt - with a VS Code viewer on the default
+port, this application's `show()` once silently drew into *that* viewer.
+
+The names below are bound methods off one `Viewer` and one `Config`, never
+`partial` and never `@wraps`: a bound method hovers with the full signature,
+`self` gone and `config` invisible, which is what gives 90 keyword parameters
+working completion in the editor.
 """
 
-import inspect
-import os
-import warnings
-
-from ocp_vscode.comms import set_port
-
-# Import _convert by name rather than reaching for it through the module:
-# ocp_vscode/__init__.py exports a show() *function*, which shadows the
-# ocp_vscode.show submodule, so `ocp_vscode.show._convert` fails.
-#
-# Guarded, because _convert is private and is the one function this whole
-# package rests on. ocp_vscode is pinned for exactly that reason, but the config
-# dialog exists to unpin *neighbouring* packages and a pin does move eventually;
-# when it does, this should say so rather than surface as an ImportError from a
-# module nobody expects to be importing ocp_vscode internals. The failure is
-# deliberately deferred to the first show(): the sidecar imports this package
-# during warm-up, and refusing there would take out a session that can still
-# edit, run code and use the console perfectly well.
-try:
-    from ocp_vscode.show import _convert, reset_show, show_clear  # noqa: F401 - re-exported
-
-    _INCOMPATIBLE = None
-    for _name in ("_convert", "reset_show", "show_clear"):
-        if not callable(locals()[_name]):
-            _INCOMPATIBLE = f"ocp_vscode.show.{_name} is not callable"
-            break
-except ImportError as _exc:  # pragma: no cover - depends on the installed ocp_vscode
-    _convert = reset_show = show_clear = None
-    _INCOMPATIBLE = str(_exc)
-
-from ocp_vscode.utils import CommsWarning
-
-# This package's own modules. Up here with everything else, rather than below
-# the ocp_vscode setup where they used to sit: neither imports ocp_vscode and
-# neither reads the port or the warning filters, so the placement said they
-# depended on that setup when they do not.
-from .buffers import split_buffers
-from .transport import NotConnected, send_model
-
-# Settle the port up front.
-#
-# ocp_vscode's get_port() otherwise runs viewer discovery on first use and then
-# set_connection_file(), which probes the kernel's iopub *TCP* port - and this
-# kernel speaks over Unix sockets, so the probe fails and it prints an alarming
-# "Jupyter kernel not responding". Calling set_port() marks discovery as done,
-# so neither runs. The port itself is one the sidecar owns and refuses; see
-# Kernel.kernel_environment for why it is pointed there.
-_ISOLATION_PORT = os.environ.get("OCP_PORT")
-if _ISOLATION_PORT is not None and _ISOLATION_PORT.isdigit():
-    set_port(int(_ISOLATION_PORT))
-
-# _convert() still tries to read viewer settings over that socket and falls back
-# to its defaults when refused, which is exactly what build123d-studio wants - the viewer
-# is the pane above, not an ocp_vscode instance. Both complaints it makes on the
-# way are noise here:
-#
-#   * CommsWarning - "cannot connect to the viewer", by design;
-#   * "Unknown collapse value" - ocp_vscode's own offline fallback puts a
-#     Collapse enum where status() expects the wire value, so it warns about
-#     its own default (config.py:688-693). Worth fixing upstream.
-warnings.filterwarnings("ignore", category=CommsWarning)
-warnings.filterwarnings("ignore", message="Unknown collapse value from viewer")
-
-__all__ = ["show", "show_all", "show_object", "reset_show", "show_clear",
-           "NotConnected"]
-
-
-def _require_ocp_vscode():
-    """Fail with an explanation rather than an AttributeError on None."""
-    if _INCOMPATIBLE is not None:
-        raise RuntimeError(
-            "This ocp_vscode is not compatible with build123d Studio: "
-            f"{_INCOMPATIBLE}. show() tessellates through ocp_vscode.show._convert(), "
-            "a private function, which is why ocp_vscode is pinned in the "
-            "application's runtime. Reinstall the environment, or report this "
-            "against the build123d Studio release you are running."
-        )
-
-
-def _deliver(converted, mapping):
-    """Split the buffers out of a converted model and send it.
-
-    A model with no geometry is not sent. `_convert` will happily produce one -
-    a list of floats is enough - and the viewer, given a header describing
-    nothing, stops responding rather than drawing an empty scene. Refusing here
-    covers every caller rather than only the one that found it.
-    """
-    # _convert returns ({"data", "type", "config", "count"}, mapping) with the
-    # arrays already base64-wrapped by numpy_to_buffer_json.
-    payload_free, payload = split_buffers(converted.get("data"))
-
-    if len(payload) == 0:
-        raise ValueError(
-            "nothing to show: the objects given have no geometry the viewer can draw"
-        )
-
-    header = {
-        "type": converted.get("type", "data"),
-        "config": converted.get("config", {}),
-        "count": converted.get("count"),
-        "data": payload_free,
-    }
-    send_model(header, mapping, payload)
-
-
-def show(*cad_objs, **kwargs):
-    """Tessellate objects and display them in the build123d-studio viewer pane."""
-    _require_ocp_vscode()
-    converted, mapping = _convert(*cad_objs, **kwargs)
-    _deliver(converted, mapping)
-
-
-def show_object(obj, name=None, options=None, parent=None, clear=False, **kwargs):
-    """CQ-editor compatible entry point, as ocp_vscode provides."""
-    _require_ocp_vscode()
-    names = None if name is None else [name]
-    if options is not None:
-        kwargs = {**options, **kwargs}
-    objects = [obj] if parent is None else [parent, obj]
-    if clear:
-        reset_show()
-    converted, mapping = _convert(*objects, names=names, **kwargs)
-    _deliver(converted, mapping)
-
-
-# What the viewer can draw, asked of ocp_tessellate rather than guessed at.
-#
-# These are the same tests ocp_vscode's own show_all uses, from the same module
-# - a whitelist of things known to tessellate rather than a blacklist of things
-# that obviously do not. The difference is not stylistic: a hand-rolled "not a
-# scalar, not a module, not callable" predicate let a plain list of floats
-# through, `_convert` produced a model with a header and no geometry, and the
-# viewer stopped responding. Whoever wrote the tessellator knows what it can
-# take; this does not.
-#
-# Imported at the top like everything else, and if ocp_tessellate ever moves
-# them this fails loudly at import rather than silently drawing nothing.
-from ocp_tessellate.ocp_utils import (  # noqa: E402 - see the module docstring
-    is_build123d,
-    is_build123d_assembly,
-    is_build123d_axis,
-    is_build123d_location,
-    is_build123d_locationlist,
-    is_build123d_plane,
-    is_build123d_shell,
-    is_cadquery,
-    is_cadquery_assembly,
-    is_topods_compound,
-    is_topods_shape,
-    is_toploc_location,
-    is_vector,
+from ocp_viewer_core.colors import BaseColorMap, ColorMap, web_to_rgb
+from ocp_viewer_core.comms import Session
+from ocp_viewer_core.config import (
+    AnalysisTool,
+    Camera,
+    Collapse,
+    Config,
+    Render,
+    StudioBackground,
+    StudioEnvironment,
+    StudioTextureMapping,
+    StudioToneMapping,
+    UiTab,
 )
+from ocp_viewer_core.show import Viewer, ignore_camera_warnings, none_filter
 
+from .comms import StudioComms
+from .transport import NotConnected
 
-def _can_draw(obj):
-    """Whether the viewer could make anything of this value.
+__all__ = [
+    "AnalysisTool",
+    "BaseColorMap",
+    "Camera",
+    "Collapse",
+    "ColorMap",
+    "NotConnected",
+    "Render",
+    "StudioBackground",
+    "StudioEnvironment",
+    "StudioTextureMapping",
+    "StudioToneMapping",
+    "UiTab",
+    "combined_config",
+    "get_colormap",
+    "get_default",
+    "get_defaults",
+    "get_last_paths",
+    "ignore_camera_warnings",
+    "none_filter",
+    "push_object",
+    "remove_object",
+    "reset_defaults",
+    "reset_show",
+    "save_screenshot",
+    "set_colormap",
+    "set_defaults",
+    "set_viewer_config",
+    "show",
+    "show_all",
+    "show_clear",
+    "show_object",
+    "show_objects",
+    "status",
+    "unset_colormap",
+    "web_to_rgb",
+    "workspace_config",
+]
 
-    A list or a tuple is drawable only if its contents are, which is where this
-    differs from ocp_vscode's version and why: it passes any list through, and a
-    scope is full of lists of numbers. One of those produced a model with no
-    geometry in it and hung the viewer.
-    """
-    if isinstance(obj, (list, tuple)):
-        return len(obj) > 0 and all(_can_draw(item) for item in obj)
-    if isinstance(obj, dict):
-        # By value: the keys become names in the viewer's tree, and a mapping of
-        # shapes is an ordinary way to hold an assembly.
-        return len(obj) > 0 and all(_can_draw(item) for item in obj.values())
-    if hasattr(obj, "wrapped") and (
-        is_topods_shape(obj.wrapped)
-        or is_topods_compound(obj.wrapped)
-        or is_toploc_location(obj.wrapped)
-    ):
-        return True
-    for test in (
-        is_build123d,
-        is_build123d_assembly,
-        is_build123d_axis,
-        is_build123d_location,
-        is_build123d_locationlist,
-        is_build123d_plane,
-        is_build123d_shell,
-        is_cadquery,
-        is_cadquery_assembly,
-        is_vector,
-    ):
-        try:
-            if test(obj):
-                return True
-        except Exception:  # noqa: BLE001 - a test that dislikes a value is a no
-            continue
-    return False
+# The keywords that belong to other hosts. The show signature is the superset of
+# every client's, so a key one host owns is a key another has to refuse - and
+# refusing it by name is what tells a user their `anchor=` went nowhere instead
+# of leaving them to wonder.
+#
+# `cad_width` and `height` are the pane's, decided by the layout and the
+# splitter rather than by a caller; `viewer`, `anchor` and `pinning` name a
+# notebook sidecar this host does not have; and `port` addresses one viewer
+# among several, where this application has exactly one and reaches it over a
+# socket whose port the sidecar assigns.
+EXCLUDE_KEYS = ("cad_width", "height", "viewer", "anchor", "pinning", "port")
 
+comms = StudioComms()
+session = Session(comms)
+config = Config(session, EXCLUDE_KEYS)
 
-def _drawable(name, obj, exclude, classes):
-    """Whether a name in a scope is worth handing to the viewer."""
-    if name.startswith("_") or name in exclude:
-        return False
-    if classes is not None:
-        return isinstance(obj, tuple(classes))
-    return _can_draw(obj)
+# `None` is the handle type: the viewer is the pane above the editor and hands
+# nothing back, so `show` returns None here as it does in ocp_vscode.
+viewer = Viewer[None](config)
 
+show = viewer.show
+show_object = viewer.show_object
+show_objects = viewer.show_objects
+show_all = viewer.show_all
+show_clear = viewer.show_clear
+push_object = viewer.push_object
+remove_object = viewer.remove_object
+reset_show = viewer.reset_show
+save_screenshot = viewer.save_screenshot
 
-def show_all(variables=None, exclude=None, classes=None, **kwargs):
-    """Show everything in a scope that the viewer can draw.
+get_colormap = viewer.get_colormap
+set_colormap = viewer.set_colormap
+unset_colormap = viewer.unset_colormap
+get_last_paths = viewer.get_last_paths
 
-    `show_all()` reads the caller's own locals, and `show_all(locals())` says the
-    same thing explicitly - which is the form that matters here, because the
-    debugger evaluates it in a paused frame where "the caller" is not what
-    anybody means.
-
-    Objects keep their variable names in the viewer's tree, which is most of the
-    point: a scope full of unnamed shapes is a scope you cannot navigate.
-    """
-    _require_ocp_vscode()
-    if variables is None:
-        # The frame that called this one. Its locals are what "all" means.
-        variables = inspect.currentframe().f_back.f_locals
-    exclude = [] if exclude is None else exclude
-
-    names, objects = [], []
-    for name, obj in variables.items():
-        if _drawable(str(name), obj, exclude, classes):
-            names.append(str(name))
-            objects.append(obj)
-
-    if len(objects) == 0:
-        return
-    converted, mapping = _convert(*objects, names=names, **kwargs)
-    _deliver(converted, mapping)
+set_defaults = config.set_defaults
+get_defaults = config.get_defaults
+get_default = config.get_default
+reset_defaults = config.reset_defaults
+set_viewer_config = config.set_viewer_config
+status = config.status
+workspace_config = config.workspace_config
+combined_config = config.combined_config

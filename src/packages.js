@@ -14,8 +14,9 @@ import * as log from "./log.js";
 // Which source each upgradable package comes from.
 //
 // Only build123d is offered. Everything else the application declares is frozen:
-// ocp_vscode is tied to the three-cad-viewer build in the frontend, and it owns
-// ocp_tessellate's range through its own metadata. See runtime/pyproject.toml.
+// ocp-viewer-core is tied to the three-cad-viewer build in the frontend - both
+// halves of it ship as one version - and it owns ocp_tessellate's range through
+// its own metadata. See runtime/pyproject.toml.
 // Anything else a user wants goes in the additional-packages field, where the
 // line itself says where the package comes from.
 //
@@ -39,6 +40,17 @@ export const PACKAGES = [
     // build123d's default branch is "dev", not "main".
     branch: "dev",
   },
+  {
+    // The shared viewer half. Offered here rather than frozen because it is not
+    // on PyPI yet and its repository is private, so there is no version for the
+    // declaration to name: the location comes from this choice instead, and
+    // until it is published "Local" is the answer that works. A uv source wins
+    // over whatever the dependency itself says - measured - so choosing one
+    // here is the whole redirection.
+    name: "ocp-viewer-core",
+    repository: "git@github.com:bernhard-42/ocp-viewer-core",
+    branch: "main",
+  },
 ];
 
 // Everything the application declares for itself, which the additional-packages
@@ -46,11 +58,11 @@ export const PACKAGES = [
 // pyproject.toml: this list is what the *rule* is about, and reading it from a
 // file would make a refusal depend on a parse of TOML we deliberately do not do.
 //
-// ocp_tessellate is deliberately absent. ocp_vscode requires
-// `ocp-tessellate<3.5.0,>=3.4.0`, so its range is owned by its parent and
+// ocp_tessellate is deliberately absent. ocp-viewer-core requires
+// `ocp-tessellate>=3.5.0,<3.6.0`, so its range is owned by its parent and
 // re-declaring it here only pinned it harder than its author does.
 export const DECLARED = [
-  "ocp_vscode",
+  "ocp-viewer-core",
   "ipykernel",
   "jupyter_client",
   "jupyter_console",

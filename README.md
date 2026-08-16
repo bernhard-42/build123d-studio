@@ -168,6 +168,20 @@ Two rules are enforced here, and only two:
 
 Everything else — whether a version exists, whether a combination resolves, whether a URL is reachable — is uv's to answer, and it answers better than a rule here would. A line that breaks the environment does not prevent the application from starting: the failed section is dropped for that launch, with the text left in Settings to be corrected.
 
+## When something goes wrong
+
+Two places say what happened, and between them they cover most of it.
+
+**The log.** Everything the application reports about itself is appended to `build123d-studio.log` beside the environment — on macOS `~/Library/Application Support/build123d-studio/`, and the equivalent elsewhere. It carries the kernel's lifecycle, what the sidecar did, uv's own output while the environment is being built, and every warning the frontend raises. It is the first thing to attach to a report.
+
+**The measurement backend has a tab of its own.** The bottom pane's third tab, **Backend**, shows what that process says as it says it — which shape id was clicked, what it indexed, why a measurement could not be taken. It runs in a process of its own, its troubles are frequent, and a log file you have to go looking for is the wrong first place for them. Read-only; the same lines also go to `backend.log`, which is what a report can attach.
+
+**And `console.log`**, the browser's own output: what the embedded browser and the libraries inside it print — a renderer complaining about a malformed model, a failed request, an uncaught error with its stack. It is a separate file on purpose, so that turning it up does not bury the application's own account of what happened.
+
+How much is captured is **Settings → Application → Debug console**: errors by default, warnings, everything, or nothing. Turn it up to reproduce something, and remember that everything can be a great deal — each file rotates at a megabyte, keeping one previous copy. All three are named in **Help → About**, so a report can carry the right ones.
+
+That file exists because on macOS there is no developer console to open: Safari lists an embedded web view only when the application marks it inspectable, which macOS has required since 13.3 and this toolkit does not do. On Windows and Linux the embedded browser's own Inspect entry may be available by right-clicking, and the window is configured to allow it.
+
 ## Licence
 
 Apache-2.0. See `LICENSE`, `NOTICE` and `THIRD_PARTY_LICENSES.md`.

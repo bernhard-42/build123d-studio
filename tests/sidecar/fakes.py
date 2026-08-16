@@ -273,7 +273,6 @@ class TestableKernel(Kernel):
                 model_token="token",
                 on_iopub=on_iopub,
                 on_died=lambda: None,
-                isolation_port=0,
                 **kwargs,
             )
 

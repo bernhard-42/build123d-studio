@@ -13,13 +13,12 @@ import {
   showSplash,
   splashVisible,
 } from "./bootstrap/splash.js";
-import { initSplitters } from "./layout/splitter.js";
+import { initSplitters, toggleBottomRow } from "./layout/splitter.js";
 import {
   hasFocus as consoleHasFocus,
   initConsole,
   selectedText as consoleSelectedText,
   sendText,
-  writeProgress,
 } from "./console/terminal.js";
 import {
   bufferKeys,
@@ -70,8 +69,10 @@ import { initDebug } from "./debug/session.js";
 import { initDebugUi, stepAction, toggleDebugging } from "./debug/start.js";
 import * as ipc from "./ipc.js";
 import { initTheme } from "./theme.js";
-import { initStore } from "./store.js";
+import { getSetting, initStore, setSetting } from "./store.js";
 import { hideBusy, resetBusy, showBusy } from "./busy.js";
+import { appendBackendLine, showConsolePanel } from "./debug/console.js";
+import { anythingUnwell, record as recordHealth, reset as resetHealth } from "./health.js";
 import * as log from "./log.js";
 import { guardAgainstReload, suppressNativeContextMenu } from "./reload.js";
 import { initRunFile, toggleRunFile } from "./run/file.js";
@@ -337,7 +338,37 @@ async function main() {
   // so they only need os.getPath - no environment, nothing to bootstrap. Doing
   // them first means the rest of startup is logged and can read settings.
   await log.initLog();
+  // The Backend tab shows the log as it happens, from the first line: the
+  // application starts on that tab, so what a user is looking at while the
+  // window fills is the machinery reporting for itself.
+  log.onLine((line, key) => appendBackendLine(line, key));
+
+  // What each part of the machinery says about itself. Recorded so that the
+  // end of startup can ask one question - is anything unwell - rather than
+  // guessing from whether an exception was thrown, and shown in the pane the
+  // user is already looking at.
+  ipc.on("subsystem", (frame) => recordHealth(frame.name, frame.state, frame.detail));
+  // A replacement sidecar describes itself from scratch, so the dead one's
+  // picture goes with it. Without this, `reset` had no caller at all and the
+  // toolbar could carry a failure belonging to a process that no longer
+  // exists - which is the same defect as a kernel that restarted and stayed
+  // `failed`, one level further out.
+  ipc.on("sidecar.restarting", () => resetHealth());
   await initStore();
+  // How much of the browser console is mirrored into the log. Read here rather
+  // than in log.js so that logging keeps its one dependency - the log file -
+  // and does not have to care whether the settings are up yet.
+  // Errors, at every start, whatever was chosen last time. Turning the console
+  // up is for reproducing something now - and left on by accident it costs the
+  // viewer real speed, because every notification it makes becomes a line
+  // written to disk. So the setting is deliberately not remembered: it is a
+  // tool you pick up, not a preference you keep.
+  log.setConsoleLevel("error");
+  if (getSetting("consoleLevel", "error") !== "error") {
+    setSetting("consoleLevel", "error").catch((error) =>
+      log.warn("Could not reset the console level:", error),
+    );
+  }
 
   log.info("Starting up", { NL_OS, NL_ARCH: typeof NL_ARCH === "string" ? NL_ARCH : "?" });
 
@@ -481,6 +512,7 @@ async function main() {
     [MENU.OPEN_FOLDER]: () => withMenu(openFolder),
     [MENU.CLOSE_FOLDER]: () => withMenu(closeFolder),
     [MENU.TOGGLE_SIDEBAR]: toggleSidebar,
+    [MENU.TOGGLE_BOTTOM]: toggleBottomRow,
     [MENU.SAVE]: () => saveFile(),
     [MENU.SAVE_AS]: () => saveFile({ saveAs: true }),
     [MENU.SAVE_ALL]: () => withMenu(saveAll),
@@ -511,10 +543,10 @@ async function main() {
     if (splashVisible()) {
       appendLog(line);
     }
-    // And in the console pane, which is what somebody is looking at once the
-    // splash lifts and before the console itself has said anything. It stops on
-    // the console's first byte; see writeProgress.
-    writeProgress(line);
+    // Nothing goes into the console pane any more. That pane is a transcript of
+    // a real session, and the startup narration now has a home of its own - the
+    // Backend tab, which is what the application starts on and where every line
+    // of this already arrives through the log.
   });
 
   initDebug();
@@ -613,6 +645,16 @@ async function main() {
     syncKernelDirectory();
     console_.syncSize();
     installBackendRecovery(console_);
+
+    // The startup is over and it went well, so the pane stops showing how it
+    // went and goes back to being the console. A start that fails never
+    // reaches this line, which is exactly how the reason stays on screen -
+    // there is no dialog to dismiss and nothing to go looking for.
+    if (!anythingUnwell()) {
+      showConsolePanel("console");
+      console_.syncSize();
+      focusEditor();
+    }
   } catch (err) {
     log.error("Sidecar failed to start", err);
     // The comment here used to say this reported in place "rather than by
