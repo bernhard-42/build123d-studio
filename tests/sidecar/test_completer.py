@@ -20,10 +20,14 @@ on the text that accepting it produces, not on the name being present.
 """
 
 import os
+import subprocess
+import sys
+import tempfile
 import threading
+import time
 import unittest
 
-from completer import Completer
+from completer import Completer, LanguageServer
 
 # The application tree, so the server can resolve build123d_studio the way
 # it does in production - the kernel-side package lives in <app_dir>/kernel.
@@ -325,6 +329,104 @@ undefined_name + 1
         keys = {key for _, key, _ in seen}
         self.assertEqual(keys, {"buffer-a", "buffer-b"})
         self.assertEqual({key for _, key, count in seen if count > 0}, {"buffer-a"})
+
+
+class DeafLanguageServerTest(unittest.TestCase):
+    """A server that stopped reading, which is what a quit would wait on.
+
+    The measurement backend's half of this is `DeafBackendTest` in
+    test_measure_service.py, and its docstring explains the shape: a write into
+    a 64 kB pipe that nobody is reading cannot complete, and closing a buffered
+    writer flushes it. That file's stop() was fixed to kill first and say so;
+    this one kept the old order, and it is the *first* step of the sidecar's
+    teardown - so a server that wedges spends the whole shutdown budget here and
+    every later step, including the kernel's kill escalation, never runs.
+
+    A process that sleeps and reads nothing is the whole fake needed. Nothing
+    here is about completion.
+    """
+
+    def setUp(self):
+        handle = tempfile.NamedTemporaryFile("w", suffix=".py", delete=False)
+        handle.write("import time\ntime.sleep(300)\n")
+        handle.close()
+        self.script = handle.name
+        self.addCleanup(os.unlink, self.script)
+        self.processes = []
+
+    def _deaf_process(self):
+        """A child that never reads, with room to buffer a write before it.
+
+        bufsize is what makes this deterministic rather than timed: the write
+        below stays in Python's own buffer instead of reaching the pipe, which
+        is the state the real writer is left in by a flush that got part way.
+        """
+        process = subprocess.Popen(
+            [sys.executable, self.script],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            bufsize=8 << 20,
+        )
+        self.processes.append(process)
+        self.addCleanup(self._reap, process)
+        return process
+
+    def _reap(self, process):
+        if process.poll() is None:
+            process.kill()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
+        for stream in (process.stdout, process.stdin):
+            try:
+                stream.close()
+            except OSError:
+                pass
+
+    def _more_than_the_pipe_holds(self):
+        # Four megabytes against a 64 kB buffer: the flush cannot complete, and
+        # it cannot complete for reasons that have nothing to do with timing.
+        return b"x" * (4 << 20)
+
+    def test_stop_does_not_wait_for_a_flush_nobody_reads(self):
+        # The control. Closing the writer is what stop() used to do first, and
+        # against a deaf child it does not come back. Without this the test
+        # would pass just as well against a fake that never had anything to
+        # block on, and would be measuring nothing.
+        control = self._deaf_process()
+        control.stdin.write(self._more_than_the_pipe_holds())
+
+        def close_the_control():
+            # Reaped at cleanup, which unblocks this with EPIPE. The thread is
+            # here to be stuck, so arriving at all is the uninteresting case.
+            try:
+                control.stdin.close()
+            except OSError:
+                pass
+
+        closing = threading.Thread(target=close_the_control, daemon=True)
+        closing.start()
+        closing.join(timeout=2)
+        self.assertTrue(closing.is_alive(), "the flush was not blocked, so this proves nothing")
+
+        server = LanguageServer(sys.executable)
+        # Held here as well, because stop() clears the attribute - the process
+        # has to still be nameable after the thing that was meant to end it.
+        deaf = self._deaf_process()
+        server._process = deaf
+        deaf.stdin.write(self._more_than_the_pipe_holds())
+
+        stopping = threading.Thread(target=server.stop, daemon=True)
+        started = time.monotonic()
+        stopping.start()
+        stopping.join(timeout=15)
+        waited = time.monotonic() - started
+
+        self.assertFalse(stopping.is_alive(), f"stop() was still blocked after {waited:.1f}s")
+        self.assertLess(waited, 12, f"stop() waited {waited:.1f}s for a flush nobody reads")
+        self.assertIsNotNone(deaf.poll(), "the language server outlived stop()")
 
 
 if __name__ == "__main__":

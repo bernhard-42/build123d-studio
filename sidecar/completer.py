@@ -154,6 +154,37 @@ def analysis_settings(kernel_dir):
     }
 
 
+# What stop() is allowed to spend on each step. They add up to less than the
+# sidecar's shutdown deadline on purpose: this is its first step, and a first
+# step that can outlast the deadline is one that stops every later one running.
+CLOSE_TIMEOUT = 1.0
+EXIT_TIMEOUT = 2.0
+SIGNAL_TIMEOUT = 1.0
+
+
+def _close_within(stream, timeout):
+    """Close a stream, or give up on closing it and carry on.
+
+    Closing a buffered stream can block for as long as the thing at the other
+    end likes - a writer flushes, a reader waits for whoever is inside it - so
+    this is the only way to close one on a path that has a deadline. The thread
+    is a daemon: if it never returns, the process is on its way out anyway and
+    the descriptor goes with it.
+    """
+    if stream is None:
+        return
+
+    def close():
+        try:
+            stream.close()
+        except OSError:
+            pass
+
+    closing = threading.Thread(target=close, name="lsp-close", daemon=True)
+    closing.start()
+    closing.join(timeout=timeout)
+
+
 class LanguageServer:
     """One basedpyright process, and the JSON-RPC conversation with it.
 
@@ -229,24 +260,48 @@ class LanguageServer:
         is an os._exit that runs no cleanup - so a terminate nobody waits on
         leaves it to be reparented and to keep its memory until the OS gets
         round to it.
+
+        **EOF on stdin comes first, because it is what actually stops it.** The
+        process spawned here is a wrapper and the node process doing the work is
+        its child, so terminating what we spawned leaves node running with these
+        pipes still open - and a stdout that never reaches EOF is a reader
+        thread that never returns, which is the next paragraph's problem.
+
+        **And every close is bounded**, which is the fix. Closing a buffered
+        stream is not a cheap operation on either side: closing the writer
+        flushes it, and this one writes the whole buffer on every edit against a
+        64 kB pipe, so against a server that has stopped reading it never comes
+        back; closing the reader waits for whoever is inside it, and that is the
+        lsp-read thread, parked in a read. Both go on a thread with a deadline.
+        MeasurementService.stop() documents the same shape one file over and
+        answers it by killing outright - which is not available here, because
+        the thing that needs to hear about it is a grandchild.
+
+        This is the first step of the sidecar's teardown, so anything unbounded
+        here spends the whole shutdown budget and leaves every later step -
+        the kernel's kill escalation among them - unreached. Worst case now is
+        the constants below: EOF, wait, terminate, wait, kill, wait, close.
         """
         process, self._process = self._process, None
         if process is None:
             return
+
+        _close_within(process.stdin, CLOSE_TIMEOUT)
         try:
-            process.stdin.close()
-            process.terminate()
-            process.wait(timeout=5)
+            process.wait(timeout=EXIT_TIMEOUT)
         except subprocess.TimeoutExpired:
-            process.kill()
-            process.wait(timeout=5)
-        except OSError:
-            pass
-        for stream in (process.stdout, process.stdin):
             try:
-                stream.close()
+                process.terminate()
+                process.wait(timeout=SIGNAL_TIMEOUT)
+            except subprocess.TimeoutExpired:
+                try:
+                    process.kill()
+                    process.wait(timeout=SIGNAL_TIMEOUT)
+                except (subprocess.TimeoutExpired, OSError):
+                    pass
             except OSError:
                 pass
+        _close_within(process.stdout, CLOSE_TIMEOUT)
 
     # --- the protocol ---
 
