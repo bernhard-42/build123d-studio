@@ -558,6 +558,12 @@ class Kernel:
         env["BUILD123D_STUDIO_MODEL_PORT"] = str(self.model_port)
         env["BUILD123D_STUDIO_MODEL_TOKEN"] = self.model_token
 
+        # Inside this application the host is this application, whatever else
+        # the environment has installed. ocp_viewer_core's universal import
+        # (`from ocp_viewer_core import show`) reads this and never has to
+        # ask - which it could not do here anyway: a kernel has no terminal.
+        env["OCP_VIEWER_HOST"] = "build123d_studio"
+
         # Where this application's own settings live, so that `show()` can
         # answer `workspace_config()` - the persistent half of a show's
         # configuration - without asking anybody. It is the frontend's file and
