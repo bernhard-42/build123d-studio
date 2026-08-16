@@ -239,6 +239,10 @@ export async function open(page, options = {}) {
     argv = ["/app/build123d-studio"],
     settings = null,
     files = {},
+    // Modification times for seeded files, where a test needs one to mean
+    // something - the recovery journal decides whether a session is still
+    // running from how recently its beat file was written.
+    times = {},
     ready = true,
   } = options;
 
@@ -270,12 +274,13 @@ export async function open(page, options = {}) {
   });
 
   await page.addInitScript(
-    ([harness, seed, stored]) => {
+    ([harness, seed, stored, stamps]) => {
       globalThis.__HARNESS__ = harness;
       globalThis.__HARNESS_FILES__ = seed;
       globalThis.__HARNESS_SETTINGS__ = stored;
+      globalThis.__HARNESS_TIMES__ = stamps;
     },
-    [{ sidecar: SIDECAR, env: {} }, files, settings],
+    [{ sidecar: SIDECAR, env: {} }, files, settings, times],
   );
 
   await page.goto("/");

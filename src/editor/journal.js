@@ -180,3 +180,84 @@ export function createRecorder({ delay = 1000, schedule = setTimeout, cancel = c
     },
   };
 }
+
+/**
+ * How often a window says it is still here, and how long before it is not.
+ *
+ * The frontend has no lock. The sidecar does - instance.py holds one for its
+ * whole life and the operating system releases it on any death, including a
+ * kill - but recovery has to run at startup, and the sidecar is spawned last,
+ * after the window is already usable. So liveness here is a file whose
+ * modification time is refreshed while the window runs.
+ *
+ * Stale is three missed beats rather than one, because the cost of the two
+ * mistakes is not symmetric: calling a live sibling dead offers somebody their
+ * own unsaved work back while they are typing it, and calling a dead session
+ * live only defers the offer to the next start.
+ */
+export const BEAT = 30 * 1000;
+export const STALE_AFTER = 3 * BEAT;
+
+const ALIVE = "alive";
+
+/** Say this window is still running. Costs one write of nothing. */
+export async function beat({ filesystem, log, root }) {
+  try {
+    await filesystem.createDirectory(root);
+  } catch {
+    // Already there.
+  }
+  try {
+    await filesystem.writeFile(`${root}/${ALIVE}`, "");
+  } catch (error) {
+    log.warn("Could not mark this session as running:", error);
+  }
+}
+
+/**
+ * Whether a journal belongs to a session that is no longer running.
+ *
+ * A directory with no beat at all is dead: it was written by a version that
+ * did not beat, or the beat never landed. Both mean nobody is refreshing it.
+ */
+export function isStale(beatAt, now, staleAfter = STALE_AFTER) {
+  if (beatAt === null || beatAt === undefined) {
+    return true;
+  }
+  return now - beatAt > staleAfter;
+}
+
+/**
+ * Read one instance's journal: every buffer it had unsaved.
+ *
+ * Entries whose text cannot be read are skipped rather than failing the whole
+ * recovery - one unreadable copy must not cost somebody the other four.
+ */
+export async function readJournal({ filesystem, log }, root) {
+  let names;
+  try {
+    names = (await filesystem.readDirectory(root)).map((entry) => entry.entry);
+  } catch {
+    return [];
+  }
+
+  const entries = [];
+  for (const name of names.filter((each) => each.endsWith(".py")).sort()) {
+    const key = name.slice(0, -3);
+    let text;
+    try {
+      text = await filesystem.readFile(`${root}/${name}`);
+    } catch (error) {
+      log.warn(`Could not read a recovery copy at ${root}/${name}:`, error);
+      continue;
+    }
+    let path = null;
+    try {
+      path = JSON.parse(await filesystem.readFile(`${root}/${key}.json`)).path ?? null;
+    } catch {
+      // No label, so it recovers as an untitled buffer. Better than not at all.
+    }
+    entries.push({ key, path, text, file: `${root}/${name}` });
+  }
+  return entries;
+}

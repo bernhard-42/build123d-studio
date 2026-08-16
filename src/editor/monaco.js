@@ -462,8 +462,8 @@ export function getValue() {
  * it, so Cmd-Z in a freshly opened file could put back a line belonging to a
  * file that was no longer on screen.
  */
-export function openBuffer({ path = null, text = "", caret = null }) {
-  const key = buffers.open({ path, text, caret });
+export function openBuffer({ path = null, text = "", caret = null, matchesDisk = true }) {
+  const key = buffers.open({ path, text, caret, matchesDisk });
   showBuffer(key);
   return key;
 }

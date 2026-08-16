@@ -33,10 +33,14 @@ import { describeSize, isLarge, looksBinary, SNIFF_BYTES } from "./filetype.js";
 import { formatOnSave } from "./formatting.js";
 import { changedSince, hasTimestamp, stampOf } from "./ondisk.js";
 import {
+  BEAT,
+  beat,
   clearJournal,
   createRecorder,
   forgetBuffer,
+  isStale,
   journalRoot,
+  readJournal,
   recordBuffer,
   worthRecording,
 } from "./journal.js";
@@ -935,6 +939,114 @@ export async function discardRecovery() {
 /** Whether anything is still booked, for a test. */
 export function pendingRecoveryWrites() {
   return recorder.pending();
+}
+
+
+// --- recovering what a crash left behind -----------------------------------
+
+/** Say this window is running, now and every beat after. */
+export async function startHeartbeat() {
+  const root = await journalPath();
+  const tick = () => {
+    beat(journalDeps(root)).catch((error) => log.warn("Heartbeat:", error));
+  };
+  tick();
+  setInterval(tick, BEAT);
+}
+
+/**
+ * Offer back what a session that ended without being asked left behind.
+ *
+ * Everything from every dead session, in one prompt. The alternative - one
+ * session per start - leaves somebody's work waiting for a restart that may
+ * never come, and these are copies of work nobody chose to discard.
+ *
+ * Recovered buffers open **dirty and are never written**. Nothing touches disk
+ * until the user saves, and the changed-on-disk check then asks if the file
+ * moved in the meantime. A file that has since been deleted recovers as a
+ * dirty buffer that saving recreates, which is what somebody who lost work in
+ * a crash is asking for.
+ */
+export async function offerRecovery() {
+  const dataDir = await appDataDir();
+  const mine = journalRoot(dataDir, log.instanceId);
+  let sessions;
+  try {
+    sessions = (await filesystem.readDirectory(`${dataDir}/recovery`))
+      .filter((entry) => entry.type === "DIRECTORY")
+      .map((entry) => `${dataDir}/recovery/${entry.entry}`)
+      .filter((root) => root !== mine);
+  } catch {
+    // Nothing has ever crashed here.
+    return 0;
+  }
+
+  const dead = [];
+  for (const root of sessions) {
+    const beatAt = await stampAt(`${root}/alive`);
+    // A session still beating is a window somebody is typing in. Offering its
+    // unsaved work back would be taking it from them.
+    if (isStale(beatAt === null ? null : beatAt.modifiedAt, Date.now())) {
+      dead.push(root);
+    }
+  }
+  if (dead.length === 0) {
+    return 0;
+  }
+
+  const entries = [];
+  for (const root of dead.sort()) {
+    entries.push(...(await readJournal({ filesystem, log }, root)));
+  }
+  if (entries.length === 0) {
+    await Promise.all(dead.map((root) => clearJournal({ filesystem, log }, root)));
+    return 0;
+  }
+
+  const names = entries.map((entry) => nameOf(entry.path)).join(", ");
+  const answer = await askTwoWay({
+    title: "Recover unsaved changes?",
+    detail: `${entries.length} file(s) from ${dead.length} session(s) that ended`
+      + ` unexpectedly.\n\n${names}`,
+    confirm: "Recover",
+    cancel: "Discard",
+  });
+  if (answer !== "confirm") {
+    log.info(`Discarded ${entries.length} recovery copies at the user's request`);
+    await Promise.all(dead.map((root) => clearJournal({ filesystem, log }, root)));
+    return 0;
+  }
+
+  let recovered = 0;
+  for (const entry of entries) {
+    const held = entry.path === null ? null : bufferForPath(entry.path);
+    if (held !== null) {
+      // Two sessions had the same file unsaved, or this one is already open.
+      // The later copy wins the tab; the earlier stays on disk as an ordinary
+      // source file and is named, because it is somebody's work either way.
+      log.warn(
+        `${entry.path} was recovered more than once; the copy at ${entry.file}`
+        + " was not used and is still there",
+      );
+      continue;
+    }
+    openBuffer({ path: entry.path, text: entry.text, matchesDisk: false });
+    recovered += 1;
+  }
+  refreshTabs();
+  log.info(`Recovered ${recovered} buffer(s) from ${dead.length} session(s)`);
+  // Only what was taken. Anything named above is deliberately left where it is.
+  await Promise.all(dead.map((root) => clearJournal({ filesystem, log }, root)));
+  await saveWorkspace();
+  return recovered;
+}
+
+function nameOf(path) {
+  if (path === null) {
+    return "(untitled)";
+  }
+  const parts = path.split(/[/\\]/);
+  return parts[parts.length - 1];
 }
 
 /** Whether anything at all is at a path - a file, a folder, or a link. */

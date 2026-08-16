@@ -119,6 +119,12 @@ globalThis.__NEUTRALINO_STUB__ = {
       }
     }
   },
+  // Set a file's modification time directly. The clock here is a counter so
+  // that no test depends on how fast it runs, which leaves no way to say "this
+  // was written recently" - and the recovery journal's whole liveness test is
+  // exactly that. A window still beating must never have its unsaved work
+  // offered to somebody else.
+  touch: (path, modifiedAt) => times.set(path, modifiedAt),
   calls: () => calls.map((call) => ({ ...call })),
   reset: () => reset(),
 };
@@ -129,6 +135,11 @@ globalThis.__NEUTRALINO_STUB__ = {
 for (const [path, contents] of Object.entries(globalThis.__HARNESS_FILES__ ?? {})) {
   ensureParents(path);
   files.set(path, contents);
+  times.set(path, ++tick);
+}
+// After the seeding, so a test's own time wins over the counter.
+for (const [path, modifiedAt] of Object.entries(globalThis.__HARNESS_TIMES__ ?? {})) {
+  times.set(path, modifiedAt);
 }
 if (globalThis.__HARNESS_SETTINGS__ != null) {
   ensureParents("/appdata/build123d-studio/settings.json");
@@ -216,8 +227,26 @@ export const filesystem = {
 
   async remove(path) {
     record("remove", [path]);
+    // Recursive, as the real one is: Neutralino removes a directory with its
+    // contents, and this application already relies on that - bootstrap/uv.js
+    // removes its whole download directory on every exit path, on all three
+    // platforms. A stub that removed only an exact name made clearing the
+    // recovery journal look like it worked while leaving every copy behind.
     files.delete(path);
     dirs.delete(path);
+    times.delete(path);
+    const prefix = `${path}/`;
+    for (const key of [...files.keys()]) {
+      if (key.startsWith(prefix)) {
+        files.delete(key);
+        times.delete(key);
+      }
+    }
+    for (const key of [...dirs]) {
+      if (key.startsWith(prefix)) {
+        dirs.delete(key);
+      }
+    }
   },
 
   async move(from, to) {

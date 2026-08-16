@@ -43,6 +43,8 @@ import {
   closeActiveTab,
   closeEveryTab,
   discardRecovery,
+  offerRecovery,
+  startHeartbeat,
   closeFolder,
   closeTab,
   currentFolder,
@@ -595,6 +597,11 @@ async function main() {
   // again, because a folder is a context reset - would be silly. No argument
   // means a double-click, which has nothing to go on but the previous session.
   await openRequestedOrRestore();
+
+  // Said as early as there is a directory to say it in, so a window that
+  // crashes during its own startup still leaves a beat behind.
+  startHeartbeat().catch((error) => log.warn("Heartbeat:", error));
+
   // A restored folder enables Close Folder and Toggle Sidebar, and the menu was
   // built before the workspace was read.
   await refreshMenu();
@@ -650,6 +657,20 @@ async function main() {
   showLogo();
   hideSplash();
   console_.syncSize();
+
+  // After the splash, and that matters: this is a question, and a modal behind
+  // a splash screen is one nobody can answer. It waits for an answer, so
+  // asking before the window is up holds the whole startup on it.
+  //
+  // After the session is restored as well, so a recovered buffer joins what was
+  // already open rather than the restore arriving on top of it. Before the
+  // sidecar only because it does not need one - these are the frontend's own
+  // files - and somebody who has just lost work should not wait for a kernel.
+  try {
+    await offerRecovery();
+  } catch (error) {
+    log.warn("Could not offer to recover unsaved work:", error);
+  }
 
   // The editor takes focus, at line 1 - the app opens ready to write code.
   //

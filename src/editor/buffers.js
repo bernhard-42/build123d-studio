@@ -55,7 +55,7 @@ export function initBuffers(modelOperations) {
  * Does not activate it. Which buffer the editor shows is a separate decision and
  * belongs to the caller that is about to attach the model.
  */
-export function open({ path = null, text = "", caret = null }) {
+export function open({ path = null, text = "", caret = null, matchesDisk = true }) {
   const key = nextKey;
   nextKey += 1;
   const model = models.create(text);
@@ -63,7 +63,11 @@ export function open({ path = null, text = "", caret = null }) {
     key,
     path,
     model,
-    savedVersionId: models.versionOf(model),
+    // A recovered buffer holds text that was never written, so it opens dirty:
+    // null can never equal a version id, and the tab's dot, the quit prompt and
+    // the recovery journal all follow from that one value being wrong on
+    // purpose.
+    savedVersionId: matchesDisk ? models.versionOf(model) : null,
     viewState: null,
     caret,
     // Whether the file this buffer names has gone from disk. Not a property of
