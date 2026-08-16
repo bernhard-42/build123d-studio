@@ -694,6 +694,27 @@ export function onDirtyChange(listener) {
   dirtyListeners.add(listener);
 }
 
+// Told on every content change, unlike onDirtyChange, which is a transition.
+// The recovery journal needs each keystroke burst rather than the moment a
+// buffer first became dirty, so this fires far more often - and every listener
+// is therefore required to do no work of its own beyond booking some.
+const contentListeners = new Set();
+
+function notifyContentChanged() {
+  const key = buffers.activeKeyOf();
+  if (key === null) {
+    return;
+  }
+  for (const listener of contentListeners) {
+    listener(key);
+  }
+}
+
+/** Be told which buffer was typed into, on every change. */
+export function onContentChange(listener) {
+  contentListeners.add(listener);
+}
+
 /** True when the buffer on screen has edits that are not on disk. */
 export function isDirty() {
   const key = buffers.activeKeyOf();
@@ -866,6 +887,11 @@ export function initEditor() {
   editor.onDidChangeModelContent(() => {
     refreshCellDecorations();
     scheduleDirtyCheck();
+    // Told on every keystroke rather than on a transition, because what
+    // listens is the recovery journal and it has to know the buffer moved even
+    // when it was already dirty. Every listener here is on the typing path, so
+    // each is required to be O(1) - see journal.js.
+    notifyContentChanged();
     scheduleSync();
     // Monaco has already moved the marks; this writes back where they ended up.
     adoptBreakpointPositions();

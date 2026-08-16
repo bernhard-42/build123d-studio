@@ -42,6 +42,7 @@ import { initMenu, refreshMenu, watchSession } from "./menubar.js";
 import {
   closeActiveTab,
   closeEveryTab,
+  discardRecovery,
   closeFolder,
   closeTab,
   currentFolder,
@@ -117,6 +118,15 @@ async function shutdown() {
   }
 
   shuttingDown = true;
+  // Everything unsaved has just been asked about, so the recovery copies are
+  // answering a question nobody is going to be asked again. Whatever survived
+  // that prompt was either saved or deliberately discarded, and offering it
+  // back at the next start would argue with the answer they gave.
+  try {
+    await discardRecovery();
+  } catch (error) {
+    log.warn("Could not clear the recovery journal:", error);
+  }
   try {
     await saveWorkspace();
   } catch (error) {

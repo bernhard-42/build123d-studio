@@ -16,6 +16,7 @@ import {
   bufferNeedsSaving,
   markMissingFiles,
   markSaved,
+  onContentChange,
   reloadBufferText,
   setBufferStamp,
   openBuffer,
@@ -31,6 +32,15 @@ import { hideFolder, revealInTree, showFolder } from "./sidebar.js";
 import { describeSize, isLarge, looksBinary, SNIFF_BYTES } from "./filetype.js";
 import { formatOnSave } from "./formatting.js";
 import { changedSince, hasTimestamp, stampOf } from "./ondisk.js";
+import {
+  clearJournal,
+  createRecorder,
+  forgetBuffer,
+  journalRoot,
+  recordBuffer,
+  worthRecording,
+} from "./journal.js";
+import { appDataDir } from "../bootstrap/envroot.js";
 import { askThreeWay, askTwoWay, notifyFailure, notifyRefusal } from "../confirm.js";
 import { writeFileSafely } from "./safewrite.js";
 import { getSetting, setSetting } from "../store.js";
@@ -113,7 +123,9 @@ export async function closeEveryTab() {
   }
   showNoBuffer();
   for (const key of bufferKeys()) {
-    closeBuffer(key);
+    bufferSettled(key).catch((error) => log.warn("Recovery copy:", error));
+    bufferSettled(key).catch((error) => log.warn("Recovery copy:", error));
+  closeBuffer(key);
   }
   refreshTabs();
   return true;
@@ -825,6 +837,106 @@ function recordStamp(key, stamp) {
   setBufferStamp(key, stamp);
 }
 
+// --- the recovery journal ---------------------------------------------------
+//
+// Nothing here runs on the keystroke path. bufferChanged() replaces a timer and
+// returns; the copy is made when the typing stops. See journal.js for what that
+// costs and why it is bounded.
+
+const recorder = createRecorder();
+// The version each buffer was last shadowed at, so an idle buffer is not
+// rewritten and a save does not have to remember to cancel anything.
+const recorded = new Map();
+// And the path each copy was last labelled with, so the sixty bytes that say
+// which file it is are written on a Save As and not on every burst of typing.
+const labelled = new Map();
+let journalDir = null;
+let saidAboutLargeBuffers = false;
+
+async function journalPath() {
+  if (journalDir === null) {
+    journalDir = journalRoot(await appDataDir(), log.instanceId);
+  }
+  return journalDir;
+}
+
+function journalDeps(root) {
+  return { filesystem, log, root, instanceId: log.instanceId };
+}
+
+/**
+ * A buffer was typed into. Books a copy, and does nothing else.
+ *
+ * Called from the editor's content-change event, so it must stay O(1): all it
+ * does is replace a timer.
+ */
+function bufferChanged(key) {
+  recorder.schedule(key, () => {
+    writeRecoveryCopy(key).catch((error) => log.warn("Recovery copy:", error));
+  });
+}
+
+onContentChange(bufferChanged);
+
+async function writeRecoveryCopy(key) {
+  const contents = bufferContents(key);
+  if (contents === null) {
+    return;
+  }
+  if (recorded.get(key) === contents.versionId) {
+    // Nothing has changed since the last copy - an undo back to where it was,
+    // or a booking a save has already overtaken.
+    return;
+  }
+  if (!worthRecording(contents.text)) {
+    if (!saidAboutLargeBuffers) {
+      saidAboutLargeBuffers = true;
+      log.warn(
+        "A buffer is too large to keep a recovery copy of; unsaved changes to it"
+        + " will not survive a crash.",
+      );
+    }
+    return;
+  }
+  const root = await journalPath();
+  const path = bufferPath(key);
+  const withPath = labelled.get(key) !== path;
+  await recordBuffer(journalDeps(root), key, { path, text: contents.text, withPath });
+  recorded.set(key, contents.versionId);
+  labelled.set(key, path);
+}
+
+/** Its copy is no longer the only one: it has been saved, or closed. */
+export async function bufferSettled(key) {
+  recorder.drop(key);
+  if (!recorded.has(key)) {
+    return;
+  }
+  recorded.delete(key);
+  labelled.delete(key);
+  const root = await journalPath();
+  await forgetBuffer(journalDeps(root), root, key);
+}
+
+/**
+ * Throw the whole journal away, on the way out of a graceful quit.
+ *
+ * Everything unsaved has just been asked about, so what is left was either
+ * saved or deliberately discarded - and offering it back at the next start
+ * would be arguing with an answer the user has already given.
+ */
+export async function discardRecovery() {
+  recorded.clear();
+  labelled.clear();
+  const root = await journalPath();
+  await clearJournal(journalDeps(root), root);
+}
+
+/** Whether anything is still booked, for a test. */
+export function pendingRecoveryWrites() {
+  return recorder.pending();
+}
+
 /** Whether anything at all is at a path - a file, a folder, or a link. */
 async function somethingIsAt(path) {
   try {
@@ -1051,6 +1163,7 @@ async function saveBuffer(key, saveAs) {
   // than assumed: the size on disk is the encoded length, and the time is the
   // filesystem's rather than ours.
   recordStamp(key, await stampAt(path));
+  await bufferSettled(key);
   refreshTabs();
   await rememberFolder(path);
   syncKernelDirectory();
