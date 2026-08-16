@@ -235,11 +235,18 @@ class FakeManager:
     def __init__(self, client):
         self._client = client
         self.alive = True
+        self.started = False
         self.shutdowns = []
         self.cleaned = False
 
     def client(self):
         return self._client
+
+    def start_kernel(self, **kwargs):
+        # There is no process. Present so that TestableKernel goes through the
+        # real start() - construct, publish, spawn - rather than a shape of its
+        # own, which is the ordering being held.
+        self.started = True
 
     def is_alive(self):
         return self.alive

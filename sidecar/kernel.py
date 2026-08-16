@@ -583,22 +583,31 @@ class Kernel:
         return env
 
     def new_manager(self):
-        """Build the kernel manager and launch its process.
+        """Build the kernel manager. The process is started by spawn().
 
-        The one method here that starts an operating system process, and split
-        out for exactly that reason: everything this class is actually difficult
-        about - generation scoping, the pump, what the shell lock covers, which
-        request ids count as internal - is in the lifecycle *around* the kernel
-        rather than in jupyter_client. Overriding this in a test replaces the
-        process and leaves all of that running as shipped, so the restart races
-        can be driven deterministically instead of hoped for. See
-        tests/sidecar/test_kernel_restart.py.
+        Between them these two are the only route to an operating system
+        process here, and they are split for exactly that reason: everything
+        this class is actually difficult about - generation scoping, the pump,
+        what the shell lock covers, which request ids count as internal - is in
+        the lifecycle *around* the kernel rather than in jupyter_client.
+        Overriding this in a test replaces the process, because the manager it
+        returns is what spawn() is then handed, and leaves all of that running
+        as shipped - so the restart races can be driven deterministically
+        instead of hoped for. See tests/sidecar/test_kernel_restart.py.
         """
-        manager = KernelManager(
+        return KernelManager(
             kernel_name="python3",
             connection_file=self.connection_file,
             transport="tcp",
         )
+
+    def spawn(self, manager):
+        """Start the kernel process for a manager that has been published.
+
+        Separate from new_manager so that start() can name the manager before
+        this runs. See the comment there: which side of this call the assignment
+        falls on is the difference between a stop finding the kernel and not.
+        """
         # The open file's directory, so relative paths behave the way they do
         # when a script is run from a terminal: export_step(part, "bracket.step")
         # lands beside bracket.py, not somewhere the user has to go looking.
@@ -610,7 +619,6 @@ class Kernel:
         # process, after which os.getcwd() raises FileNotFoundError and
         # jupyter_client cannot launch a kernel at all.
         manager.start_kernel(env=self.kernel_environment(), cwd=self.working_dir)
-        return manager
 
     def _create_subshell(self, client):
         """Ask the kernel for a second thread over the same namespace.
@@ -671,8 +679,21 @@ class Kernel:
         return None
 
     def start(self):
-        self.manager = self.new_manager()
-        self.client = self.manager.client()
+        manager = self.new_manager()
+        # Published before the process exists, rather than once it is running.
+        #
+        # shutdown() skips a manager that is still None, so assigning only after
+        # the kernel had been spawned made the whole length of a launch a window
+        # in which a stop arriving concurrently found nothing to stop - and the
+        # process spawned a moment earlier outlived the application that spawned
+        # it. A launch is seconds: wait_for_ready alone allows sixty of them.
+        #
+        # The same window is on the restart path, because restart comes back
+        # through here, and that is where it was first reached: a stop landing
+        # during a restart saw None and left the fresh kernel running.
+        self.manager = manager
+        self.spawn(manager)
+        self.client = manager.client()
         self.client.start_channels()
         self.client.wait_for_ready(timeout=60)
 

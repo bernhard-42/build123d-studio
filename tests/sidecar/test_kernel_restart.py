@@ -317,5 +317,66 @@ class InternalRequestRecordTest(unittest.TestCase):
         )
 
 
+class LaunchWindowTest(unittest.TestCase):
+    """The window between spawning a kernel and being able to name it.
+
+    `shutdown()` guards every step on `if self.manager is not None`, and
+    `start()` used to assign `self.manager` only once the process was already
+    running - the manager was built and its kernel launched inside one call,
+    and the result assigned afterwards. So for the whole length of a launch
+    there was a live kernel process that a concurrent stop could not see, and
+    left behind. `wait_for_ready` sits inside that same window and allows sixty
+    seconds of it.
+
+    Reached from two directions. A restart comes back through `start()`, so a
+    stop landing during one found None and left the fresh kernel running - which
+    is where it was first read. And once teardown can begin before startup has
+    finished, an ordinary quit reaches it too.
+
+    Un-applied by moving the assignment back below `spawn()`: `self.manager` is
+    None while the process starts, and both assertions below fail.
+
+    "Nameable" and "stoppable" are the same property here, because that None
+    check is the only thing standing between a kernel and its shutdown.
+    """
+
+    def test_the_manager_is_nameable_before_the_process_is_started(self):
+        seen = []
+
+        class Watching(TestableKernel):
+            def spawn(self, manager):
+                seen.append(self.manager)
+                super().spawn(manager)
+
+        kernel = Watching(on_iopub=lambda message: None)
+        self.addCleanup(kernel.shutdown)
+        kernel.start()
+
+        self.assertEqual(len(seen), 1, "the process was not started through spawn()")
+        self.assertIsNotNone(seen[0], "the kernel was spawned before it could be named")
+        self.assertIs(seen[0], kernel.manager, "a different manager was published")
+
+    def test_the_process_is_started_after_the_manager_is_published(self):
+        # The other half, and the one that would catch a fix that published the
+        # manager by starting the kernel earlier instead of later.
+        order = []
+
+        class Recording(TestableKernel):
+            def spawn(self, manager):
+                order.append("spawn")
+                super().spawn(manager)
+
+            def new_manager(self):
+                order.append("build")
+                return super().new_manager()
+
+        kernel = Recording(on_iopub=lambda message: None)
+        self.addCleanup(kernel.shutdown)
+        kernel.start()
+
+        self.assertEqual(order, ["build", "spawn"])
+        self.assertTrue(kernel.manager.started, "the kernel process was never started")
+
+
 if __name__ == "__main__":
     unittest.main()
