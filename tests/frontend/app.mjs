@@ -52,6 +52,8 @@ class FakeSidecar {
     this._route = null;
     this._waiters = [];
     this._answers = new Map();
+    // Requests an answer() chose not to reply to yet. See the dispatch below.
+    this.held = [];
     this._dap = false;
   }
 
@@ -141,7 +143,18 @@ class FakeSidecar {
         this.received.push(frame);
         const build = this._answers.get(frame.type);
         if (build !== undefined) {
-          this.send(frame.type, { id: frame.id, ...build(frame) });
+          const reply = build(frame);
+          // A builder that answers nothing holds the request open, and the
+          // frame is kept so the test can answer it whenever it likes. That is
+          // the only way to test what the application does *during* a request:
+          // a real sidecar can take as long as it takes - black is a quarter of
+          // a millisecond a line and the timeout is thirty seconds - and the
+          // window is live throughout.
+          if (reply === undefined) {
+            this.held.push(frame);
+          } else {
+            this.send(frame.type, { id: frame.id, ...reply });
+          }
         }
         if (this._dap === true && frame.type === "debug.send" && frame.message?.type === "request") {
           this._answerDap(frame);
@@ -154,6 +167,23 @@ class FakeSidecar {
         }
       }
     });
+  }
+
+
+  /**
+   * Answer a request that was held open, as the sidecar eventually would.
+   *
+   * Takes the oldest held frame of that type, so a test reads as the sequence
+   * it is describing: hold, do the thing that used to break, release.
+   */
+  release(type, payload = {}) {
+    const index = this.held.findIndex((frame) => frame.type === type);
+    if (index === -1) {
+      throw new Error(`no held ${type} to release`);
+    }
+    const [frame] = this.held.splice(index, 1);
+    this.send(frame.type, { id: frame.id, ...payload });
+    return frame;
   }
 
   /** Send a control frame, exactly as the sidecar's channel.send does. */
