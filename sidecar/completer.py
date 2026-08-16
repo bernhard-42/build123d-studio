@@ -277,10 +277,17 @@ class LanguageServer:
         answers it by killing outright - which is not available here, because
         the thing that needs to hear about it is a grandchild.
 
-        This is the first step of the sidecar's teardown, so anything unbounded
-        here spends the whole shutdown budget and leaves every later step -
-        the kernel's kill escalation among them - unreached. Worst case now is
-        the constants below: EOF, wait, terminate, wait, kill, wait, close.
+        Anything unbounded here spends the shutdown budget and leaves later
+        steps unreached. Worst case now is the constants below: EOF, wait,
+        terminate, wait, kill, wait, close.
+
+        What catches the node grandchild if all of that is skipped - a deadline
+        met, or the sidecar killed outright - is not ours: stdio reaching EOF
+        when these descriptors go, and the sidecar's own process id, handed
+        over in the initialize request so pyright watches for our death itself.
+        Both are upstream promises rather than anything this file enforces, and
+        tests/integration.py is what would notice a basedpyright release
+        dropping either.
         """
         process, self._process = self._process, None
         if process is None:

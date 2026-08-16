@@ -564,6 +564,16 @@ export async function restartSidecar() {
       log.warn("Could not stop the previous sidecar:", error);
     }
   }
+  // Closed straight after the kill, and that order carries more than it looks.
+  //
+  // On POSIX the kill above is SIGINT to the process group, which the sidecar
+  // takes as a KeyboardInterrupt out of its wait. That propagates past the
+  // handler, so the os._exit at the end of its main() is never reached and the
+  // process leaves through CPython's own teardown - which joins every
+  // non-daemon thread, and websockets makes its connection thread one. Closing
+  // this end is what ends that thread, so it is the only reason the interpreter
+  // gets to finish at all. Leave it until after startSidecar below and a
+  // restart hangs onto the process it just killed.
   if (socket !== null) {
     const previous = socket;
     socket = null;

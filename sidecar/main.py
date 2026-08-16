@@ -1367,6 +1367,14 @@ class Sidecar:
         step it was on. Every child holds a contract that takes it with us - the
         kernel's parent poller, the language server's processId, the console's
         pty, the supervisors' pipes - so exiting is enough to take the tree.
+
+        **What this does not reach**, by decision rather than oversight: any
+        process the user's own code started. A subprocess opened in a cell, in a
+        Run File script or under the debugger is stopped only as a courtesy, by
+        the group kill on the graceful path, and a child that has left the group
+        escapes even that. Nothing here hunts for it, and no later start sweeps
+        for it either - a process id is reused, and killing the wrong one is
+        worse than leaving the right one. See requs.md, Phase 6.
         """
         with self._stop_lock:
             if self._stopped:
