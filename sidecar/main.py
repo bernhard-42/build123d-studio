@@ -341,12 +341,37 @@ class Sidecar:
 
     # --- lifecycle ---
 
+    def _abandoning_startup(self):
+        """Whether a stop has begun, so nothing further should be brought up.
+
+        A stop can arrive while start() is still running, and does not need the
+        stdin watch to do it: `shutdown` is registered with no lane, so the
+        frame is handled inline on the channel's receive thread while start()
+        works its way down the main one. Without this check the two pass each
+        other - stop() walks the subsystems that exist at that instant, start()
+        carries on spawning the ones that do not yet, and a kernel or a console
+        brought up after its own shutdown step has run is an orphan that nothing
+        will look for again.
+
+        The other half of the property is that each subsystem is nameable before
+        it spawns: self.kernel and self.console are assigned before their start()
+        is called, and the kernel's manager before its process. So stop() finds
+        whatever is already up, and this keeps start() from adding to the pile
+        behind it.
+        """
+        if not self._stopped:
+            return False
+        log("Stopping: the rest of startup is abandoned")
+        return True
+
     def start(self):
         # Each part says how it went as it goes, rather than the application
         # deciding afterwards that everything must have worked. A start that
         # looks fine with one part dead is the expensive failure: every symptom
         # after it - a show that draws nothing, a measurement that answers
         # nothing - points somewhere else.
+        if self._abandoning_startup():
+            return
         try:
             port = self.models.start()
             self.report("viewer", "ready", f"model channel on port {port}")
@@ -358,11 +383,18 @@ class Sidecar:
         # the kernel is about to load in its own process - 3.3 s each on a warm
         # Windows start - and the two now overlap instead of adding up, which is
         # the whole point of it having a process of its own.
+        if self._abandoning_startup():
+            return
         self.measurements.start()
         self.report("measurement", "starting", "loading the geometry kernel")
 
+        if self._abandoning_startup():
+            return
         info = self.kernel_start()
         self.report("kernel", "ready", "started")
+
+        if self._abandoning_startup():
+            return
         self.console_start()
         self.report("console", "ready", "")
 
@@ -381,6 +413,8 @@ class Sidecar:
         # warm backend rather than racing it.
         self.channel.submit(MEASURE, self.measurements.warm)
 
+        if self._abandoning_startup():
+            return
         self.channel.send(
             "ready",
             connection_file=info["connection_file"],

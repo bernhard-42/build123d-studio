@@ -138,5 +138,140 @@ class ShutdownTest(unittest.TestCase):
         self.assertEqual(gave_up, ["the measurement backend"], gave_up)
 
 
+class StartupAbandonedTest(unittest.TestCase):
+    """A stop that arrives during startup has to stop the startup as well.
+
+    `shutdown` is registered with no lane, so the frame is handled inline on the
+    channel's receive thread - while start() is still working down the main one.
+    The two used to pass each other in the middle: stop() walked the subsystems
+    that existed at that instant, start() went on to bring up the ones that did
+    not, and the kernel and console spawned afterwards had already had their
+    shutdown step run. os._exit then took the sidecar and left them behind, held
+    only by their own parent-death contracts - which is precisely what the
+    teardown exists so as not to depend on.
+
+    Un-applied by removing the `_abandoning_startup` checks from start(): the
+    kernel and the console are brought up after the stop and both assertions
+    below fail.
+
+    The two spawning steps are overridden rather than stubbed on the instance,
+    so what runs is the shipped start() and the shipped stop().
+    """
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp(prefix="studio-startup-")
+        self.instance = Instance(self.root)
+        self.instance.claim()
+        self.addCleanup(self.instance.release)
+        self.started = []
+        self.stopped = []
+
+    def _sidecar(self):
+        started = self.started
+
+        class Recording(Sidecar):
+            """The two steps that spawn a process, recorded instead."""
+
+            def kernel_start(self):
+                started.append("kernel")
+                return {"connection_file": "", "transport": "tcp"}
+
+            def console_start(self):
+                started.append("console")
+
+        return Recording(env_root=self.root, app_dir=self.root, instance=self.instance)
+
+    def test_nothing_further_is_brought_up_once_a_stop_has_begun(self):
+        sidecar = self._sidecar()
+        started = self.started
+
+        class StopsAsItComesUp:
+            """The model channel, with the shutdown frame landing on its heels."""
+
+            port = 0
+            token = "token"
+
+            def start(self):
+                started.append("models")
+                # Where the receive thread would have run it.
+                sidecar.stop()
+                return 0
+
+            def stop(self):
+                pass
+
+        class Channel(Recorder):
+            def send(self, *args, **arguments):
+                pass
+
+            def submit(self, lane, work):
+                started.append("submitted")
+
+        class Measurements(Recorder):
+            # Records rather than refusing, so that without the guard this test
+            # reaches its own assertion instead of dying on a missing attribute.
+            def start(self):
+                started.append("measurements")
+
+            def warm(self):
+                pass
+
+        class Completer(Recorder):
+            def warm(self):
+                started.append("completer warmed")
+
+        sidecar.models = StopsAsItComesUp()
+        sidecar.completer = Completer("completer", self.stopped)
+        sidecar.debug = Recorder("debug", self.stopped)
+        sidecar.run = Recorder("run", self.stopped)
+        sidecar.measurements = Measurements("measurements", self.stopped)
+        sidecar.channel = Channel("channel", self.stopped)
+        sidecar.instance = Recorder("instance", self.stopped)
+
+        sidecar.start()
+
+        self.assertEqual(started, ["models"], f"startup carried on past the stop: {started}")
+        self.assertIsNone(sidecar.kernel, "a kernel was started after its shutdown step")
+        self.assertIsNone(sidecar.console, "a console was started after its shutdown step")
+
+    def test_an_ordinary_startup_is_not_abandoned(self):
+        # The other direction, so the guard cannot pass by refusing everything.
+        sidecar = self._sidecar()
+        started = self.started
+
+        class Models:
+            port = 0
+            token = "token"
+
+            def start(self):
+                started.append("models")
+                return 0
+
+            def stop(self):
+                pass
+
+        class Channel(Recorder):
+            def send(self, *args, **arguments):
+                pass
+
+            def submit(self, lane, work):
+                pass
+
+        class Measurements(Recorder):
+            def start(self):
+                started.append("measurements")
+
+            def warm(self):
+                pass
+
+        sidecar.models = Models()
+        sidecar.measurements = Measurements("measurements", self.stopped)
+        sidecar.channel = Channel("channel", self.stopped)
+
+        sidecar.start()
+
+        self.assertEqual(started, ["models", "measurements", "kernel", "console"])
+
+
 if __name__ == "__main__":
     unittest.main()
