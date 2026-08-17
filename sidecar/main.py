@@ -23,7 +23,7 @@ import threading
 # The sidecar is run by path (python sidecar/main.py), so its own directory is
 # already on sys.path for these imports.
 import appinfo
-from channel import KIND_CONSOLE, KIND_MODEL, Channel, log
+from channel import KIND_CONSOLE, KIND_MODEL, Channel, flush_logs, log
 from completer import Completer
 from debugger import DebugSession, debug_python
 from formatter import format_source
@@ -1339,7 +1339,15 @@ class Sidecar:
                 # Detach before anything else: from here on the old console's
                 # callbacks see that they are no longer current and go quiet.
                 self.console = None
-            self.kernel.restart()
+            if not self.kernel.restart():
+                # A quit landed inside this handler - between the refusal check
+                # at the top and here, which is seconds of console teardown and
+                # kernel work. There is no kernel now and there must not be a
+                # console either: console_start spawns a process, and one
+                # started here would be starting into a shutdown that has
+                # already walked past its step. Nothing is reported, because
+                # there is nobody left to report to.
+                return
             # The new kernel has an empty namespace, so build123d has to be
             # imported into it again - and the first Run after a restart should
             # not pay for that any more than the first Run after startup does.
@@ -1487,7 +1495,7 @@ class Sidecar:
         backend stopped" banner in a window that is closing anyway.
         """
         log(f"Shutdown stuck on {self._stop_step} after {SHUTDOWN_DEADLINE}s; leaving anyway")
-        sys.stderr.flush()
+        flush_logs()
         os._exit(0)
 
 
@@ -1511,12 +1519,20 @@ def take_signals(sidecar):
 
     def leave(signum, _frame):
         log(f"Signal {signum}, shutting down")
-        sidecar.stop()
-        sys.stderr.flush()
-        # The same reason the other two exit paths do: returning here would hand
-        # over to an interpreter teardown that joins websockets' non-daemon
-        # connection thread, possibly from inside this very shutdown.
-        os._exit(0)
+        # In a finally, because a teardown that throws must still leave. Every
+        # step of stop() is already isolated from the ones after it, so reaching
+        # here with an exception means something outside those steps raised -
+        # and the process staying is a worse answer than the process going
+        # without having finished.
+        try:
+            sidecar.stop()
+        finally:
+            flush_logs()
+            # The same reason the other two exit paths do: returning here would
+            # hand over to an interpreter teardown that joins websockets'
+            # non-daemon connection thread, possibly from inside this very
+            # shutdown.
+            os._exit(0)
 
     for received in (signal.SIGTERM, signal.SIGHUP):
         try:
@@ -1558,12 +1574,22 @@ def watch_stdin(sidecar):
             # cannot be missed would be missed by this thread dying quietly.
             pass
         log("stdin closed, shutting down")
-        sidecar.stop()
-        # The same argument as at the end of main(): returning here would hand
-        # over to an interpreter teardown that joins websockets' non-daemon
-        # connection thread, which may be inside this very shutdown.
-        sys.stderr.flush()
-        os._exit(0)
+        # In a finally, and this thread is where that mattered most. stdin
+        # closing because the application was *killed* rather than because it
+        # quit takes stderr with it in the same instant, so the line above used
+        # to raise BrokenPipeError and end this thread here - before stop() had
+        # been called, with the main thread still waiting and the whole tree
+        # left behind. log() cannot raise any more; this makes anything else
+        # that might raise unable to hold the process either.
+        try:
+            sidecar.stop()
+        finally:
+            # The same argument as at the end of main(): returning here would
+            # hand over to an interpreter teardown that joins websockets'
+            # non-daemon connection thread, which may be inside this very
+            # shutdown.
+            flush_logs()
+            os._exit(0)
 
     threading.Thread(target=watch, name="stdin-watch", daemon=True).start()
 
@@ -1643,7 +1669,7 @@ def main():
         # attached that join never returns. The process then neither exits nor
         # disconnects, and the frontend waits out its whole ready timeout to
         # learn about a failure that already happened.
-        sys.stderr.flush()
+        flush_logs()
         os._exit(1)
     finally:
         faulthandler.cancel_dump_traceback_later()
@@ -1674,7 +1700,7 @@ def main():
     # is handled, so on a normal quit the interpreter waited for a thread that
     # was itself inside the shutdown. Ours are all daemons deliberately; this
     # makes the one we do not own harmless too.
-    sys.stderr.flush()
+    flush_logs()
     os._exit(0)
 
 

@@ -68,7 +68,8 @@ import {
   forgetBuffer,
   isStale,
   journalRoot,
-  sleptThrough,
+  beatOf,
+  stillBeating,
   readJournal,
   recordBuffer,
   setAside,
@@ -78,6 +79,8 @@ import { appDataDir } from "../bootstrap/envroot.js";
 import { askThreeWay, askTwoWay, notifyFailure, notifyRefusal } from "../confirm.js";
 import { writeFileSafely } from "./safewrite.js";
 import { getSetting, setSetting } from "../store.js";
+import { chooseSaveName } from "../savedialog.js";
+import { baseName } from "./tree.js";
 import * as ipc from "../ipc.js";
 import * as log from "../log.js";
 
@@ -1000,6 +1003,30 @@ export async function startHeartbeat() {
  * dirty buffer that saving recreates, which is what somebody who lost work in
  * a crash is asking for.
  */
+/**
+ * Clear the journals of sessions that are still dead by the time it comes to it.
+ *
+ * The second reading, and the only place the suspend question is asked - see
+ * journal.js's stillBeating. Everything up to here is reversible: a session
+ * offered by mistake costs a prompt, and declining it leaves every copy where
+ * it was. This is not reversible, so it is the step that has to be sure.
+ *
+ * And by here it can be: a live window beats every interval whether or not the
+ * machine has just woken, and between the scan and this line sits a dialog
+ * somebody had to answer. A beat that moved in that time is a window somebody
+ * is typing in, and its unsaved work is not ours to delete.
+ */
+async function clearDeadJournals(dead) {
+  await Promise.all(dead.map(async (session) => {
+    const beating = await beatOf({ filesystem }, session.root);
+    if (stillBeating(session.said, beating)) {
+      log.warn(`${session.root} has beaten since it was read; leaving its journal alone`);
+      return;
+    }
+    await clearJournal({ filesystem, log }, session.root);
+  }));
+}
+
 export async function offerRecovery() {
   const dataDir = await appDataDir();
   const mine = journalRoot(dataDir, log.instanceId);
@@ -1019,20 +1046,23 @@ export async function offerRecovery() {
     const beatAt = await stampAt(`${root}/alive`);
     const modifiedAt = beatAt === null ? null : beatAt.modifiedAt;
 
-    // What that beat believed the time was. A beat older than the machine has
-    // been awake means the machine slept, not that the window died - so the
-    // live sibling is left alone rather than having its journal taken.
-    let said = null;
-    try {
-      said = Number(await filesystem.readFile(`${root}/alive`));
-    } catch {
-      // A beat with no time in it: written by an older version, or never
-      // written. isStale below still answers from the file's own age.
-    }
-    if (sleptThrough(said, Date.now())) {
-      log.info(`Not offering ${root}: its last beat predates a suspend`);
-      continue;
-    }
+    // What that beat believed the time was, kept for the second reading before
+    // anything is cleared. It is deliberately not consulted here.
+    //
+    // It used to be: a beat more than two intervals old was called a suspend -
+    // timers do not tick while a machine sleeps, so a live window's beat can be
+    // as old as the nap - and the session was skipped. But that is every
+    // crashed session not restarted within a minute, and skipping meant never
+    // offering *and* never clearing, so the journals piled up unread. Twenty-one
+    // of them on the machine this was found on, several holding real work.
+    //
+    // The question cannot be answered from one reading at all: an old beat is a
+    // suspended live window and a dead one, identically. So it is asked where it
+    // decides something that cannot be undone - the clear below - by reading the
+    // beat a second time, seconds later, by which point a live window has beaten
+    // again. Offering costs a live sibling nothing: the prompt can be declined,
+    // and declining leaves every copy where it is.
+    const said = await beatOf({ filesystem }, root);
 
     // Where a platform reports no usable modification time, every sibling
     // would look dead for ever. Said once, and treated as alive rather than
@@ -1052,7 +1082,7 @@ export async function offerRecovery() {
     // A session still beating is a window somebody is typing in. Offering its
     // unsaved work back would be taking it from them.
     if (isStale(modifiedAt, Date.now())) {
-      dead.push({ root, beatAt: modifiedAt === null ? 0 : modifiedAt });
+      dead.push({ root, beatAt: modifiedAt === null ? 0 : modifiedAt, said });
     }
   }
   if (dead.length === 0) {
@@ -1069,7 +1099,7 @@ export async function offerRecovery() {
     entries.push(...(await readJournal({ filesystem, log }, session.root)));
   }
   if (entries.length === 0) {
-    await Promise.all(dead.map((s) => clearJournal({ filesystem, log }, s.root)));
+    await clearDeadJournals(dead);
     return 0;
   }
 
@@ -1093,7 +1123,7 @@ export async function offerRecovery() {
   }
   if (answer !== "save") {
     log.info(`Discarded ${entries.length} recovery copies at the user's request`);
-    await Promise.all(dead.map((s) => clearJournal({ filesystem, log }, s.root)));
+    await clearDeadJournals(dead);
     return 0;
   }
 
@@ -1160,7 +1190,7 @@ export async function offerRecovery() {
   }
 
   log.info(`Recovered ${recoveredKeys.length} buffer(s) from ${dead.length} session(s)`);
-  await Promise.all(dead.map((s) => clearJournal({ filesystem, log }, s.root)));
+  await clearDeadJournals(dead);
   await saveWorkspace();
   return recoveredKeys.length;
 }
@@ -1258,38 +1288,62 @@ async function reloadFrom(key, path) {
 }
 
 async function saveBuffer(key, saveAs) {
-  let path = bufferPath(key);
+  // The path this buffer came from, kept whole even after `path` below has
+  // become somewhere else. It is what the recorded stamp describes, and the
+  // changed-on-disk check further down is only meaningful about that file.
+  const original = bufferPath(key);
+  let path = original;
 
   if (saveAs || path === null) {
-    path = await os.showSaveDialog("Save", {
-      defaultPath: path ?? (await startingFolder()),
-      filters: FILTERS,
-    });
-    if (path === "" || path === undefined) {
-      return null;
-    }
-    const chosen = path;
-    path = withPythonExtension(path);
+    // The folder and the name apart, rather than one path, because macOS needs
+    // to be told them separately - see savedialog.js. `startingFolder` already
+    // guarantees a folder that exists, and `original` is a file that was opened
+    // from disk, so both are safe to hand to a panel.
+    let startIn = original === null ? await startingFolder() : directoryOf(original);
+    let startName = original === null ? null : baseName(original);
 
-    // The dialog asked about the name the user typed, and .py is added after
-    // it has closed. So typing "bracket" where a bracket.py already exists got
-    // no overwrite prompt from anybody - the dialog had vetted a name that does
-    // not exist, and the write went to one that does.
-    //
-    // Only when the extension was actually added, which is also what makes this
-    // right on a platform whose own dialog appends it: there the name it vetted
-    // already carried .py, so its own overwrite prompt has been seen and asking
-    // again would be a second dialog about the same file.
-    if (path !== chosen && await somethingIsAt(path)) {
+    // Asked in a loop, because the replace prompt below has to be able to send
+    // somebody back to the dialog. Cancelling it used to abandon the save
+    // outright - two dialogs deep, one Cancel, and the file was simply not
+    // saved - while cancelling the *platform's* own replace prompt leaves them
+    // in the panel to try another name. Same question, so the same way out.
+    for (;;) {
+      const chosen = await chooseSaveName({ os, log, platform: NL_OS }, "Save", {
+        folder: startIn,
+        name: startName,
+        filters: FILTERS,
+      });
+      if (chosen === "" || chosen === undefined) {
+        return null;
+      }
+      path = withPythonExtension(chosen);
+
+      // The dialog asked about the name the user typed, and .py is added after
+      // it has closed. So typing "bracket" where a bracket.py already exists got
+      // no overwrite prompt from anybody - the dialog had vetted a name that does
+      // not exist, and the write went to one that does.
+      //
+      // Only when the extension was actually added, which is also what makes this
+      // right on a platform whose own dialog appends it: there the name it vetted
+      // already carried .py, so its own overwrite prompt has been seen and asking
+      // again would be a second dialog about the same file.
+      if (path === chosen || !(await somethingIsAt(path))) {
+        break;
+      }
       const answer = await askTwoWay({
         title: "Replace the existing file?",
         detail: `${path} already exists.\n\n.py was added to the name you typed, so the save would write to it.`,
         confirm: "Replace",
         cancel: "Cancel",
       });
-      if (answer !== "confirm") {
-        return null;
+      if (answer === "confirm") {
+        break;
       }
+      // Back to the panel, holding what they typed rather than what this
+      // buffer used to be called: they are answering "no, somewhere else",
+      // and starting again from the old name would throw that away.
+      startIn = directoryOf(chosen) ?? startIn;
+      startName = baseName(chosen);
     }
 
     // And a file another tab is holding cannot be taken from it. Two buffers on
@@ -1353,7 +1407,19 @@ async function saveBuffer(key, saveAs) {
   // tab, and the only external change ever noticed was deletion, on a manual
   // refresh. So a file edited in another program - or in a second window of
   // this one - was replaced without a word.
-  const before = bufferStamp(key);
+  // Only about the file this buffer came from. A stamp describes one path, and
+  // a Save As has just chosen a different one - so comparing them asked
+  // "does notes2.py look like notes.py did?", which of course it does not, and
+  // every Save As over an existing file ended in "It changed on disk" about a
+  // file nothing had touched. Worse than noise: the prompt offers Reload, so
+  // the way out of a save was an offer to replace the buffer with the contents
+  // of the file the user had just chosen to overwrite.
+  //
+  // Nothing is skipped by this. Saving over another file is a question the
+  // dialog has already asked - the platform's own replace prompt, or ours when
+  // .py made the name - and that consent is about the same bytes this would
+  // have been warning about.
+  const before = path === original ? bufferStamp(key) : null;
   const now = await stampAt(path);
   if (changedSince(before, now)) {
     const answer = await askThreeWay({

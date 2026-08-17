@@ -208,31 +208,57 @@ export function createRecorder({ delay = 1000, schedule = setTimeout, cancel = c
 export const BEAT = 30 * 1000;
 export const STALE_AFTER = 3 * BEAT;
 
+const ALIVE = "alive";
+
 /**
- * Whether the clock jumped by more than a suspend-free machine can explain.
+ * Whether a session that looked dead has beaten since we looked.
  *
- * Timers do not tick while a machine sleeps, so a window that was open when the
- * lid closed has a beat as old as the nap. Judged dead on that alone, its live
- * journal is offered to whoever starts next and then cleared - taking the
- * shadow copies of somebody still typing.
+ * This is what replaced a suspend heuristic, and the replacement is the point.
+ * A machine that sleeps stops its timers, so a window that was open when the
+ * lid closed has a beat as old as the nap - and from one reading there is no
+ * way to tell that from a window that died. The old test called any beat more
+ * than two intervals old a suspend and skipped the session, which is every
+ * crashed session that is not restarted within a minute: recovery was off, and
+ * the journals piled up unread. Twenty-one of them, on the machine this was
+ * found on.
  *
- * So the beat also records what time it thought it was. A gap far larger than
- * the interval means the machine was away, not that the window was: the
- * staleness question is asked again after the beats have had a chance to
- * resume rather than answered from a timestamp that slept through it.
+ * A second reading answers it outright. A live window beats again within its
+ * interval, whether or not the machine has just woken; a dead one never does.
+ * So the question is only asked where it decides something destructive - see
+ * offerRecovery, which re-reads before clearing anybody's journal - and never
+ * to decide whether to *offer*, because a session that is merely offered loses
+ * nothing by being offered.
+ *
+ * A beat that appears where there was none counts: an older version that never
+ * beat, or a directory created between the two readings.
  */
-export function sleptThrough(recordedAt, now, beat = BEAT) {
-  // Zero and below are not times. A beat file written by a version that did
-  // not record one reads back as 0, and treating that as an ancient timestamp
-  // would make every crashed session look like a suspend - which is to say,
-  // would turn recovery off entirely. Same reasoning as stampOf's.
-  if (typeof recordedAt !== "number" || !Number.isFinite(recordedAt) || recordedAt <= 0) {
+export function stillBeating(before, after) {
+  if (after === null || after === undefined) {
     return false;
   }
-  return now - recordedAt > beat * 2;
+  if (before === null || before === undefined) {
+    return true;
+  }
+  return after > before;
 }
 
-const ALIVE = "alive";
+/**
+ * What time a session's beat last said it was, or null if it has never said.
+ *
+ * Null rather than zero for "no usable time", so a caller can tell "it has not
+ * beaten" from "it beat at the epoch" - see stampOf, which draws the same line
+ * for the same reason.
+ */
+export async function beatOf({ filesystem }, root) {
+  try {
+    const said = Number(await filesystem.readFile(`${root}/${ALIVE}`));
+    return Number.isFinite(said) && said > 0 ? said : null;
+  } catch {
+    // No beat file, or nothing readable in it.
+    return null;
+  }
+}
+
 
 /**
  * Say this window is still running, and when it thought that was.

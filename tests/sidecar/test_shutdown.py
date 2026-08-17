@@ -138,6 +138,41 @@ class ShutdownTest(unittest.TestCase):
 
         self.assertEqual(started, [], "a run was started after its stop step")
 
+    def test_a_restart_the_kernel_refused_does_not_start_a_console(self):
+        """A restart is a kernel and a console, and the console is a process.
+
+        on_restart asks whether it is refusing once, at the top - and then
+        spends seconds stopping a console and replacing a kernel. A quit landing
+        inside that window is the M22 case, and the kernel now refuses it: there
+        is no replacement, so starting a console against one would spawn a
+        process into a teardown that has already walked past its step. That is
+        the exact shape _refusing exists to prevent, one call further down.
+
+        Un-applied by ignoring what restart() answers: the console starts.
+        """
+        started = []
+
+        class Channel(Recorder):
+            def send(self, *args, **arguments):
+                pass
+
+        class Watched(Sidecar):
+            def console_start(self):
+                started.append("console")
+
+        class Refusing(Recorder):
+            def restart(self):
+                return False
+
+        sidecar = Watched(env_root=self.root, app_dir=self.root, instance=self.instance)
+        sidecar.channel = Channel("channel", self.stopped)
+        sidecar.kernel = Refusing("kernel", self.stopped)
+        sidecar.console = None
+
+        sidecar.on_restart({})
+
+        self.assertEqual(started, [], "a console was started for a kernel that refused to restart")
+
     def test_a_step_that_raises_does_not_strand_the_ones_after_it(self):
         # A language server that will not die is no reason to leave a kernel
         # behind.
@@ -365,6 +400,11 @@ class StdinDuringStartupTest(unittest.TestCase):
     Un-applied by moving watch_stdin() back below sidecar.start(): nothing
     reads stdin until the wait for a client times out, and the assertion below
     fails on the clock.
+
+    The tests after it share the spawned process and ask the other half of the
+    same question: not whether the news of a quit arrives, but whether the
+    teardown can still run once the application that sent it has gone - which
+    is the difference between a window being closed and a window being killed.
     """
 
     # Comfortably inside the sidecar's own wait for a client, so arriving
@@ -450,6 +490,97 @@ class StdinDuringStartupTest(unittest.TestCase):
 
         self.assertLess(heard, self.HEARD, f"stdin took {heard:.1f}s to be heard")
 
+    def test_the_sidecar_goes_when_the_application_is_killed_rather_than_quitting(self):
+        """The case the test above cannot express, and the one that happened.
+
+        A quit closes our stdin and stays alive to read what we say about it. A
+        `kill -9` on the window closes stdin, stdout and stderr in the same
+        instant - and the first thing the stdin watch does with that news is
+        write it down. That write got EPIPE, and BrokenPipeError ended the watch
+        thread before stop() was ever called: sidecar, kernel, console,
+        measurement backend and language server all stayed, with `ppid 1`,
+        exactly as the seven orphans this file exists for did.
+
+        Nothing above could have caught it. `stderr=DEVNULL` cannot break, so
+        every existing test asked whether stdin is *heard* and none asked
+        whether the teardown can still speak while it acts on it.
+
+        The streams are closed before stdin deliberately, so the read end of
+        stderr is already gone when EOF arrives rather than racing it.
+
+        Un-applied - by letting log() raise again - this hangs until its
+        timeout, which is the orphan reproduced.
+        """
+        repo = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        root = tempfile.mkdtemp(prefix="studio-killed-")
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+
+        process = subprocess.Popen(
+            [sys.executable, os.path.join(repo, "sidecar", "main.py"),
+             "--env-root", root, "--app-dir", repo],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        self.addCleanup(self._reap, process)
+
+        announced = process.stdout.readline()
+        self.assertIn(b"listening", announced, f"no handshake: {announced!r}")
+        self.assertIsNone(process.poll(), "the sidecar exited before it was asked to")
+
+        # This process is the only reader of either stream, so closing them is
+        # what the application's death does to them.
+        process.stderr.close()
+        process.stdout.close()
+
+        started = time.monotonic()
+        process.stdin.close()
+        try:
+            process.wait(timeout=self.HEARD * 3)
+        except subprocess.TimeoutExpired:
+            self.fail("the sidecar stayed: it could not log the teardown it was starting")
+        heard = time.monotonic() - started
+
+        self.assertLess(heard, self.HEARD, f"stdin took {heard:.1f}s to be heard")
+
+    def test_a_signal_still_tears_down_with_nobody_left_to_log_to(self):
+        """The same broken pipe, on the path a hand-typed `kill` takes.
+
+        Reachable by anybody clearing up a tree whose application has already
+        gone - which is precisely when stderr has no reader. Without log()
+        swallowing it, BrokenPipeError comes out of the handler and into
+        whatever the main thread was doing, so the process dies of the
+        exception instead of by the teardown: what this asserts is the exit
+        code, which only a completed handler produces.
+        """
+        repo = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        root = tempfile.mkdtemp(prefix="studio-signal-orphan-")
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+
+        process = subprocess.Popen(
+            [sys.executable, os.path.join(repo, "sidecar", "main.py"),
+             "--env-root", root, "--app-dir", repo],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        self.addCleanup(self._reap, process)
+
+        announced = process.stdout.readline()
+        self.assertIn(b"listening", announced, f"no handshake: {announced!r}")
+
+        process.stderr.close()
+        process.stdout.close()
+        self.assertIsNone(process.poll(), "it exited before it was signalled")
+
+        process.send_signal(signal.SIGTERM)
+        try:
+            code = process.wait(timeout=30)
+        except subprocess.TimeoutExpired:
+            self.fail("the sidecar did not act on SIGTERM")
+
+        self.assertEqual(code, 0, "the handler did not finish; something else ended the process")
+
     def _reap(self, process):
         if process.poll() is None:
             process.kill()
@@ -457,7 +588,9 @@ class StdinDuringStartupTest(unittest.TestCase):
             process.wait(timeout=5)
         except subprocess.TimeoutExpired:
             pass
-        for stream in (process.stdout, process.stdin):
+        for stream in (process.stdout, process.stdin, process.stderr):
+            if stream is None:
+                continue
             try:
                 stream.close()
             except OSError:

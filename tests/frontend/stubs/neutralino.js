@@ -380,6 +380,34 @@ export const os = {
     return dialogAnswers.length > 0 ? dialogAnswers.shift() : "";
   },
 
+  /**
+   * The save panel on macOS, which is a script rather than a dialog call.
+   *
+   * Neutralino's own save dialog puts the whole `defaultPath` into AppleScript's
+   * `default name`, so a Save As opened asking whether to save a file called
+   * "/Users/.../notes.py". The application runs its own `choose file name`
+   * instead - see src/savedialog.js - and on this platform that is the path
+   * every Save As takes.
+   *
+   * Answered from the same queue as showSaveDialog, and with the same meaning
+   * for an empty one: `choose file name` reports a cancel by raising, and the
+   * script turns that into an empty line. So a test queues a path exactly as it
+   * did before and does not have to know which platform it is on.
+   *
+   * Anything else is refused rather than answered with a plausible success. The
+   * application runs no other command through execCommand, and a stub that
+   * cheerfully returns exit code 0 for one it has never heard of is how a
+   * command that was never really run comes to look like it worked.
+   */
+  async execCommand(command, options) {
+    record("execCommand", [command, options]);
+    if (!command.startsWith("osascript ") || !command.includes("choose file name")) {
+      return { pid: 0, stdOut: "", stdErr: `unexpected command: ${command}`, exitCode: 127 };
+    }
+    const answer = dialogAnswers.length > 0 ? dialogAnswers.shift() : "";
+    return { pid: 0, stdOut: `${typeof answer === "string" ? answer : ""}\n`, stdErr: "", exitCode: 0 };
+  },
+
   // Cancel is undocumented, and the application treats anything that is not a
   // non-empty string as one. Answered the same way here so a test cannot come
   // to depend on a shape the real dialog never produces.

@@ -26,9 +26,20 @@ const RECOVERY = "/appdata/build123d-studio/recovery";
 const DEAD = `${RECOVERY}/deadbeef`;
 const ALSO_DEAD = `${RECOVERY}/deadbe11`;
 
-/** A session that crashed with unsaved work in it. */
+/** A session that crashed with unsaved work in it.
+ *
+ * The beat carries a real time, and that is not decoration. It used to be
+ * written empty, which reads back as 0 - the one value the staleness rules
+ * treated as "no time recorded" and stepped around. So every test here ran down
+ * a path no crashed session ever takes, and the rule that actually governed
+ * them was never executed: a beat with a real time in it was called a suspend
+ * and skipped, and recovery did not work at all outside these tests.
+ *
+ * Five minutes ago, so it is unambiguously stale by any interval, and old
+ * enough that nothing can mistake it for this session's own.
+ */
 function crashed(root, entries) {
-  const files = { [`${root}/alive`]: "" };
+  const files = { [`${root}/alive`]: String(Date.now() - 5 * 60 * 1000) };
   for (const [key, { path, text }] of Object.entries(entries)) {
     files[`${root}/${key}.py`] = text;
     files[`${root}/${key}.json`] = JSON.stringify({ path });
@@ -224,6 +235,52 @@ test.describe("a session that is still running", () => {
 
     await expect(page.locator(".confirm-overlay")).toHaveCount(0);
     await expect.poll(() => tabLabels(page)).not.toContain("theirs.py");
+  });
+});
+
+test.describe("a session that starts beating again while the prompt is up", () => {
+  test("keeps its unsaved work, whatever the prompt is answered", async ({ page }) => {
+    // The case the deleted suspend heuristic was reaching for, answered where
+    // it can be answered rather than guessed at from one reading.
+    //
+    // A machine that sleeps stops its timers, so a window that was open when
+    // the lid closed looks exactly like one that died - old beat, unsaved work,
+    // no way to tell. Deciding from that reading meant either never offering
+    // anything (which is what shipped: recovery was off entirely) or taking a
+    // live window's work.
+    //
+    // Neither is necessary, because offering costs nothing and only the clear
+    // is irreversible. So the beat is read a second time at that step, seconds
+    // later, with a dialog in between - and a window that has woken up has
+    // beaten by then.
+    const files = crashed(DEAD, {
+      3: { path: `${PROJECT}/theirs.py`, text: "STILL THEIRS = 1\n" },
+    });
+    await open(page, {
+      files: { ...FILES, ...files },
+      settings: { workspace: WORKSPACE },
+    });
+
+    // Judged dead and offered, which is right: from one reading it is.
+    await expect(page.locator(".confirm-overlay")).toBeVisible();
+
+    // And then it beats - the machine woke up, and the window that owns this
+    // journal is still there.
+    await page.evaluate((root) => {
+      globalThis.__NEUTRALINO_STUB__.given(`${root}/alive`, String(Date.now()));
+    }, DEAD);
+
+    // Discard is the answer that destroys, so it is the one worth asking under.
+    await page.locator('.confirm-overlay [data-answer="discard"]').click();
+
+    await expect
+      .poll(() => page.evaluate((root) => {
+        const calls = globalThis.__NEUTRALINO_STUB__.calls();
+        return calls.filter((call) => call.name === "remove")
+          .map((call) => String(call.args[0] ?? ""))
+          .filter((path) => path.startsWith(root)).length;
+      }, DEAD), { message: "a live window's journal was deleted" })
+      .toBe(0);
   });
 });
 

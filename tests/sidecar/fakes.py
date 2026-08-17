@@ -98,8 +98,18 @@ class FakeClient:
     # every execute_request so that user code calling input() keeps working.
     allow_stdin = True
 
-    def __init__(self, name, on_execute=None, answers=True, subshells=True):
+    def __init__(self, name, on_execute=None, answers=True, subshells=True, on_ready=None):
         self.name = name
+        # Where a real client sits waiting for the kernel to answer its first
+        # kernel_info - up to sixty seconds of it, and the widest window in the
+        # whole lifecycle. A test that wants a start held open holds it here,
+        # because this is where a real one is genuinely slow.
+        self._on_ready = on_ready
+        # True while some thread is inside that wait, which is what makes this
+        # client's sockets "active in another thread" - the state pyzmq names
+        # when it says destroy() must not be called. Recorded so the fake can
+        # state that fault rather than leaving a test to infer it from timing.
+        self.building = False
         self.session = FakeSession(name)
         self.shell_channel = FakeShellChannel(self)
         self.control_channel = FakeControlChannel(self, subshells=subshells)
@@ -143,6 +153,12 @@ class FakeClient:
     def wait_for_ready(self, timeout=None):
         if not self.channels_started:
             raise RuntimeError("waited for a client whose channels were never started")
+        if self._on_ready is not None:
+            self.building = True
+            try:
+                self._on_ready(self)
+            finally:
+                self.building = False
 
     def stop_channels(self):
         self.channels_stopped = True
@@ -238,6 +254,11 @@ class FakeManager:
         self.started = False
         self.shutdowns = []
         self.cleaned = False
+        # Whether that cleanup happened while another thread was still building
+        # on this manager's client. In the real one this is
+        # context.destroy(linger=100) against sockets somebody else owns, and
+        # the term() it ends in never returns.
+        self.cleaned_mid_build = False
 
     def client(self):
         return self._client
@@ -255,6 +276,8 @@ class FakeManager:
         self.shutdowns.append(now)
 
     def cleanup_resources(self):
+        if self._client.building:
+            self.cleaned_mid_build = True
         self.cleaned = True
 
     def interrupt_kernel(self):
@@ -264,11 +287,14 @@ class FakeManager:
 class TestableKernel(Kernel):
     """The real Kernel with the process replaced, and nothing else."""
 
-    def __init__(self, on_iopub, on_execute=None, answers=True, subshells=True, **kwargs):
+    def __init__(self, on_iopub, on_execute=None, answers=True, subshells=True,
+                 on_ready=None, **kwargs):
         self.clients = []
+        self.managers = []
         self._on_execute = on_execute
         self._answers = answers
         self._subshells = subshells
+        self._on_ready = on_ready
         with tempfile.TemporaryDirectory() as env_root:
             super().__init__(
                 env_root=env_root,
@@ -289,9 +315,12 @@ class TestableKernel(Kernel):
             on_execute=self._on_execute,
             answers=self._answers,
             subshells=self._subshells,
+            on_ready=self._on_ready,
         )
         self.clients.append(client)
-        return FakeManager(client)
+        manager = FakeManager(client)
+        self.managers.append(manager)
+        return manager
 
 
 def wait_until(predicate, timeout, interval=0.01):

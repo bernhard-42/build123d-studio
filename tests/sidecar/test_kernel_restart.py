@@ -417,5 +417,106 @@ class LaunchWindowTest(unittest.TestCase):
         self.assertTrue(kernel.manager.started, "the kernel process was never started")
 
 
+class QuitDuringRestartTest(unittest.TestCase):
+    """M22, and the second fault under it.
+
+    Found by hand on 2026-08-17, macOS: Restart Kernel followed immediately by a
+    quit left the sidecar running with no kernel and no console, but with the
+    measurement backend and the language server still under it. `sample` on the
+    stuck process put the receive thread inside `zmq_ctx_term`, holding
+    Sidecar.stop()'s first step.
+
+    The mechanism, and it is upstream rather than subtle: jupyter_client's
+    cleanup_resources calls `context.destroy(linger=100)`, and pyzmq documents
+    that destroy closes sockets, which is not thread safe - "if there are active
+    sockets in other threads, this must not be called". `term()` then waits for
+    every socket in the context to be closed, with no timeout and nothing to
+    interrupt it. restart() and shutdown() both reach `_shutdown()`, and nothing
+    made them exclusive, so a quit landing inside a restart's start() destroyed
+    a context the control lane was still building on.
+
+    Widened the way the rest of this file does it, through a seam the production
+    code already has: the replacement client blocks inside `wait_for_ready`,
+    which is where a real one waits up to sixty seconds for its kernel to
+    answer. The quit then arrives while the restart is provably mid-build,
+    instead of when it happens to be unlucky.
+
+    Un-applied by taking `_lifecycle` out of restart(), start() and shutdown():
+    the quit runs straight through the held start, and `cleaned_mid_build` says
+    so - which in the real one is the term() that never returns.
+    """
+
+    def setUp(self):
+        self.building = threading.Event()
+        self.release = threading.Event()
+
+    def _held_replacement(self, client):
+        # The first kernel comes up normally; only the restart's replacement is
+        # held, so the test's own setup cannot be what blocks.
+        if client.name == "gen0":
+            return
+        self.building.set()
+        self.release.wait(timeout=SETTLE * 4)
+
+    def test_a_quit_landing_inside_a_restart_does_not_tear_down_what_it_is_building(self):
+        kernel = TestableKernel(on_iopub=lambda message: None, on_ready=self._held_replacement)
+        kernel.start()
+
+        restarter = threading.Thread(target=kernel.restart, name="lane-control")
+        restarter.start()
+        self.assertTrue(self.building.wait(timeout=SETTLE), "the restart never reached its wait")
+
+        replacement = kernel.clients[1]
+        manager = kernel.managers[1]
+
+        quit_done = threading.Event()
+        quitter = threading.Thread(
+            target=lambda: (kernel.shutdown(), quit_done.set()), name="receive",
+        )
+        quitter.start()
+
+        # The restart is still inside start(). Nothing may reach into what it is
+        # building, and the quit must be waiting rather than working.
+        time.sleep(MISBEHAVE_WINDOW)
+        touched = []
+        if manager.cleaned_mid_build:
+            touched.append("the context was destroyed while the restart was building on it")
+        if replacement.channels_stopped:
+            touched.append("the replacement's channels were closed underneath its own start")
+        if quit_done.is_set():
+            touched.append("the quit tore down a kernel that was still being built")
+
+        self.release.set()
+        restarter.join(timeout=SETTLE * 2)
+        self.assertTrue(quit_done.wait(timeout=SETTLE * 2), "the quit never finished")
+        quitter.join(timeout=SETTLE)
+
+        self.assertEqual(touched, [])
+        # And it did finish the job rather than merely staying out of the way:
+        # the kernel the restart built is stopped, and by the quit.
+        self.assertTrue(replacement.channels_stopped, "the replacement was left running")
+        self.assertTrue(manager.cleaned, "the replacement's resources were never released")
+        self.assertFalse(manager.cleaned_mid_build, "it was cleaned up mid-build after all")
+
+    def test_a_restart_that_arrives_after_the_quit_does_not_spawn_one(self):
+        """The other order, which the same lock makes answerable.
+
+        A restart queued on the control lane can be dispatched after stop() has
+        run - the lanes keep delivering while the teardown walks its steps, and
+        Sidecar refuses the ones it knows about for exactly this reason. Here it
+        is refused at the kernel itself, so the answer does not depend on which
+        caller remembered to ask.
+        """
+        kernel = TestableKernel(on_iopub=lambda message: None)
+        kernel.start()
+        self.assertEqual(len(kernel.clients), 1)
+
+        kernel.shutdown()
+        restarted = kernel.restart()
+
+        self.assertEqual(len(kernel.clients), 1, "a kernel was started after the shutdown")
+        self.assertFalse(restarted, "it claimed to have restarted")
+
+
 if __name__ == "__main__":
     unittest.main()

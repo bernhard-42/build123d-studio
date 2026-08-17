@@ -50,9 +50,17 @@ class FakeKernel:
         self.restarts = 0
 
     def restart(self):
+        """True for "it restarted", which is what the real one answers.
+
+        Not None. The real Kernel.restart refuses when a quit has already begun
+        and says so with False, and on_restart reads that answer to decide
+        whether to start a console - so a fake that returns nothing stands for a
+        refusal, and this whole class stands for a kernel that came back.
+        """
         self.restarts += 1
         if self.fails:
             raise RuntimeError("the kernel would not come back")
+        return True
 
 
 class HealthReportTest(unittest.TestCase):

@@ -113,6 +113,98 @@ class ModelSocketTest(unittest.TestCase):
         shows = [orjson.loads(entry[1])["show"] for entry in self.delivered if entry[0] == "model"]
         self.assertEqual(shows, [0, 1, 2, 3])
 
+    def test_a_mapping_cannot_overtake_the_model_it_belongs_to(self):
+        """The same order, widened until losing it is a certainty.
+
+        The test above sends three messages as fast as it can and asks whether
+        they arrived in order. That is the real traffic, and it is also a coin
+        toss: it caught the fault in roughly half its runs, which by this
+        project's own standard is not a test at all - nothing distinguishes a
+        race that was cured from one that stopped showing up.
+
+        So this one makes the model slow on the wire and the mapping instant,
+        which is exactly the shape the kernel produces when a model is large.
+        The model connects first, so it is accepted first and owns the earlier
+        place in the stream; it then sends everything but its last byte and
+        waits. The mapping arrives complete while that is happening.
+
+        Un-applied by taking the turnstile out of _queue: the mapping is
+        delivered first, every time, which is a mapping describing a model the
+        measurement backend has not been given yet.
+        """
+        self.let_go.set()
+
+        model = socket.create_connection(("127.0.0.1", self.port), timeout=10)
+        self.addCleanup(model.close)
+        message = encode(self.socket.token, MessageType.DATA, {"show": 0}, b"buffers")
+        # Everything but the last byte, so the read cannot complete and the
+        # connection cannot be mistaken for one that has finished.
+        model.sendall(message[:-1])
+
+        # Accepted before the mapping connects, which is what gives it the
+        # earlier place. Polled rather than slept, so the test does not depend
+        # on how fast this machine schedules a thread.
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline and self.socket.state()["reading"] < 1:
+            time.sleep(0.01)
+        self.assertEqual(self.socket.state()["reading"], 1, "the model was never accepted")
+
+        self.send(MessageType.BACKEND, {"mapping": 0})
+
+        # The mapping is read and waiting. Nothing may have been delivered:
+        # its own model has not arrived yet.
+        time.sleep(0.2)
+        self.assertEqual(
+            [entry[0] for entry in self.delivered], [],
+            "the mapping was delivered before the model it belongs to",
+        )
+
+        model.sendall(message[-1:])
+
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline and len(self.delivered) < 2:
+            time.sleep(0.01)
+        self.assertEqual([entry[0] for entry in self.delivered], ["model", "mapping"])
+
+    def test_a_command_does_not_hold_the_stream_up_behind_it(self):
+        """The other direction, which the turnstile could have broken.
+
+        A command is answered on its own thread precisely so it never waits
+        behind a model. Giving it a place in the stream would let it delay one
+        instead - the same fault pointing the other way - so it gives its place
+        back before it is answered, and this holds that: a command answered
+        slowly must not stop a model that was accepted after it.
+        """
+        self.let_go.set()
+        answering = threading.Event()
+        finish = threading.Event()
+        self.addCleanup(finish.set)
+
+        def slow_command(request):
+            answering.set()
+            finish.wait(timeout=10)
+            return {"answered": request.get("command")}
+
+        self.socket.on_command = slow_command
+        threading.Thread(
+            target=self.send,
+            args=(MessageType.COMMAND, {"command": "status"}),
+            kwargs={"expect_reply": True},
+            daemon=True,
+        ).start()
+        self.assertTrue(answering.wait(timeout=10), "the command was never answered")
+
+        self.send(MessageType.DATA, {"show": 0}, b"")
+
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline and len(self.delivered) < 1:
+            time.sleep(0.01)
+        self.assertEqual(
+            [entry[0] for entry in self.delivered], ["model"],
+            "the model waited for a command to be answered",
+        )
+        finish.set()
+
     def test_it_says_what_it_is_doing(self):
         # The stall report reads this, and it is the difference between "the
         # show is waiting on the kernel" and "the show is waiting on the window".

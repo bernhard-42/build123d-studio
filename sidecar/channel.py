@@ -57,8 +57,40 @@ MAX_MESSAGE = None
 
 
 def log(*parts):
-    """Log to stderr. stdout carries the handshake and nothing else."""
-    print(*parts, file=sys.stderr, flush=True)
+    """Log to stderr, and never raise. stdout carries the handshake and nothing else.
+
+    Never raising is not tidiness. The only reader of this stream is the
+    application that spawned us, so when it is killed rather than quitting, our
+    stdin and our stderr end in the same instant - and the first thing the
+    teardown that closing stdin is meant to start does is say that it has
+    started. That write got EPIPE, BrokenPipeError came out of this line, and it
+    took the stdin watch's thread with it before stop() had been called: a
+    `kill -9` on the window left the whole tree behind - sidecar, kernel,
+    console, measurement backend and language server - with the main thread
+    still in its wait loop. The watchdog that exists to leave anyway was
+    defeated the same way, because it announces itself here too.
+
+    Dropped rather than reported, because there is nowhere left to report that
+    reporting failed: the reader whose absence is the fault is the only one
+    there was.
+    """
+    try:
+        print(*parts, file=sys.stderr, flush=True)
+    except OSError:
+        pass
+
+
+def flush_logs():
+    """Push out anything still buffered, on the way to an os._exit, and never raise.
+
+    Same reason as log() above, and the same fault if it did: every exit path
+    below a dead application flushes before it goes, and a raise there is a
+    process that stays instead.
+    """
+    try:
+        sys.stderr.flush()
+    except OSError:
+        pass
 
 
 def pad_to_alignment(length):

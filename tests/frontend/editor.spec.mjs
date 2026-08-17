@@ -475,6 +475,52 @@ test.describe("Save As does not land on a file nobody asked about", () => {
       .toBe("BRACKET = 1\n");
   });
 
+  test("saving onto another file is not reported as that file changing", async ({ page }) => {
+    // The stamp a buffer carries describes the file it came from, and a Save As
+    // has just chosen a different one - so comparing them asked "does
+    // bracket.py look like part.py did?", which it does not, and every Save As
+    // over an existing file ended in "It changed on disk" about a file nothing
+    // had touched.
+    //
+    // Not merely noise. That prompt offers Reload, so the way out of a save was
+    // an offer to replace the buffer with the contents of the file the user had
+    // just chosen to overwrite.
+    await openWithBracket(page);
+
+    // With the extension, so the application's own replace prompt is not the
+    // thing being seen: this is the platform dialog's Replace, and afterwards
+    // there should be no second question at all.
+    await saveAsTyping(page, EXISTING);
+
+    await expect
+      .poll(() => onDisk(page, EXISTING), { message: "the save never happened" })
+      .toContain("MINE");
+    await expect(page.locator(".confirm-overlay")).toBeHidden();
+    await expect(page.locator(".tab-active .tab-label")).toHaveText("bracket.py");
+  });
+
+  test("the panel is asked for the file's name, not its whole path", async ({ page }) => {
+    // Neutralino's own dialog has one string for both, and its macOS half reads
+    // anything that is not a directory as the *name* - so the panel opened with
+    // "/documents/bracket/part.py" typed into the Save As field. The script the
+    // application runs instead says the two separately.
+    await openWithBracket(page);
+    await saveAsTyping(page, `${PROJECT}/other.py`);
+
+    const asked = await page.evaluate(() =>
+      globalThis.__NEUTRALINO_STUB__
+        .calls()
+        .filter((call) => call.name === "execCommand")
+        .map((call) => call.args[0])
+        .join("\n"),
+    );
+    expect(asked, "the panel was never run").toContain("choose file name");
+    expect(asked).toContain(`default name "part.py"`);
+    expect(asked).toContain(`default location (POSIX file "${PROJECT}" as alias)`);
+    expect(asked, "the whole path went into the name field")
+      .not.toContain(`default name "${PROJECT}/part.py"`);
+  });
+
   test("a path another tab holds is refused rather than taken from it", async ({ page }) => {
     // Two buffers on one path have no correct behaviour left between them:
     // both dirty against the same bytes, and whichever saves last wins.

@@ -13,7 +13,6 @@ import { strict as assert } from "node:assert";
 import { test } from "node:test";
 
 import {
-  BEAT,
   beat,
   clearJournal,
   createRecorder,
@@ -24,7 +23,7 @@ import {
   readJournal,
   recordBuffer,
   setAside,
-  sleptThrough,
+  stillBeating,
   STALE_AFTER,
   worthRecording,
 } from "../../../src/editor/journal.js";
@@ -250,29 +249,31 @@ test("a beat records what time it thought it was", async () => {
   assert.ok(Number.isFinite(said) && said > 0, "the beat carried no time");
 });
 
-test("a beat older than the machine has been awake means it slept", () => {
-  // Timers do not tick while a machine sleeps, so the window that was open
-  // when the lid closed has a beat as old as the nap. Judged dead on that
-  // alone, its journal is offered to somebody else and then cleared.
-  const now = 1_000_000;
-  assert.equal(sleptThrough(now - 5 * BEAT, now), true);
+test("a session that has beaten since we looked is alive", () => {
+  // What replaced the suspend heuristic. That one asked, from a single reading,
+  // whether an old beat meant a sleeping machine or a dead window - which it
+  // cannot: they look identical. It answered "asleep" for anything older than
+  // two intervals, which is every crash not restarted within a minute, so
+  // recovery never ran and the journals piled up unread.
+  //
+  // Two readings answer it outright, and the second is taken where it decides
+  // something that cannot be undone: a live window beats again between them.
+  assert.equal(stillBeating(1_000_000, 1_000_500), true);
+  assert.equal(stillBeating(1_000_000, 1_000_000), false);
 });
 
-test("and an ordinary late beat does not", () => {
-  const now = 1_000_000;
-  assert.equal(sleptThrough(now - BEAT, now), false);
-  assert.equal(sleptThrough(now, now), false);
+test("and one that has not beaten at all is dead, however old the first reading was", () => {
+  // The case the old rule got wrong, stated as the property rather than as the
+  // clock: age is not evidence. Only movement is.
+  assert.equal(stillBeating(1_000_000, null), false);
+  assert.equal(stillBeating(1, null), false);
 });
 
-test("a beat with no time in it cannot claim a suspend", () => {
-  // Written by an older version, or never written. The file's own age still
-  // answers the staleness question; this must not veto it. Zero is the shape
-  // an empty beat file reads back as, and treating it as an ancient timestamp
-  // would make every crashed session look like a suspend - recovery off.
-  assert.equal(sleptThrough(null, 1_000_000), false);
-  assert.equal(sleptThrough(Number.NaN, 1_000_000), false);
-  assert.equal(sleptThrough(0, 1_000_000), false);
-  assert.equal(sleptThrough(-1, 1_000_000), false);
+test("a beat appearing where there was none counts as alive", () => {
+  // An older version that never beat, or a directory created between the two
+  // readings. Either way something is writing there now.
+  assert.equal(stillBeating(null, 1_000_000), true);
+  assert.equal(stillBeating(null, null), false);
 });
 
 // --- reading it back -------------------------------------------------------

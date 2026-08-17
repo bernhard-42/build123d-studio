@@ -334,6 +334,37 @@ class Kernel:
         # asks again with the manager published and refuses to spawn.
         self._stopping = threading.Event()
 
+        # One thread at a time may build or destroy a kernel here.
+        #
+        # start(), restart() and shutdown() reach the same manager and the same
+        # client, and each of them arrives on a different thread: startup on the
+        # main one, a restart on the control lane, a quit on whichever thread
+        # heard it. Nothing used to stop two of them overlapping, and the pair
+        # that matters is a quit landing inside a restart's start() - the quit
+        # closes the channels the restart is at that moment bringing up, and
+        # then destroys the ZeroMQ context they live in.
+        #
+        # That is not a tidiness argument. pyzmq says it outright: destroy()
+        # closes sockets, which is not thread safe, "if there are active sockets
+        # in other threads, this must not be called". jupyter_client's
+        # cleanup_resources calls context.destroy(linger=100), and term() then
+        # waits for every socket in the context to be closed - with no timeout
+        # and nothing to interrupt it. Measured on 2026-08-17, macOS: a Restart
+        # Kernel followed immediately by a quit left the receive thread in
+        # zmq_ctx_term for ever, holding Sidecar.stop()'s first step, so the
+        # sidecar outlived its application with the measurement backend and the
+        # language server still under it. It is intermittent because the window
+        # is the restart's start(), and wait_for_ready alone allows sixty
+        # seconds of that.
+        #
+        # Re-entrant because restart() calls start() while holding it.
+        #
+        # This does not make a quit instant: one landing inside a restart waits
+        # for that restart's kernel to come up. It is bounded by the restart
+        # rather than by anything here, and a restart that never becomes ready
+        # is what Sidecar's shutdown deadline is for.
+        self._lifecycle = threading.RLock()
+
         # One generation of kernel, client and stop flag, handed to the pump as
         # arguments rather than read off self.
         #
@@ -686,6 +717,17 @@ class Kernel:
         return None
 
     def start(self):
+        """Bring up a kernel, exclusively: nothing else may build or destroy one.
+
+        The lock is taken here rather than around the callers because restart()
+        goes through this function, so this is the one place every construction
+        passes. See _lifecycle for the quit that used to run through the middle
+        of a start and take the ZeroMQ context with it.
+        """
+        with self._lifecycle:
+            return self._start()
+
+    def _start(self):
         manager = self.new_manager()
         # Published before the process exists, rather than once it is running.
         #
@@ -709,8 +751,27 @@ class Kernel:
             self.manager = None
             return None
         self.spawn(manager)
+        # Asked once more, and this one leaves the manager where it is.
+        #
+        # There is a process now, so unlike the check above this cannot answer
+        # by forgetting it: the manager is the only handle on the kernel just
+        # spawned, and nulling it here is how a stop would find nothing to stop
+        # and leave it running. So it is left published and this simply stops
+        # building on it - the shutdown waiting for the lock is what kills it,
+        # which is exactly what it is there to do.
+        if self._stopping.is_set():
+            log("Kernel spawned as the sidecar was shutting down; leaving it to the shutdown")
+            return None
         self.client = manager.client()
         self.client.start_channels()
+        # And before the long wait rather than only after it. wait_for_ready
+        # allows sixty seconds, and a quit that arrives before it starts should
+        # not be made to sit through the whole of one for a kernel nobody is
+        # going to use. A quit arriving *during* it still waits, which is the
+        # shutdown deadline's case.
+        if self._stopping.is_set():
+            log("Not waiting for the kernel: the sidecar is shutting down")
+            return None
         self.client.wait_for_ready(timeout=60)
 
         self._death_reported = False
@@ -1132,6 +1193,25 @@ class Kernel:
         generation.shell.stop(reason)
 
     def restart(self):
+        """Replace the kernel. False when there is no longer any point.
+
+        The answer matters to the caller rather than only to this class: a
+        restart is a kernel *and* a console, and a console started against a
+        kernel that was refused is a process spawned into a teardown - which is
+        the thing every refusal in this application exists to prevent.
+        """
+        with self._lifecycle:
+            if self._stopping.is_set():
+                # A quit got here first. Bringing a kernel back now would spawn
+                # a process behind a shutdown that has already run - the same
+                # fault start() refuses for the same reason - and the user is
+                # not going to see this one restart either way.
+                log("Not restarting the kernel: the sidecar is shutting down")
+                return False
+            self._restart()
+            return True
+
+    def _restart(self):
         # Nothing else is needed to close the door. _generation still names the
         # generation retired on the next line, and a retired ShellChannel
         # refuses what it is handed, so anything arriving between here and the
@@ -1182,13 +1262,21 @@ class Kernel:
 
         The order is the guarantee, and it is the same one restart() uses:
         retire the sender, then close what it was sending on.
+
+        **Outside the lock, then inside it.** Setting the flag is what a restart
+        in flight is watching for, and it has to happen before this thread
+        starts waiting for that restart to let go - otherwise the flag arrives
+        only once the replacement is fully built, and the whole point of it is
+        to stop the build early. Everything that touches a client or a manager
+        is inside.
         """
         # Before anything else, so a start() racing this one refuses to spawn
         # rather than putting a kernel behind a shutdown that has already run.
         self._stopping.set()
-        self._retire_pump()
-        self._retire_shell("the sidecar is shutting down")
-        self._shutdown(now=now)
+        with self._lifecycle:
+            self._retire_pump()
+            self._retire_shell("the sidecar is shutting down")
+            self._shutdown(now=now)
 
     def _shutdown(self, now=False):
         """Stop the kernel. Caller has retired the pump and the shell thread.
