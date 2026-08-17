@@ -12,7 +12,7 @@
     "lint": "yarn lint:js && yarn lint:py",
     "lint:js": "eslint .",
     "lint:py": "uvx ruff@0.16.0 check .",
-    "test": "node --test \"src/**/*.test.mjs\"",
+    "test": "node --test \"tests/unit/**/*.test.mjs\"",
     "test:sidecar": "node scripts/sidecar-test.mjs",
     "test:integration": "node scripts/integration-test.mjs",
     "test:frontend": "node scripts/frontend-test.mjs",

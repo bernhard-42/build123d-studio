@@ -128,7 +128,7 @@ export default [
   },
   {
     // Build and packaging tooling, plus the tests, all of which run under Node.
-    files: ["scripts/**/*.mjs", "*.config.js", "src/**/*.test.mjs"],
+    files: ["scripts/**/*.mjs", "*.config.js", "tests/unit/**/*.test.mjs"],
     languageOptions: {
       // 2025 for import attributes: `import x from "./x.json" with { type: "json" }`,
       // which node requires for a JSON import and which the viewer schema uses.
