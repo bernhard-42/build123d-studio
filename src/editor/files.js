@@ -42,6 +42,7 @@ import {
   journalRoot,
   readJournal,
   recordBuffer,
+  setAside,
   worthRecording,
 } from "./journal.js";
 import { appDataDir } from "../bootstrap/envroot.js";
@@ -127,9 +128,8 @@ export async function closeEveryTab() {
   }
   showNoBuffer();
   for (const key of bufferKeys()) {
-    bufferSettled(key).catch((error) => log.warn("Recovery copy:", error));
-    bufferSettled(key).catch((error) => log.warn("Recovery copy:", error));
-  closeBuffer(key);
+    await bufferSettled(key);
+    closeBuffer(key);
   }
   refreshTabs();
   return true;
@@ -265,6 +265,11 @@ export async function closeTab(key) {
     // The tab that took its place, or the last one when the closed tab was.
     showBuffer(remaining[Math.min(index, remaining.length - 1)]);
   }
+  // Asked about above, so whatever it held has been saved or deliberately
+  // discarded. A copy left behind would offer discarded text back at the next
+  // start - and, worse, would outrank a newer copy of the same file, because
+  // entries are read in key order and this buffer's key is the older one.
+  await bufferSettled(key);
   closeBuffer(key);
 
   refreshTabs();
@@ -905,7 +910,9 @@ async function writeRecoveryCopy(key) {
   const root = await journalPath();
   const path = bufferPath(key);
   const withPath = labelled.get(key) !== path;
-  await recordBuffer(journalDeps(root), key, { path, text: contents.text, withPath });
+  await recordBuffer(journalDeps(root), key, {
+    path, text: contents.text, stamp: bufferStamp(key), withPath,
+  });
   recorded.set(key, contents.versionId);
   labelled.set(key, path);
 }
@@ -930,6 +937,11 @@ export async function bufferSettled(key) {
  * would be arguing with an answer the user has already given.
  */
 export async function discardRecovery() {
+  // The bookings first. Shutdown then takes a second or more - the workspace,
+  // the window, the sidecar - and a timer firing in that window would write a
+  // copy of work the user has just chosen to discard, and offer it back at the
+  // next start.
+  recorder.dropAll();
   recorded.clear();
   labelled.clear();
   const root = await journalPath();
@@ -1017,28 +1029,72 @@ export async function offerRecovery() {
     return 0;
   }
 
-  let recovered = 0;
+  // Newest wins a path, and the loser is kept rather than deleted.
+  //
+  // Grouped before anything is opened, because "apply the newer copy to the
+  // buffer" and "leave the older one alone" cannot both be decided one entry at
+  // a time. Sessions arrive oldest first, so the last copy of a path is the one
+  // somebody was working on most recently.
+  const newest = new Map();
+  const superseded = [];
   for (const entry of entries) {
-    const held = entry.path === null ? null : bufferForPath(entry.path);
-    if (held !== null) {
-      // Two sessions had the same file unsaved, or this one is already open.
-      // The later copy wins the tab; the earlier stays on disk as an ordinary
-      // source file and is named, because it is somebody's work either way.
-      log.warn(
-        `${entry.path} was recovered more than once; the copy at ${entry.file}`
-        + " was not used and is still there",
-      );
+    if (entry.path === null) {
       continue;
     }
-    openBuffer({ path: entry.path, text: entry.text, matchesDisk: false });
-    recovered += 1;
+    const previous = newest.get(entry.path);
+    if (previous !== undefined) {
+      superseded.push(previous);
+    }
+    newest.set(entry.path, entry);
+  }
+  const chosen = entries.filter(
+    (entry) => entry.path === null || newest.get(entry.path) === entry,
+  );
+
+  const recoveredKeys = [];
+  for (const entry of chosen) {
+    const held = entry.path === null ? null : bufferForPath(entry.path);
+    if (held === null) {
+      recoveredKeys.push(openBuffer({ path: entry.path, text: entry.text, matchesDisk: false }));
+    } else {
+      // Already open, and this is the ordinary case rather than a rarity: the
+      // session restore runs first and reopens exactly the files that were open
+      // at the crash - from disk, so the tab holds the *old* text while the
+      // copy holds the newer unsaved work. Skipping it here recovered nothing
+      // at all for every named file, which is what this function is for.
+      //
+      // The text replaces the buffer's, which leaves it dirty because its saved
+      // version is the one the disk read produced.
+      reloadBufferText(held, entry.text);
+      recoveredKeys.push(held);
+    }
+    // The stamp the buffer agreed with before the crash, so the first save
+    // compares against that rather than against nothing - and asks if somebody
+    // else has written the file in the meantime.
+    recordStamp(recoveredKeys[recoveredKeys.length - 1], entry.stamp);
   }
   refreshTabs();
-  log.info(`Recovered ${recovered} buffer(s) from ${dead.length} session(s)`);
-  // Only what was taken. Anything named above is deliberately left where it is.
+
+  // Shadowed into *this* session's journal before the old one is cleared, so
+  // the text is never held only in memory. A recovered buffer is not typed into
+  // by definition, and nothing else would have written a copy of it until it
+  // was - so a second crash used to take work the user had explicitly recovered.
+  for (const key of recoveredKeys) {
+    await writeRecoveryCopy(key);
+  }
+
+  for (const entry of superseded) {
+    const kept = await setAside({ filesystem, log }, dataDir, entry);
+    log.warn(
+      `${entry.path} was unsaved in more than one session; the older copy is`
+      + (kept === null ? ` still at ${entry.file}` : ` at ${kept}`),
+    );
+  }
+
+  log.info(`Recovered ${recoveredKeys.length} buffer(s) from ${dead.length} session(s)`);
   await Promise.all(dead.map((root) => clearJournal({ filesystem, log }, root)));
   await saveWorkspace();
-  return recovered;
+  return recoveredKeys.length;
 }
 
 function nameOf(path) {
@@ -1194,11 +1250,25 @@ async function saveBuffer(key, saveAs) {
   // request would otherwise sit out its whole timeout before failing, and a
   // Cmd-S that takes half a minute because the sidecar died is a worse answer
   // than a file saved with the layout it already had.
+  // Only while this buffer is still the one on screen, because formatBuffer is
+  // the one thing on this path that is not keyed: it runs Monaco's format
+  // action against the editor, which means whichever model the editor is
+  // showing. A Save As dialog or the changed-on-disk prompt above can sit open
+  // for as long as somebody takes to answer it, and a click on another tab in
+  // that time used to format *that* buffer instead - leaving it dirty with an
+  // edit nobody asked for while this one was written unformatted.
+  //
+  // Not formatting is the harmless half of that choice. The file is saved
+  // either way, and the next save formats it.
   if (formatOnSave() && ipc.isConnected()) {
-    try {
-      await formatBuffer();
-    } catch (error) {
-      log.warn("Not formatted before saving:", error);
+    if (activeBufferKey() === key) {
+      try {
+        await formatBuffer();
+      } catch (error) {
+        log.warn("Not formatted before saving:", error);
+      }
+    } else {
+      log.info("Not formatted: another buffer is on screen by the time it saved");
     }
   }
 
@@ -1275,7 +1345,14 @@ async function saveBuffer(key, saveAs) {
   // than assumed: the size on disk is the encoded length, and the time is the
   // filesystem's rather than ours.
   recordStamp(key, await stampAt(path));
-  await bufferSettled(key);
+  // Only if the buffer still holds what was written. Keystrokes that landed
+  // during the write leave it dirty at a later version, and those are exactly
+  // the ones with no other copy - dropping their booking, or deleting a copy
+  // already made of them, would break the one second this journal promises.
+  const settled = bufferContents(key);
+  if (settled === null || settled.versionId === contents.versionId) {
+    await bufferSettled(key);
+  }
   refreshTabs();
   await rememberFolder(path);
   syncKernelDirectory();

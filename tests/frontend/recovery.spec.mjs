@@ -45,6 +45,12 @@ async function openApp(page, extraFiles = {}) {
 
 const tabLabels = (page) => page.locator(".tab .tab-label").allTextContents();
 
+/** What the editor shows, with Monaco's non-breaking spaces normalised. */
+async function editorText(page) {
+  const text = await page.locator(".monaco-editor .view-lines").first().innerText();
+  return text.replace(/\u00a0/g, " ");
+}
+
 test.describe("a session that ended without being asked", () => {
   test("its unsaved work is offered back, and arrives modified", async ({ page }) => {
     await openApp(page, crashed(DEAD, {
@@ -121,6 +127,65 @@ test.describe("a session that ended without being asked", () => {
 
     await expect.poll(async () => (await tabLabels(page)).filter((l) => l === "same.py").length)
       .toBe(1);
+  });
+});
+
+test.describe("a file that the session restore has already reopened", () => {
+  /**
+   * The case every other test here missed, and the one that matters most.
+   *
+   * The workspace remembers which files were open and the restore runs first,
+   * so after a crash the tab is already back - holding what is *on disk*, which
+   * is the text from before the unsaved edits. The recovery copy holds the
+   * newer work. Treating "already open" as "nothing to do" recovered nothing at
+   * all for every named file, and then deleted the copy.
+   *
+   * Every earlier case in this file recovers a path the workspace does not
+   * mention, which is why they all passed against that.
+   */
+  test("its unsaved text replaces what was read from disk", async ({ page }) => {
+    await openApp(page, crashed(DEAD, {
+      7: { path: `${PROJECT}/part.py`, text: "UNSAVED = 1\n" },
+    }));
+
+    await expect(page.locator(".confirm-overlay")).toBeVisible();
+    await page.locator('.confirm-overlay [data-answer="save"]').click();
+
+    // The tab it already had, now holding the work rather than the disk text.
+    await expect.poll(async () => (await tabLabels(page)).filter((l) => l === "part.py").length)
+      .toBe(1);
+    await expect
+      .poll(() => editorText(page))
+      .toContain("UNSAVED = 1");
+    await expect(page.locator(".tab-close.tab-dirty")).toHaveCount(1);
+    // And nothing was written: recovery offers, it does not save.
+    expect(
+      await page.evaluate((p) => globalThis.__NEUTRALINO_STUB__.wrote(p), `${PROJECT}/part.py`),
+    ).toBe(SOURCE);
+  });
+
+  test("and the recovered work is shadowed again straight away", async ({ page }) => {
+    // Otherwise the only durable copy has just been deleted, and a second crash
+    // takes work the user explicitly chose to recover.
+    await openApp(page, crashed(DEAD, {
+      7: { path: `${PROJECT}/part.py`, text: "UNSAVED = 1\n" },
+    }));
+
+    await expect(page.locator(".confirm-overlay")).toBeVisible();
+    await page.locator('.confirm-overlay [data-answer="save"]').click();
+    await expect(page.locator(".tab-close.tab-dirty")).toHaveCount(1);
+
+    await expect
+      .poll(async () => {
+        const written = await page.evaluate(() =>
+          globalThis.__NEUTRALINO_STUB__
+            .calls()
+            .filter((call) => call.name === "writeFile")
+            .map((call) => String(call.args[1] ?? "")),
+        );
+        return written.some((body) => body.includes("UNSAVED = 1"));
+      }, { message: "the recovered text was never copied into this session's journal" })
+      .toBe(true);
   });
 });
 

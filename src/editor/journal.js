@@ -91,8 +91,16 @@ function metaPath(root, key) {
  *
  * The path may be null - that is an untitled buffer, and the recovery has to be
  * able to say so rather than invent a name for it.
+ *
+ * The stamp is what the file looked like when this buffer last agreed with it,
+ * and it travels with the copy so that recovering one restores the
+ * changed-on-disk check along with the text. Without it a recovered buffer has
+ * nothing to compare against and its first save overwrites whatever is there
+ * now - which is the case where somebody else has been editing the file since
+ * the crash. It does not change while a buffer is dirty, so it is written with
+ * the path and not on every burst.
  */
-export async function recordBuffer(deps, key, { path, text, withPath = true }) {
+export async function recordBuffer(deps, key, { path, text, stamp = null, withPath = true }) {
   const { filesystem, log, root } = deps;
   try {
     await filesystem.createDirectory(root);
@@ -102,7 +110,7 @@ export async function recordBuffer(deps, key, { path, text, withPath = true }) {
   // The document, exactly as it is. No transformation on the hot path.
   await writeFileSafely(deps, textPath(root, key), text);
   if (withPath) {
-    await writeFileSafely(deps, metaPath(root, key), JSON.stringify({ path }));
+    await writeFileSafely(deps, metaPath(root, key), JSON.stringify({ path, stamp }));
   }
   log.info(`Recovery copy written for ${path ?? "an untitled buffer"}`);
 }
@@ -173,6 +181,14 @@ export function createRecorder({ delay = 1000, schedule = setTimeout, cancel = c
       cancel(existing);
       timers.delete(key);
       return true;
+    },
+
+    /** Drop every booking, for a quit that has already asked about all of them. */
+    dropAll() {
+      for (const timer of timers.values()) {
+        cancel(timer);
+      }
+      timers.clear();
     },
 
     pending() {
@@ -252,12 +268,39 @@ export async function readJournal({ filesystem, log }, root) {
       continue;
     }
     let path = null;
+    let stamp = null;
     try {
-      path = JSON.parse(await filesystem.readFile(`${root}/${key}.json`)).path ?? null;
+      const meta = JSON.parse(await filesystem.readFile(`${root}/${key}.json`));
+      path = meta.path ?? null;
+      stamp = meta.stamp ?? null;
     } catch {
       // No label, so it recovers as an untitled buffer. Better than not at all.
     }
-    entries.push({ key, path, text, file: `${root}/${name}` });
+    entries.push({ key, path, text, stamp, root, file: `${root}/${name}` });
   }
   return entries;
+}
+
+/**
+ * Take one copy out of the recovery tree, keeping it as an ordinary file.
+ *
+ * For the copy that loses a path to a newer one. It is still somebody's work,
+ * so it is not deleted - but leaving it where it is would offer it again at
+ * every start for ever, because nothing about it will have changed. Moved to
+ * the recovery root, which the scan skips: it only descends into directories.
+ *
+ * @returns the path it now has, or null if it could not be moved
+ */
+export async function setAside({ filesystem, log }, dataDir, entry) {
+  const name = entry.path === null
+    ? `untitled-${entry.key}`
+    : entry.path.split(/[/\\]/).pop().replace(/\.py$/, "");
+  const destination = `${dataDir}/recovery/unrecovered-${name}-${entry.key}.py`;
+  try {
+    await filesystem.move(entry.file, destination);
+    return destination;
+  } catch (error) {
+    log.warn(`Could not set aside the recovery copy at ${entry.file}:`, error);
+    return null;
+  }
 }

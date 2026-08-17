@@ -22,6 +22,7 @@ import {
   MAX_RECORDED_CHARS,
   readJournal,
   recordBuffer,
+  setAside,
   STALE_AFTER,
   worthRecording,
 } from "../../../src/editor/journal.js";
@@ -98,7 +99,8 @@ test("and it says which file it belongs to, separately", async () => {
   const filesystem = fakeFilesystem();
   await recordBuffer(deps(filesystem), 7, { path: "/p/part.py", text: "x\n" });
 
-  assert.deepEqual(JSON.parse(filesystem.files[`${ROOT}/7.json`]), { path: "/p/part.py" });
+  assert.deepEqual(JSON.parse(filesystem.files[`${ROOT}/7.json`]),
+    { path: "/p/part.py", stamp: null });
 });
 
 test("an untitled buffer is copied too, and says it has no path", async () => {
@@ -107,7 +109,8 @@ test("an untitled buffer is copied too, and says it has no path", async () => {
   await recordBuffer(deps(filesystem), 3, { path: null, text: "scratch\n" });
 
   assert.equal(filesystem.files[`${ROOT}/3.py`], "scratch\n");
-  assert.deepEqual(JSON.parse(filesystem.files[`${ROOT}/3.json`]), { path: null });
+  assert.deepEqual(JSON.parse(filesystem.files[`${ROOT}/3.json`]),
+    { path: null, stamp: null });
 });
 
 test("the label can be left alone when it has not changed", async () => {
@@ -300,4 +303,44 @@ test("one unreadable copy does not cost the others", async () => {
 test("a journal that is not there reads as nothing", async () => {
   const filesystem = fakeFilesystem();
   assert.deepEqual(await readJournal(deps(filesystem), ROOT), []);
+});
+
+test("the copy carries what the file looked like when the buffer agreed with it", async () => {
+  // Without it a recovered buffer has nothing to compare against, so its first
+  // save overwrites whatever is on disk now - which is the case where somebody
+  // else has been editing the file since the crash.
+  const filesystem = fakeFilesystem();
+  const stamp = { size: 120, modifiedAt: 5000 };
+  await recordBuffer(deps(filesystem), 7, { path: "/p/part.py", text: "x\n", stamp });
+
+  const [entry] = await readJournal(deps(filesystem), ROOT);
+
+  assert.deepEqual(entry.stamp, stamp);
+});
+
+test("a quit drops every booking at once", async () => {
+  // Shutdown takes a second or more after the prompt, and a timer firing in
+  // that window writes a copy of work somebody just chose to discard.
+  const recorder = createRecorder({ schedule: () => 1, cancel: () => {} });
+  recorder.schedule(1, () => {});
+  recorder.schedule(2, () => {});
+
+  recorder.dropAll();
+
+  assert.equal(recorder.pending(), 0);
+});
+
+test("a copy that loses its path is kept rather than deleted", async () => {
+  // Still somebody's work. Moved out of the recovery tree, which the scan skips
+  // because it only descends into directories - otherwise it would be offered
+  // again at every start for ever, nothing about it having changed.
+  const filesystem = fakeFilesystem();
+  await recordBuffer(deps(filesystem), 7, { path: "/p/part.py", text: "OLDER\n" });
+  const [entry] = await readJournal(deps(filesystem), ROOT);
+
+  const kept = await setAside(deps(filesystem), "/appdata/build123d-studio", entry);
+
+  assert.equal(filesystem.files[kept], "OLDER\n");
+  assert.equal(kept.startsWith("/appdata/build123d-studio/recovery/unrecovered-"), true);
+  assert.equal(filesystem.files[`${ROOT}/7.py`], undefined, "it was left in the tree as well");
 });
