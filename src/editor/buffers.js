@@ -8,9 +8,15 @@
  * view state, because with one buffer there is never anywhere to come back from.
  * The whole of "many files open" is that those four become a Map.
  *
- * No monaco import here, deliberately. A model is an opaque handle and the three
- * things this module needs to do with one - make it, throw it away, ask which
- * version it is on - arrive through initBuffers. That keeps the bookkeeping
+ * It has since grown two more that are the same kind of thing - whether the file
+ * underneath has gone, and what it looked like when this buffer last agreed with
+ * it - and one of those is set after the buffer exists rather than at its
+ * creation, because it comes from a stat rather than from the text.
+ *
+ * No monaco import here, deliberately. A model is an opaque handle and everything
+ * this module does with one - make it, throw it away, read its text, replace its
+ * text, ask which version it is on - arrives through initBuffers. That keeps the
+ * bookkeeping
  * testable under `node --test`, which cannot load the editor, and it is the same
  * split as keys/keybindings and clipboard/editing: the decisions live in the half
  * that has no window.

@@ -342,3 +342,165 @@ Iterating on one frontend spec needs the bundle rebuilt first - `npx vite build 
 - **DAP / LSP** - the debug and language server protocols; the same `Content-Length` framing serves both.
 - **uv** - Astral's Python package and interpreter manager; downloads the pinned CPython and builds the environment.
 - **connection file** - the JSON naming a kernel's ports and signing key; the attach point for an external console.
+
+---
+
+# Appendix: the source tree
+
+What each file is for, and what is in it. Two rules shape the layout and explain most of the file count.
+
+**A decision is separated from its wiring wherever the decision is worth testing.** `quoting.js` from `proc.js`, `keys.js` from `keybindings.js`, `tree.js` from `sidebar.js`, `dap.js` from `session.js`, `safewrite.js`/`ondisk.js`/`journal.js` from `files.js`. The half with no window takes its world as arguments and is unit-tested; the half that talks to Neutralino, Monaco or the DOM is thin. Where you see a pair of files with related names, that is what it is.
+
+**One file per concern, even a small one.** A module that does one thing is a module whose header can say what it is, which is the convention this codebase leans on hardest: the top of each file explains *why* it exists, not what the lines do.
+
+## `src/` — the frontend
+
+Runs in the webview. Owns every pixel, all UI state, and the environment bootstrap, which must run before any Python exists.
+
+| File | Purpose |
+|---|---|
+| `args.js` | What the command line asked this instance to open |
+| `backdrop.js` | Dismissing a dialog by clicking away, without swallowing a text selection |
+| `busy.js` | The modal that blocks the IDE while the kernel is unavailable |
+| `clipboard.js` | Cut/Copy/Paste as decisions; `editing.js` does them |
+| `confirm.js` | The two- and three-way question dialogs, built in the page rather than natively |
+| `contextmenu.js` | A right-click menu for the panes that have none of their own |
+| `editing.js` | The Edit menu's commands where the platform does not provide them |
+| `escape.js` | HTML-escaping for interpolation into markup — one implementation, because there were three |
+| `frame.js` | The binary frame codec, both directions; the other half is `sidecar/channel.py` |
+| `geometry.js` | Where the window should open, given where it was left and what screens exist |
+| `health.js` | The subsystem health model: states, the worst-of rule, and what counts as unwell |
+| `info.js` | The About dialog |
+| `ipc.js` | The webview end of the sidecar link: spawn, handshake, frames, requests, restart |
+| `keybindings.js` | `keys.js` plus `settings.json` plus this platform |
+| `keys.js` | Keyboard shortcuts as data — chord parsing, conflicts, the CtrlCmd/WinCtrl trap |
+| `log.js` | The application's own log, since a webview has no visible console |
+| `logfile.js` | Getting lines onto disk, append-only, apart from deciding what to write |
+| `logrepeat.js` | One line per distinct message, with a dot per repeat |
+| `main.js` | Startup order, the single quit path, and the wiring between every pane |
+| `menu.js` | The native menu bar as data — pure, and tested |
+| `menubar.js` | Installs that menu and routes what it sends back |
+| `merge.js` | What a settings write keeps from the file already on disk |
+| `packages.js` | Which source each upgradable package comes from, and the generated `pyproject.toml` |
+| `proc.js` | Thin wrappers over Neutralino's `spawnProcess`, and the output fan-out |
+| `quoting.js` | Shell quoting — pure, security-relevant, and untestable on the platform that matters |
+| `reload.js` | The application must never reload; this is what stops it |
+| `requirements.js` | The additional-packages field: what the user typed and what it becomes |
+| `running.js` | What has been started and can still be stopped, and what a quit does with it |
+| `selection.js` | Keeping a mouse drag inside the pane it began in |
+| `settings.js` | The settings dialog: seven tabs, and the package-source pickers |
+| `store.js` | `settings.json`: typed values, per-key read-merge-write |
+| `theme.js` | One place decides light or dark; everything else follows |
+| `toolbar.js` | Toolbar wiring, the kernel indicator, and the health chip |
+| `versions.js` | Frontend component versions, taken from `package.json` at build time |
+| `viewer-settings.js` | The viewer settings this application persists, named in the shared vocabulary |
+| `windowstate.js` | Window size and place, remembered across restarts *and* installs |
+
+### `src/editor/`
+
+The application's own model of files, buffers and saving. Monaco is a text widget and knows nothing of any of this.
+
+| File | Purpose |
+|---|---|
+| `buffers.js` | Every open buffer as a Map; dirty state, paths, stamps. No Monaco import |
+| `cells.js` | `# %%` cell detection |
+| `completion.js` | Python completion as data — merging, ranking, the replaced span |
+| `diagnostics.js` | Squiggles: LSP ranges converted to Monaco markers |
+| `files.js` | Opening, saving, closing, the workspace, and the recovery journal's wiring |
+| `filetype.js` | Whether a file belongs in the editor, from its first bytes and its size |
+| `format.js` | What "format this file" means, decided without a window |
+| `formatting.js` | The stored half of formatting, which is one number |
+| `hover.js` | What the thing under the pointer is |
+| `journal.js` | A copy of what is unsaved, for the ends that ask nobody |
+| `monaco.js` | The Monaco adapter: 47 explicit imports, the editor, and every keyed accessor |
+| `ondisk.js` | Whether the file under a buffer is still the one that was loaded |
+| `safewrite.js` | A write that cannot leave a fragment, and cannot empty a file it fails to replace |
+| `sidebar.js` | The folder tree: rows, clicks, lazy reads, and creating things |
+| `signature.js` | The parameter-hints popup |
+| `starters.js` | The first-run sample and the New File template |
+| `tabs.js` | What each tab is called, including when two files share a name |
+| `tabstrip.js` | The row of tabs, and the debug step controls that appear in it |
+| `tree.js` | What the folder tree shows and in what order — pure, tested |
+| `unsaved.js` | What the "you have unsaved work" question says |
+| `workspace.js` | Reading the remembered session out of `settings.json`, with its migration |
+
+### `src/bootstrap/`
+
+Runs before any Python exists.
+
+| File | Purpose |
+|---|---|
+| `envroot.js` | Where the environment lives, per platform, and the app-location file the CLI reads |
+| `setup.js` | The environment bootstrap: staged files, `uv sync`, and the failure ladder |
+| `splash.js` | The only UI during first-run setup; shows uv's own output rather than a spinner |
+| `uv.js` | Downloading uv, verifying its checksum, and installing it |
+
+### `src/viewer/`, `src/vars/`, `src/console/`, `src/debug/`, `src/run/`, `src/layout/`
+
+| File | Purpose |
+|---|---|
+| `viewer/viewer.js` | The viewer pane: pane geometry, the binary path, and the shared page |
+| `viewer/rehydrate.js` | Rebuilding tessellated arrays as typed-array views over the received frame |
+| `vars/explorer.js` | The variable explorer's rows, expansion and rendering |
+| `vars/frames.js` | Its other source: the paused debug frame rather than the kernel |
+| `vars/tree.js` | Its arithmetic — which row is which, paging, column widths |
+| `console/terminal.js` | xterm.js wired to the pty: keystrokes out, bytes in, resize, refit |
+| `debug/breakpoints.js` | Which lines are marked, per buffer |
+| `debug/console.js` | What the debugged process printed, and a line to ask it things |
+| `debug/dap.js` | The DAP conversation, transport left out — pure, tested |
+| `debug/session.js` | One session, from start to the process exiting |
+| `debug/settings.js` | What debugging reads out of `settings.json` |
+| `debug/start.js` | What F5 does, and what happens when the session says something |
+| `run/file.js` | Ctrl-F5: run the file on disk, in its own process, no debugger |
+| `layout/splitter.js` | The draggable boundaries, stored as fractions of the window |
+
+## `sidecar/` — the Python helper
+
+Spawned by the frontend once the environment exists. Owns everything Python-side.
+
+| File | Purpose |
+|---|---|
+| `main.py` | The sidecar itself: handlers, lanes, startup, and the ordered teardown |
+| `channel.py` | The webview link — WebSocket, token, frames, and the serial lanes |
+| `framing.py` | `Content-Length` framing, shared by the LSP and DAP wires |
+| `kernel.py` | Kernel lifecycle, generations, the shell thread, subshells, the iopub pump |
+| `instance.py` | One directory per running instance, and the lock that says it is live |
+| `modelsock.py` | Receives tessellated models from the kernel; the counterpart to `transport.py` |
+| `pty_console.py` | The jupyter console under a pseudo-terminal |
+| `build123d_studio_console.py` | The `ZMQTerminalInteractiveShell` subclass that survives a second client |
+| `completer.py` | basedpyright over LSP: completion, signatures, hover, diagnostics |
+| `formatter.py` | black, in process |
+| `runner.py` | Run File, in a process of its own |
+| `debugger.py` | The debuggee's process and the DAP wire to it; a relay, not a client |
+| `measure.py` | Exact measurement from the real geometry rather than the mesh |
+| `measure_process.py` | That measurement, in a process of its own, because of the Windows loader lock |
+| `measure_service.py` | The sidecar's side of talking to it |
+| `stall.py` | What this process was doing when something took too long |
+| `appinfo.py` | Version and environment facts for the About dialog |
+
+## `kernel/build123d_studio/` — the kernel-side package
+
+On the kernel's `PYTHONPATH`. What the user's own code imports.
+
+| File | Purpose |
+|---|---|
+| `__init__.py` | The public API: `show` and friends, bound off one shared `Viewer`/`Config` |
+| `comms.py` | This host's transport for the shared show pipeline |
+| `transport.py` | Delivery of models, mappings, configs and commands to the sidecar |
+| `buffers.py` | Turning tessellated base64 arrays into one contiguous payload |
+| `inspector.py` | Namespace inspection for the variable explorer, bounded by design |
+| `settings.py` | The persistent half of a show's configuration |
+| `_supervise.py` | Runs a file and takes it with us when the process that started us goes |
+
+## Supporting
+
+| Path | Purpose |
+|---|---|
+| `cli/studio`, `cli/studio.cmd` | The command-line launcher, copied onto PATH by the user |
+| `cli/create-build123d-studio-link.cmd` | The Windows shortcut, which carries the icon the executable does not |
+| `scripts/` | Packaging, the Neutralino binary fetch and its digest check, the uv pin tool, and the four test runners |
+| `tests/unit/` | Pure frontend modules under `node --test` |
+| `tests/sidecar/` | Sidecar classes directly, with races widened |
+| `tests/frontend/` | Playwright against WebKit, with Neutralino stubbed |
+| `tests/integration.py` | The real sidecar and kernel over the real socket |
+| `tests/manual.md` | What none of the other four can reach |

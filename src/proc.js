@@ -6,7 +6,9 @@ import * as log from "./log.js";
 
 // Thin wrappers over Neutralino's spawnProcess.
 //
-// Everything the app runs - uv, the sidecar - goes through here. Neutralino
+// Everything the app runs - uv, the sidecar - goes through here, and what is
+// started through run() is also recorded so a quit can collect it: see
+// running.js. Neutralino
 // delivers a spawned process's output as "spawnedProcess" events keyed by
 // process id, so a single global listener fans them back out to the right
 // caller.
