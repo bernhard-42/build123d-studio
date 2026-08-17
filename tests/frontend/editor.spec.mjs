@@ -107,6 +107,45 @@ test.describe("saving", () => {
       .toContain("SAVED");
   });
 
+  test("Save All asks where an unnamed buffer should go, rather than skipping it", async ({ page }) => {
+    // A buffer that has never been saved is the one with no other copy
+    // anywhere, so leaving it out of "save all" leaves out the only thing that
+    // cannot be recovered from disk.
+    await openApp(page);
+
+    await caretToEnd(page);
+    await page.keyboard.type("NAMED");
+    await page.evaluate(() =>
+      globalThis.__NEUTRALINO_STUB__.emit("mainMenuItemClicked", { id: "file.new" }),
+    );
+    await expect(page.locator(".tab")).toHaveCount(2);
+    await expect.poll(() => editorText(page)).toContain("Default code for new files");
+    await page.keyboard.type("SCRATCH");
+    await expect(page.locator(".tab-close.tab-dirty")).toHaveCount(2);
+
+    await page.evaluate(
+      (target) => globalThis.__NEUTRALINO_STUB__.answerDialogWith(target),
+      `${PROJECT}/scratch.py`,
+    );
+    await page.evaluate(() =>
+      globalThis.__NEUTRALINO_STUB__.emit("mainMenuItemClicked", { id: "file.saveAll" }),
+    );
+
+    await expect
+      .poll(() => page.evaluate(
+        (p) => String(globalThis.__NEUTRALINO_STUB__.wrote(p) ?? ""),
+        `${PROJECT}/scratch.py`,
+      ), { message: "the unnamed buffer was skipped" })
+      .toContain("SCRATCH");
+    await expect
+      .poll(() => page.evaluate(
+        (p) => String(globalThis.__NEUTRALINO_STUB__.wrote(p) ?? ""),
+        `${PROJECT}/part.py`,
+      ))
+      .toContain("NAMED");
+    await expect(page.locator(".tab-close.tab-dirty")).toHaveCount(0);
+  });
+
   test("saving an unchanged buffer is not a no-op that loses the file", async ({ page }) => {
     // A save that failed used to look exactly like one that worked. The weakest
     // useful assertion is that the contents are still there afterwards.
@@ -156,10 +195,9 @@ test.describe("a new file", () => {
 
 test.describe("Save As", () => {
   test("an unnamed buffer asks where it should live, and goes there", async ({ page }) => {
-    // A new file has no path, so Cmd-S cannot mean "write it back". Save All
-    // skips these deliberately - a command for getting the project onto disk
-    // that stops to ask about four scratch buffers is not that - so this is the
-    // one route by which an unnamed buffer acquires a name.
+    // A new file has no path, so Cmd-S cannot mean "write it back": it opens
+    // the panel instead, and the buffer acquires a name from what is typed
+    // into it.
     await openApp(page);
 
     await page.evaluate(() =>
@@ -453,26 +491,22 @@ test.describe("Save As does not land on a file nobody asked about", () => {
     );
   }
 
-  test("the extension it adds cannot overwrite silently", async ({ page }) => {
-    await openWithBracket(page);
-
-    // Without the .py, which is the whole case: the dialog approves it.
-    await saveAsTyping(page, `${PROJECT}/bracket`);
-
-    await expect(page.locator(".confirm-overlay")).toBeVisible();
-    expect(await page.locator(".confirm-overlay").innerText()).toContain("bracket.py");
-  });
-
-  test("and cancelling it leaves the file alone", async ({ page }) => {
+  test("the name is taken as typed, with nothing appended to it", async ({ page }) => {
+    // The panel asks before replacing a file and can only ask about the name it
+    // was given, so a save must land on exactly that name. Appending `.py`
+    // behind it would write to a file the panel never mentioned - and would
+    // need a second prompt of our own to cover the gap.
     await openWithBracket(page);
 
     await saveAsTyping(page, `${PROJECT}/bracket`);
-    await expect(page.locator(".confirm-overlay")).toBeVisible();
-    await page.locator('.confirm-overlay [data-answer="cancel"]').click();
 
     await expect
-      .poll(() => onDisk(page, EXISTING), { message: "the file was replaced anyway" })
+      .poll(() => onDisk(page, `${PROJECT}/bracket`), { message: "it did not save as typed" })
+      .toContain("MINE");
+    expect(await onDisk(page, EXISTING), "the .py file was written instead")
       .toBe("BRACKET = 1\n");
+    await expect(page.locator(".confirm-overlay")).toHaveCount(0);
+    await expect(page.locator(".tab-active .tab-label")).toHaveText("bracket");
   });
 
   test("saving onto another file is not reported as that file changing", async ({ page }) => {
@@ -516,7 +550,8 @@ test.describe("Save As does not land on a file nobody asked about", () => {
     );
     expect(asked, "the panel was never run").toContain("choose file name");
     expect(asked).toContain(`default name "part.py"`);
-    expect(asked).toContain(`default location (POSIX file "${PROJECT}" as alias)`);
+    expect(asked).toContain(`set theFolder to POSIX file "${PROJECT}" as alias`);
+    expect(asked).toContain("default location theFolder");
     expect(asked, "the whole path went into the name field")
       .not.toContain(`default name "${PROJECT}/part.py"`);
   });

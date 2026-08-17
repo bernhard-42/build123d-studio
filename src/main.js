@@ -44,7 +44,7 @@ import {
   closeEveryTab,
   discardRecovery,
   offerRecovery,
-  startHeartbeat,
+  claimJournal,
   closeFolder,
   closeTab,
   currentFolder,
@@ -612,7 +612,7 @@ async function main() {
 
   // Said as early as there is a directory to say it in, so a window that
   // crashes during its own startup still leaves a beat behind.
-  startHeartbeat().catch((error) => log.warn("Heartbeat:", error));
+  claimJournal().catch((error) => log.warn("Could not claim the recovery journal:", error));
 
   // A restored folder enables Close Folder and Toggle Sidebar, and the menu was
   // built before the workspace was read.

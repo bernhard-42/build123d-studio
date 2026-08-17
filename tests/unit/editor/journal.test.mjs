@@ -13,18 +13,16 @@ import { strict as assert } from "node:assert";
 import { test } from "node:test";
 
 import {
-  beat,
   clearJournal,
   createRecorder,
   forgetBuffer,
-  isStale,
+  claim,
   journalRoot,
   MAX_RECORDED_CHARS,
   readJournal,
   recordBuffer,
   setAside,
-  stillBeating,
-  STALE_AFTER,
+  ownerOf,
   worthRecording,
 } from "../../../src/editor/journal.js";
 
@@ -219,61 +217,36 @@ test("and two megabytes is far above any plausible source file", () => {
 
 // --- telling a crash from a sibling ----------------------------------------
 
-test("a session that stopped beating is not running", () => {
-  const now = 1_000_000;
-  assert.equal(isStale(now - STALE_AFTER - 1, now), true);
-});
-
-test("a session still beating is somebody's open window", () => {
-  // The asymmetry that matters: calling a live sibling dead offers somebody
-  // their own unsaved work back while they are still typing it.
-  const now = 1_000_000;
-  assert.equal(isStale(now - 1000, now), false);
-  assert.equal(isStale(now - STALE_AFTER + 1, now), false);
-});
-
-test("and a journal with no beat at all is not running either", () => {
-  // Written by a version that did not beat, or a beat that never landed.
-  assert.equal(isStale(null, 1_000_000), true);
-  assert.equal(isStale(undefined, 1_000_000), true);
-});
-
-test("a beat records what time it thought it was", async () => {
-  // Not empty: a reader has to be able to tell a window that stopped beating
-  // from a machine that stopped running, and the file's own mtime cannot say
-  // which - it is old either way.
+test("a journal says which process owns it", async () => {
   const filesystem = fakeFilesystem();
-  await beat(deps(filesystem));
+  await claim({ ...deps(filesystem), pid: 4242 });
 
-  const said = Number(filesystem.files[`${ROOT}/alive`]);
-  assert.ok(Number.isFinite(said) && said > 0, "the beat carried no time");
+  assert.equal(filesystem.files[`${ROOT}/owner`], "4242");
+  assert.equal(await ownerOf(deps(filesystem), ROOT), 4242);
 });
 
-test("a session that has beaten since we looked is alive", () => {
-  // What replaced the suspend heuristic. That one asked, from a single reading,
-  // whether an old beat meant a sleeping machine or a dead window - which it
-  // cannot: they look identical. It answered "asleep" for anything older than
-  // two intervals, which is every crash not restarted within a minute, so
-  // recovery never ran and the journals piled up unread.
-  //
-  // Two readings answer it outright, and the second is taken where it decides
-  // something that cannot be undone: a live window beats again between them.
-  assert.equal(stillBeating(1_000_000, 1_000_500), true);
-  assert.equal(stillBeating(1_000_000, 1_000_000), false);
+test("a journal that names nobody answers null rather than a number", async () => {
+  // Three cases a caller must not tell apart by guessing: written by a version
+  // that recorded no owner, an owner file that never landed, and something in
+  // it that is not a pid. Zero and negatives are not process ids.
+  const filesystem = fakeFilesystem();
+  assert.equal(await ownerOf(deps(filesystem), ROOT), null);
+
+  for (const written of ["", "not a pid", "0", "-1", "1.5"]) {
+    filesystem.files[`${ROOT}/owner`] = written;
+    assert.equal(await ownerOf(deps(filesystem), ROOT), null, `for ${JSON.stringify(written)}`);
+  }
 });
 
-test("and one that has not beaten at all is dead, however old the first reading was", () => {
-  // The case the old rule got wrong, stated as the property rather than as the
-  // clock: age is not evidence. Only movement is.
-  assert.equal(stillBeating(1_000_000, null), false);
-  assert.equal(stillBeating(1, null), false);
-});
-
-test("a beat appearing where there was none counts as alive", () => {
-  // An older version that never beat, or a directory created between the two
-  // readings. Either way something is writing there now.
-  assert.equal(stillBeating(null, 1_000_000), true);
-  assert.equal(stillBeating(null, null), false);
+test("claiming a journal creates its directory first", async () => {
+  // The claim is the first thing written into an area, so nothing else can have
+  // made the directory yet.
+  const filesystem = fakeFilesystem();
+  await claim({ ...deps(filesystem), pid: 7 });
+  assert.ok(
+    filesystem.calls.some((call) => call.operation === "createDirectory" && call.path === ROOT),
+    JSON.stringify(filesystem.calls),
+  );
 });
 
 // --- reading it back -------------------------------------------------------
@@ -282,7 +255,7 @@ test("a journal reads back as the documents that were in it", async () => {
   const filesystem = fakeFilesystem();
   await recordBuffer(deps(filesystem), 1, { path: "/p/part.py", text: "PART\n" });
   await recordBuffer(deps(filesystem), 2, { path: null, text: "SCRATCH\n" });
-  await beat(deps(filesystem));
+  await claim({ ...deps(filesystem), pid: 4242 });
 
   const entries = await readJournal(deps(filesystem), ROOT);
 
@@ -292,9 +265,9 @@ test("a journal reads back as the documents that were in it", async () => {
   ]);
 });
 
-test("the beat file is not mistaken for somebody's work", async () => {
+test("the owner file is not mistaken for somebody's work", async () => {
   const filesystem = fakeFilesystem();
-  await beat(deps(filesystem));
+  await claim({ ...deps(filesystem), pid: 4242 });
 
   assert.deepEqual(await readJournal(deps(filesystem), ROOT), []);
 });

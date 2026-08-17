@@ -28,18 +28,16 @@ const ALSO_DEAD = `${RECOVERY}/deadbe11`;
 
 /** A session that crashed with unsaved work in it.
  *
- * The beat carries a real time, and that is not decoration. It used to be
- * written empty, which reads back as 0 - the one value the staleness rules
- * treated as "no time recorded" and stepped around. So every test here ran down
- * a path no crashed session ever takes, and the rule that actually governed
- * them was never executed: a beat with a real time in it was called a suspend
- * and skipped, and recovery did not work at all outside these tests.
- *
- * Five minutes ago, so it is unambiguously stale by any interval, and old
- * enough that nothing can mistake it for this session's own.
+ * It names the process that owned it, which is the whole of how a dead session
+ * is told from a live one now - the operating system is asked which pids are
+ * still windows of this application, and 31337 is not one of them. There is no
+ * clock in this any more, and no beat: an age could not distinguish a window
+ * that had died from a machine that had slept, and got both wrong.
  */
-function crashed(root, entries) {
-  const files = { [`${root}/alive`]: String(Date.now() - 5 * 60 * 1000) };
+const DEAD_PID = 31337;
+
+function crashed(root, entries, pid = DEAD_PID) {
+  const files = { [`${root}/owner`]: String(pid) };
   for (const [key, { path, text }] of Object.entries(entries)) {
     files[`${root}/${key}.py`] = text;
     files[`${root}/${key}.json`] = JSON.stringify({ path });
@@ -143,12 +141,27 @@ test.describe("a session that ended without being asked", () => {
       .toBe(undefined);
   });
 
-  test("and the same file in two sessions gives one tab, not two", async ({ page }) => {
+  test("and the same file in two sessions gives one tab, holding the newer copy", async ({ page }) => {
     // Two tabs on one path is a state with no correct behaviour left in it, so
     // the loser stays on disk as an ordinary source file instead.
-    await openApp(page, {
-      ...crashed(DEAD, { 7: { path: `${PROJECT}/same.py`, text: "FIRST\n" } }),
-      ...crashed(ALSO_DEAD, { 4: { path: `${PROJECT}/same.py`, text: "SECOND\n" } }),
+    //
+    // Which one loses is decided by when each session last wrote a copy - the
+    // one somebody was working in most recently wins. Seeded here so the answer
+    // cannot come out of the order the fixture happens to be built in.
+    await open(page, {
+      files: {
+        ...FILES,
+        // Deliberately against the order they are seeded in: the session that
+        // should win is the one listed *first*, so an implementation that keeps
+        // the scan order instead of sorting by time picks the other one.
+        ...crashed(DEAD, { 7: { path: `${PROJECT}/same.py`, text: "NEWER\n" } }),
+        ...crashed(ALSO_DEAD, { 4: { path: `${PROJECT}/same.py`, text: "OLDER\n" } }),
+      },
+      settings: { workspace: WORKSPACE },
+      times: {
+        [`${DEAD}/7.py`]: 2_000_000,
+        [`${ALSO_DEAD}/4.py`]: 1_000_000,
+      },
     });
 
     await expect(page.locator(".confirm-overlay")).toBeVisible();
@@ -156,6 +169,8 @@ test.describe("a session that ended without being asked", () => {
 
     await expect.poll(async () => (await tabLabels(page)).filter((l) => l === "same.py").length)
       .toBe(1);
+    await expect.poll(() => editorText(page), { message: "the older copy won" })
+      .toContain("NEWER");
   });
 });
 
@@ -221,66 +236,111 @@ test.describe("a file that the session restore has already reopened", () => {
 test.describe("a session that is still running", () => {
   test("is left alone, however much unsaved work it has", async ({ page }) => {
     // The dangerous mistake. Offering a live window's unsaved work to another
-    // window takes it from somebody who is still typing it.
+    // window takes it from somebody who is still typing it, and then deletes
+    // the only copy protecting them.
+    //
+    // What makes it live here is the same thing that makes it live in
+    // production: its pid is in the process listing. Not a fresh timestamp,
+    // which is what this used to assert and which was also true of a session
+    // that had died two seconds ago.
+    const LIVE_PID = 4321;
     const files = crashed(DEAD, {
       7: { path: `${PROJECT}/theirs.py`, text: "THEIRS = 1\n" },
-    });
+    }, LIVE_PID);
     await open(page, {
       files: { ...FILES, ...files },
       settings: { workspace: WORKSPACE },
-      // Beating as of now, which is what a window somebody is typing in looks
-      // like. Everything else the stub stamps is a counter, and therefore old.
-      times: { [`${DEAD}/alive`]: Date.now() },
+      running: [LIVE_PID],
     });
 
     await expect(page.locator(".confirm-overlay")).toHaveCount(0);
     await expect.poll(() => tabLabels(page)).not.toContain("theirs.py");
   });
+
+  test("and Discard, answered for a dead session, does not take its copies too", async ({ page }) => {
+    // The half that costs work rather than attention. Two journals are here:
+    // one whose window died, one whose window is running. Answering the prompt
+    // for the dead one must not clear the live one, which would leave a window
+    // somebody is typing in with no crash protection and nothing said about it.
+    const LIVE_PID = 4321;
+    const files = {
+      ...crashed(DEAD, { 7: { path: `${PROJECT}/theirs.py`, text: "THEIRS = 1\n" } }, LIVE_PID),
+      ...crashed(ALSO_DEAD, { 8: { path: `${PROJECT}/gone.py`, text: "GONE = 1\n" } }),
+    };
+    await open(page, {
+      files: { ...FILES, ...files },
+      settings: { workspace: WORKSPACE },
+      running: [LIVE_PID],
+    });
+
+    // Only the dead one is named.
+    const prompt = page.locator(".confirm-overlay");
+    await expect(prompt).toBeVisible();
+    expect(await prompt.innerText()).toContain("gone.py");
+    expect(await prompt.innerText()).not.toContain("theirs.py");
+
+    await page.locator('.confirm-overlay [data-answer="discard"]').click();
+
+    await expect
+      .poll(() => page.evaluate((root) => String(
+        globalThis.__NEUTRALINO_STUB__.wrote(`${root}/7.py`) ?? "",
+      ), DEAD), { message: "a running window's copies were discarded with somebody else's" })
+      .toContain("THEIRS = 1");
+    await expect
+      .poll(() => page.evaluate((root) => String(
+        globalThis.__NEUTRALINO_STUB__.wrote(`${root}/8.py`) ?? "",
+      ), ALSO_DEAD), { message: "the dead session's copies were not discarded" })
+      .toBe("");
+  });
 });
 
-test.describe("a session that starts beating again while the prompt is up", () => {
-  test("keeps its unsaved work, whatever the prompt is answered", async ({ page }) => {
-    // The case the deleted suspend heuristic was reaching for, answered where
-    // it can be answered rather than guessed at from one reading.
+test.describe("a session killed moments before this one started", () => {
+  test("is offered at once, with no window to wait out", async ({ page }) => {
+    // The way anybody actually reaches this state: kill the application, start
+    // it again. Measured at seven seconds between the two - and under the old
+    // heartbeat that was inside the ninety-second window in which a dead
+    // session still looked alive, so nothing was offered. Every retry landed in
+    // the same window, so it was deferred for ever rather than to the next
+    // start.
     //
-    // A machine that sleeps stops its timers, so a window that was open when
-    // the lid closed looks exactly like one that died - old beat, unsaved work,
-    // no way to tell. Deciding from that reading meant either never offering
-    // anything (which is what shipped: recovery was off entirely) or taking a
-    // live window's work.
-    //
-    // Neither is necessary, because offering costs nothing and only the clear
-    // is irreversible. So the beat is read a second time at that step, seconds
-    // later, with a dialog in between - and a window that has woken up has
-    // beaten by then.
+    // Nothing here has aged at all. The pid is simply not running.
     const files = crashed(DEAD, {
-      3: { path: `${PROJECT}/theirs.py`, text: "STILL THEIRS = 1\n" },
+      4: { path: `${PROJECT}/killed.py`, text: "KILLED = 1\n" },
     });
     await open(page, {
       files: { ...FILES, ...files },
       settings: { workspace: WORKSPACE },
     });
 
-    // Judged dead and offered, which is right: from one reading it is.
     await expect(page.locator(".confirm-overlay")).toBeVisible();
+    await page.locator('.confirm-overlay [data-answer="save"]').click();
+    await expect.poll(() => tabLabels(page)).toContain("killed.py");
+  });
+});
 
-    // And then it beats - the machine woke up, and the window that owns this
-    // journal is still there.
-    await page.evaluate((root) => {
-      globalThis.__NEUTRALINO_STUB__.given(`${root}/alive`, String(Date.now()));
-    }, DEAD);
+test.describe("a process listing that cannot be established", () => {
+  test("offers the work anyway, and deletes nothing", async ({ page }) => {
+    // `ps` failing must not mean somebody is told nothing about work they have
+    // just lost - but it must not mean deleting a journal either, because "I
+    // could not find out" is not "nobody is there". So the copies are offered
+    // and left where they are, to be offered again next time.
+    const files = crashed(DEAD, {
+      5: { path: `${PROJECT}/unsure.py`, text: "UNSURE = 1\n" },
+    });
+    await open(page, {
+      files: { ...FILES, ...files },
+      settings: { workspace: WORKSPACE },
+      brokenListing: true,
+    });
 
-    // Discard is the answer that destroys, so it is the one worth asking under.
+    await expect(page.locator(".confirm-overlay")).toBeVisible();
     await page.locator('.confirm-overlay [data-answer="discard"]').click();
 
     await expect
-      .poll(() => page.evaluate((root) => {
-        const calls = globalThis.__NEUTRALINO_STUB__.calls();
-        return calls.filter((call) => call.name === "remove")
-          .map((call) => String(call.args[0] ?? ""))
-          .filter((path) => path.startsWith(root)).length;
-      }, DEAD), { message: "a live window's journal was deleted" })
-      .toBe(0);
+      .poll(() => page.evaluate((root) => String(
+        globalThis.__NEUTRALINO_STUB__.wrote(`${root}/5.py`) ?? "",
+      ), DEAD), { message: "a journal was deleted without knowing whether it was live" })
+      .toContain("UNSURE = 1");
   });
 });
 

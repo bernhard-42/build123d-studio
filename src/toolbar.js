@@ -100,12 +100,17 @@ function revealBackendOnFailure(entries) {
   }
 }
 
-// The buttons that put work on the kernel's shell channel. Debugging is not
-// among them: it runs in a process of its own and needs no kernel at all.
-const RUN_BUTTONS = ["btn-run-file", "btn-run-cell", "btn-run-sel"];
+// The buttons that put work on the kernel's shell channel, all four of them.
+const KERNEL_BUTTONS = ["btn-run-file", "btn-run-cell", "btn-run-sel", "btn-run-all"];
 
-function setRunEnabled(enabled) {
-  for (const id of RUN_BUTTONS) {
+// Debugging is separate, and follows the sidecar rather than the kernel: the
+// debuggee is a process of its own, so a wedged or restarting kernel is no
+// reason to take the button away - it may be exactly what somebody reaches for.
+// It still needs the sidecar that spawns it.
+const DEBUG_BUTTONS = ["btn-debug"];
+
+function setEnabled(ids, enabled) {
+  for (const id of ids) {
     const button = document.getElementById(id);
     if (button !== null) {
       button.disabled = !enabled;
@@ -309,14 +314,23 @@ export function initToolbar() {
   // requests one at a time. A Run pressed in that window does nothing visible
   // for two seconds on this machine and rather longer on a cold one, which
   // reads as a button that did not work.
-  setRunEnabled(false);
-  ipc.on("console.ready", () => setRunEnabled(true));
-  // A restart puts the kernel back through the same sequence, and the console
-  // with it. Anything else that ends a session leaves the buttons alone: they
-  // are about whether the kernel can take work promptly, not about whether it
-  // is there at all.
-  ipc.on("kernel.restarting", () => setRunEnabled(false));
-  ipc.on("sidecar.restarting", () => setRunEnabled(false));
+  setEnabled(KERNEL_BUTTONS, false);
+  setEnabled(DEBUG_BUTTONS, false);
+  ipc.on("console.ready", () => {
+    setEnabled(KERNEL_BUTTONS, true);
+    setEnabled(DEBUG_BUTTONS, true);
+  });
+  // A kernel restart puts the kernel back through the same sequence, and the
+  // console with it. Debugging is untouched by it.
+  ipc.on("kernel.restarting", () => setEnabled(KERNEL_BUTTONS, false));
+  // Losing the sidecar takes both: it is what spawns a debuggee as well as what
+  // holds the kernel.
+  for (const gone of ["sidecar.restarting", "sidecar.disconnected", "sidecar.exit"]) {
+    ipc.on(gone, () => {
+      setEnabled(KERNEL_BUTTONS, false);
+      setEnabled(DEBUG_BUTTONS, false);
+    });
+  }
   ipc.on("sidecar.disconnected", () => setKernelState("dead"));
   // The kernel dying without the sidecar is the case that used to leave this
   // reading "busy" for the rest of the session, because nothing was watching

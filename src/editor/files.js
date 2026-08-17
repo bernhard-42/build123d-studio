@@ -61,15 +61,13 @@ import { describeSize, isLarge, looksBinary, SNIFF_BYTES } from "./filetype.js";
 import { formatOnSave } from "./formatting.js";
 import { changedSince, hasTimestamp, stampOf } from "./ondisk.js";
 import {
-  BEAT,
-  beat,
+  claim,
   clearJournal,
   createRecorder,
   forgetBuffer,
-  isStale,
   journalRoot,
-  beatOf,
-  stillBeating,
+  lastWritten,
+  ownerOf,
   readJournal,
   recordBuffer,
   setAside,
@@ -80,6 +78,7 @@ import { askThreeWay, askTwoWay, notifyFailure, notifyRefusal } from "../confirm
 import { writeFileSafely } from "./safewrite.js";
 import { getSetting, setSetting } from "../store.js";
 import { chooseSaveName } from "../savedialog.js";
+import { liveWindows } from "../liveness.js";
 import { baseName } from "./tree.js";
 import * as ipc from "../ipc.js";
 import * as log from "../log.js";
@@ -475,20 +474,23 @@ export async function confirmDiscardAll() {
 }
 
 /**
- * Save every named buffer that has changed.
+ * Save every buffer that has changed, asking where the unnamed ones should go.
  *
- * Buffers that have never been saved are skipped rather than each opening a
- * save dialog: Save All is a command for getting the project onto disk, and one
- * that stops to ask where four scratch buffers should live is not that. They
- * keep their dot and are still offered when something would discard them.
+ * Everything dirty, named or not. A buffer that has never been saved is the one
+ * with no other copy anywhere, so leaving it out of "save all" is leaving out
+ * the only thing that cannot be recovered from disk; each opens the save dialog
+ * in turn.
  *
- * @returns {Promise<boolean>} false if a save failed
+ * A cancelled dialog stops the run and answers false. Save All's answer is what
+ * a quit reads before discarding anything, so "the user declined to name that
+ * buffer" has to arrive as "not everything is saved" rather than as success.
+ *
+ * @returns {Promise<boolean>} false if a save failed or was cancelled
  */
 export async function saveAll() {
   // Missing files are included: the buffer is the only copy left, and Save All
   // is exactly the command for getting the project back onto disk.
-  const pending = bufferKeys()
-    .filter((key) => bufferNeedsSaving(key) && bufferPath(key) !== null);
+  const pending = bufferKeys().filter((key) => bufferNeedsSaving(key));
   if (pending.length === 0) {
     return true;
   }
@@ -500,7 +502,12 @@ export async function saveAll() {
       refreshTabs();
     }
     try {
-      await saveFile();
+      if (await saveFile() === null) {
+        // Cancelled at the dialog, or answered "reload" at a conflict. Either
+        // way this buffer is still dirty, and carrying on would end with a
+        // report that everything is saved.
+        return false;
+      }
     } catch {
       // Reported on screen by saveFile. Stopping here rather than carrying on
       // leaves the failure in front of the user instead of behind three more.
@@ -805,25 +812,6 @@ export async function openPath(path) {
   return path;
 }
 
-/**
- * Add .py unless the name already carries an extension.
- *
- * The save dialog does not append one - it hands back exactly what was typed,
- * so "bracket" is saved as a file with no extension that Monaco will not
- * highlight and nothing else will recognise as Python.
- *
- * Only a *missing* extension is filled in, never a different one: "bracket.txt"
- * and "v0.2" are left alone, on the grounds that someone who typed a suffix
- * meant it. The test is a dot in the final path segment - checking the whole
- * path would see the dot in "~/CAD v0.2/bracket" and wrongly leave it bare.
- */
-function withPythonExtension(path) {
-  const name = path.split(/[/\\]/).pop();
-  if (name.includes(".")) {
-    return path;
-  }
-  return `${path}.py`;
-}
 
 /**
  * A sentence about a failure, whatever shape the failure arrived in.
@@ -856,7 +844,6 @@ async function stampAt(path) {
 // modification time makes the check below size-only, which is worth knowing
 // when reading a log about a file that was overwritten anyway.
 let saidAboutTimestamps = false;
-let saidAboutBeatTimes = false;
 
 function recordStamp(key, stamp) {
   if (stamp !== null && !hasTimestamp(stamp) && !saidAboutTimestamps) {
@@ -980,14 +967,37 @@ export function pendingRecoveryWrites() {
 
 // --- recovering what a crash left behind -----------------------------------
 
-/** Say this window is running, now and every beat after. */
-export async function startHeartbeat() {
+/**
+ * Record which process owns this window's journal.
+ *
+ * Called before the journal is offered and before any buffer can be typed into,
+ * so an area that exists always names its owner.
+ */
+export async function claimJournal() {
   const root = await journalPath();
-  const tick = () => {
-    beat(journalDeps(root)).catch((error) => log.warn("Heartbeat:", error));
-  };
-  tick();
-  setInterval(tick, BEAT);
+  await claim({ ...journalDeps(root), pid: Number(NL_PID) });
+}
+
+/**
+ * Clear the journals of the sessions established as dead, and only those.
+ *
+ * A plain delete: the operating system named these dead, so nothing between the
+ * scan and here can have changed the answer.
+ *
+ * The exception is carried on the session. Where the process listing could not
+ * be established, its journals were offered anyway - somebody who has lost work
+ * should not be told nothing because `ps` failed - but they are not deleted,
+ * because "I could not find out" is not "nobody is there". They are offered
+ * again at the next start.
+ */
+async function clearDeadJournals(dead) {
+  await Promise.all(dead.map(async (session) => {
+    if (session.unverified) {
+      log.warn(`${session.root} was offered without knowing whether it is live; leaving it`);
+      return;
+    }
+    await clearJournal({ filesystem, log }, session.root);
+  }));
 }
 
 /**
@@ -999,34 +1009,10 @@ export async function startHeartbeat() {
  *
  * Recovered buffers open **dirty**. Their file is not written until the user
  * saves - only this session's journal is, below - and the changed-on-disk check
- * then asks if the file moved in the meantime. A file that has since been deleted recovers as a
- * dirty buffer that saving recreates, which is what somebody who lost work in
- * a crash is asking for.
+ * then asks if the file moved in the meantime. A file that has since been
+ * deleted recovers as a dirty buffer that saving recreates, which is what
+ * somebody who lost work in a crash is asking for.
  */
-/**
- * Clear the journals of sessions that are still dead by the time it comes to it.
- *
- * The second reading, and the only place the suspend question is asked - see
- * journal.js's stillBeating. Everything up to here is reversible: a session
- * offered by mistake costs a prompt, and declining it leaves every copy where
- * it was. This is not reversible, so it is the step that has to be sure.
- *
- * And by here it can be: a live window beats every interval whether or not the
- * machine has just woken, and between the scan and this line sits a dialog
- * somebody had to answer. A beat that moved in that time is a window somebody
- * is typing in, and its unsaved work is not ours to delete.
- */
-async function clearDeadJournals(dead) {
-  await Promise.all(dead.map(async (session) => {
-    const beating = await beatOf({ filesystem }, session.root);
-    if (stillBeating(session.said, beating)) {
-      log.warn(`${session.root} has beaten since it was read; leaving its journal alone`);
-      return;
-    }
-    await clearJournal({ filesystem, log }, session.root);
-  }));
-}
-
 export async function offerRecovery() {
   const dataDir = await appDataDir();
   const mine = journalRoot(dataDir, log.instanceId);
@@ -1041,61 +1027,50 @@ export async function offerRecovery() {
     return 0;
   }
 
+  // One question, asked once, of the only party that knows: which pids are
+  // windows of this application right now. Everything else here is arithmetic
+  // on that answer.
+  //
+  // Null means it could not be established - `ps` or `tasklist` failed, or did
+  // not list us. That is deliberately not the same as an empty set: see below,
+  // where it decides whether a journal may be deleted.
+  const live = await liveWindows({ os, log, platform: NL_OS }, Number(NL_PID));
+
   const dead = [];
   for (const root of sessions) {
-    const beatAt = await stampAt(`${root}/alive`);
-    const modifiedAt = beatAt === null ? null : beatAt.modifiedAt;
-
-    // What that beat believed the time was, kept for the second reading before
-    // anything is cleared. It is deliberately not consulted here.
-    //
-    // It used to be: a beat more than two intervals old was called a suspend -
-    // timers do not tick while a machine sleeps, so a live window's beat can be
-    // as old as the nap - and the session was skipped. But that is every
-    // crashed session not restarted within a minute, and skipping meant never
-    // offering *and* never clearing, so the journals piled up unread. Twenty-one
-    // of them on the machine this was found on, several holding real work.
-    //
-    // The question cannot be answered from one reading at all: an old beat is a
-    // suspended live window and a dead one, identically. So it is asked where it
-    // decides something that cannot be undone - the clear below - by reading the
-    // beat a second time, seconds later, by which point a live window has beaten
-    // again. Offering costs a live sibling nothing: the prompt can be declined,
-    // and declining leaves every copy where it is.
-    const said = await beatOf({ filesystem }, root);
-
-    // Where a platform reports no usable modification time, every sibling
-    // would look dead for ever. Said once, and treated as alive rather than
-    // dead: the cost of leaving a crashed session for the next start is one
-    // more start, and the cost of the other answer is somebody's work.
-    if (beatAt !== null && !hasTimestamp(beatAt)) {
-      if (!saidAboutBeatTimes) {
-        saidAboutBeatTimes = true;
-        log.warn(
-          "This platform reports no file modification time, so a crashed"
-          + " session cannot be told from a running one; recovery is off.",
-        );
-      }
+    const owner = await ownerOf({ filesystem }, root);
+    if (live !== null && owner !== null && live.has(owner)) {
+      // A window somebody is typing in. Its unsaved work is not ours to offer,
+      // and taking its copies would leave it with no crash protection at all.
+      log.info(`Not offering ${root}: process ${owner} is a running window`);
       continue;
     }
-
-    // A session still beating is a window somebody is typing in. Offering its
-    // unsaved work back would be taking it from them.
-    if (isStale(modifiedAt, Date.now())) {
-      dead.push({ root, beatAt: modifiedAt === null ? 0 : modifiedAt, said });
-    }
+    // Everything else is dead, including a journal that names nobody. That is
+    // an area written by a version that recorded no owner, or one whose owner
+    // file never landed - and both belong to something that is not running,
+    // because a live window of this version always writes one before it copies
+    // anything.
+    // When this session last wrote a copy, which is what orders the prompt
+    // below - and through it decides which copy of a path wins when two
+    // sessions both held one.
+    dead.push({
+      root,
+      unverified: live === null,
+      at: await lastWritten({ filesystem }, root),
+    });
   }
+
   if (dead.length === 0) {
     return 0;
   }
 
-  // Oldest session first, by when it last said it was alive.
+  // Oldest session first, by when it last wrote a copy.
   //
-  // It used to sort the directory names, which are random hex - so "newest
-  // wins" below was decided by a coin flip, and the copy the user was actually
-  // working on last could be the one set aside instead of the one restored.
+  // Not by directory name, which is random hex: that made "newest wins a path"
+  // below a coin flip, and the copy somebody was actually working on last could
+  // be the one set aside instead of the one restored.
   const entries = [];
-  for (const session of [...dead].sort((a, b) => a.beatAt - b.beatAt)) {
+  for (const session of [...dead].sort((a, b) => a.at - b.at)) {
     entries.push(...(await readJournal({ filesystem, log }, session.root)));
   }
   if (entries.length === 0) {
@@ -1203,17 +1178,6 @@ function nameOf(path) {
   return parts[parts.length - 1];
 }
 
-/** Whether anything at all is at a path - a file, a folder, or a link. */
-async function somethingIsAt(path) {
-  try {
-    await filesystem.getStats(path);
-    return true;
-  } catch {
-    // Nothing there, which is what a Save As to a new name expects.
-    return false;
-  }
-}
-
 // Buffers with a save in flight, and the promise each caller should wait on.
 //
 // A second Cmd-S while the first is still formatting used to start a second
@@ -1299,52 +1263,23 @@ async function saveBuffer(key, saveAs) {
     // to be told them separately - see savedialog.js. `startingFolder` already
     // guarantees a folder that exists, and `original` is a file that was opened
     // from disk, so both are safe to hand to a panel.
-    let startIn = original === null ? await startingFolder() : directoryOf(original);
-    let startName = original === null ? null : baseName(original);
+    const startIn = original === null ? await startingFolder() : directoryOf(original);
+    const startName = original === null ? null : baseName(original);
 
-    // Asked in a loop, because the replace prompt below has to be able to send
-    // somebody back to the dialog. Cancelling it used to abandon the save
-    // outright - two dialogs deep, one Cancel, and the file was simply not
-    // saved - while cancelling the *platform's* own replace prompt leaves them
-    // in the panel to try another name. Same question, so the same way out.
-    for (;;) {
-      const chosen = await chooseSaveName({ os, log, platform: NL_OS }, "Save", {
-        folder: startIn,
-        name: startName,
-        filters: FILTERS,
-      });
-      if (chosen === "" || chosen === undefined) {
-        return null;
-      }
-      path = withPythonExtension(chosen);
-
-      // The dialog asked about the name the user typed, and .py is added after
-      // it has closed. So typing "bracket" where a bracket.py already exists got
-      // no overwrite prompt from anybody - the dialog had vetted a name that does
-      // not exist, and the write went to one that does.
-      //
-      // Only when the extension was actually added, which is also what makes this
-      // right on a platform whose own dialog appends it: there the name it vetted
-      // already carried .py, so its own overwrite prompt has been seen and asking
-      // again would be a second dialog about the same file.
-      if (path === chosen || !(await somethingIsAt(path))) {
-        break;
-      }
-      const answer = await askTwoWay({
-        title: "Replace the existing file?",
-        detail: `${path} already exists.\n\n.py was added to the name you typed, so the save would write to it.`,
-        confirm: "Replace",
-        cancel: "Cancel",
-      });
-      if (answer === "confirm") {
-        break;
-      }
-      // Back to the panel, holding what they typed rather than what this
-      // buffer used to be called: they are answering "no, somewhere else",
-      // and starting again from the old name would throw that away.
-      startIn = directoryOf(chosen) ?? startIn;
-      startName = baseName(chosen);
+    // The name is taken as typed, and no extension is added to it. The panel
+    // asks before replacing a file and can only ask about the name it was
+    // given, so appending `.py` afterwards would put the write on a file it
+    // never mentioned - and would need a second prompt of our own to cover that
+    // gap. One question, one dialog. VS Code takes the name as typed too.
+    const chosen = await chooseSaveName({ os, log, platform: NL_OS }, "Save", {
+      folder: startIn,
+      name: startName,
+      filters: FILTERS,
+    });
+    if (chosen === "" || chosen === undefined) {
+      return null;
     }
+    path = chosen;
 
     // And a file another tab is holding cannot be taken from it. Two buffers on
     // one path have no correct behaviour left between them: both dirty against

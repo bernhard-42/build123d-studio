@@ -58,7 +58,7 @@ import { getSetting, setSetting } from "./store.js";
 import { os } from "@neutralinojs/lib";
 import * as ipc from "./ipc.js";
 import * as log from "./log.js";
-import { backendPath, consoleLevel, consolePath, logPath, setConsoleLevel } from "./log.js";
+import { consoleLevel, consolePath, setConsoleLevel } from "./log.js";
 import { escapeHtml } from "./escape.js";
 import { closeOnBackdropClick } from "./backdrop.js";
 import { refreshToolbarTitles } from "./toolbar.js";
@@ -527,18 +527,14 @@ ${VIEWER_GROUPS.map(
         <section class="settings-panel" data-panel="application" hidden>
           <p class="settings-group">Debug console</p>
           <p class="info-note">
-            There is no developer console to open on macOS - Safari lists an
-            embedded web view only when the application marks it inspectable,
-            which macOS has required since 13.3 and this toolkit does not do -
-            so the log file is where a fault has to be read from. What this
-            application logs itself is always written, to its own file; this is
-            how much of what the <em>browser</em> and the libraries inside it
-            print is captured, in a second file beside it.
+            How much of what the browser and its libraries print is written to
+            <code>console.log</code>. This application's own log is separate and
+            always written; see About for where both live.
           </p>
           <p class="info-note">
-            Errors is the useful default. Everything is for reproducing
-            something specific: a chatty library can fill the log and push the
-            line you need out of it, since it rotates at a megabyte.
+            <strong>Errors</strong> is the useful setting. <strong>Everything</strong>
+            is for reproducing something specific - a chatty library fills the
+            file, which rotates at a megabyte, and pushes out the line you need.
           </p>
           <label class="settings-viewer-row">
             <span class="settings-viewer-name">Forward from the browser console</span>
@@ -558,6 +554,7 @@ ${VIEWER_GROUPS.map(
             A command may answer to several. Changes apply when this dialog is
             applied, and the editor is re-bound straight away.
           </p>
+          <p class="settings-group">Run / Debug</p>
           <div id="settings-shortcuts"></div>
           <p class="info-note settings-problem" id="settings-chord-problems" hidden></p>
           <button class="settings-btn settings-action" id="settings-chords-reset">
@@ -760,11 +757,10 @@ ${VIEWER_GROUPS.map(
   // and a checkbox can only show which. Pinning happens on Apply, and only if
   // the box no longer agrees with what is showing.
   document.getElementById("settings-console-level").value = consoleLevel();
+  // Only the file this setting governs. The other two are About's business,
+  // which is where all three are named.
   document.getElementById("settings-log-path").textContent =
-    logPath() === null
-      ? ""
-      : `Logs: ${logPath()} for this application, ${consolePath()} for the browser console, ` +
-        `and ${backendPath()} for the measurement backend`;
+    consolePath() === null ? "" : `Written to ${consolePath()}`;
   document.getElementById("settings-dark-mode").checked = resolvedTheme() === "dark";
   document.getElementById("settings-line-length").value = String(formatLineLength());
   document.getElementById("settings-format-on-save").checked = formatOnSave();

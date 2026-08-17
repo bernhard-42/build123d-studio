@@ -40,13 +40,23 @@ export function quoteApplescript(value) {
 /**
  * The AppleScript for a save panel, as one line per element.
  *
+ * **System Events owns the panel, and that is what gives it the keyboard.** A
+ * dialog belongs to the process that ran the command, and `osascript` is not a
+ * foreground application - so a panel it owns opens behind the window that
+ * asked for it, visible but with every keystroke still going to the editor.
+ * System Events is a UI-capable background application: told to activate, it
+ * comes forward and the panel comes with it. Measured against the alternatives
+ * on 2026-08-17: an untargeted `activate` costs four seconds waiting for an
+ * event nobody answers and does not focus, and `tell me to activate` is the
+ * same. This is fast.
+ *
+ * **The folder is resolved before the block, not inside it.** `default
+ * location` wants an alias, and inside a `tell` the coercion is System Events'
+ * to perform rather than this script's.
+ *
  * Both placement parameters are optional and independent: a Save As has a name
  * and a folder, a new file has only a folder to open in. Omitting `name` leaves
  * the field empty, which is what "save this untitled thing somewhere" means.
- *
- * `default location` wants an alias, which is AppleScript for "a folder that
- * exists" - hence the coercion, and hence the caller checking. A path that is
- * not there raises, and the panel never opens.
  *
  * The cancel branch is what makes this a dialog rather than an error: it answers
  * with an empty line, which is exactly what os.showSaveDialog returns when
@@ -56,21 +66,30 @@ export function quoteApplescript(value) {
  * @returns {string[]}
  */
 export function saveScript({ title, name, folder }) {
+  const hasFolder = typeof folder === "string" && folder !== "";
   let ask = `set chosen to choose file name with prompt "${quoteApplescript(title)}"`;
   if (typeof name === "string" && name !== "") {
     ask += ` default name "${quoteApplescript(name)}"`;
   }
-  if (typeof folder === "string" && folder !== "") {
-    ask += ` default location (POSIX file "${quoteApplescript(folder)}" as alias)`;
+  if (hasFolder) {
+    ask += " default location theFolder";
   }
-  return [
+  const lines = [];
+  if (hasFolder) {
+    lines.push(`set theFolder to POSIX file "${quoteApplescript(folder)}" as alias`);
+  }
+  lines.push(
     "try",
+    `tell application "System Events"`,
+    "activate",
     ask,
+    "end tell",
     "POSIX path of chosen",
     `on error number ${CANCELLED}`,
     `return ""`,
     "end try",
-  ];
+  );
+  return lines;
 }
 
 /**
@@ -149,11 +168,12 @@ export async function chooseSaveName({ os, log, platform }, title, { folder, nam
   }
 
   if (result === null || result.exitCode !== 0) {
-    // A folder that has been deleted since it was remembered is the way this
-    // is reached: `as alias` raises on it and the panel never opens. Falling
-    // back rather than failing, because a save that cannot be asked about is a
-    // save that is lost - and Neutralino's dialog, name field and all, is still
-    // a dialog.
+    // Two ways here, and both want the same answer. macOS asks once whether
+    // this application may control System Events, and a refusal fails the
+    // script; and a folder that has been deleted since it was remembered makes
+    // `as alias` raise, so the panel never opens. Falling back rather than
+    // failing, because a save that cannot be asked about is a save that is
+    // lost - and Neutralino's dialog, name field and all, is still a dialog.
     if (result !== null) {
       log.warn(`The save panel exited ${result.exitCode}: ${result.stdErr}`);
     }

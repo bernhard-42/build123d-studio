@@ -34,6 +34,16 @@ const dirs = new Set(["/"]);
 /** Where the harness is told to answer a dialog from, one answer per call. */
 const dialogAnswers = [];
 
+// What this window's own process looks like to `ps`, and which other pids a
+// test says are windows of this application too. Recovery asks the operating
+// system which pids are live rather than reading a clock, so this is where a
+// test says "that journal belongs to somebody who is still running".
+const APP_PATH = "/Applications/build123d Studio.app/Contents/MacOS/build123d-studio";
+const alsoRunning = new Set(
+  (globalThis.__HARNESS_PROCESSES__?.running ?? []).map(Number),
+);
+let processListingWorks = globalThis.__HARNESS_PROCESSES__?.brokenListing !== true;
+
 /** Exit codes queued for the next spawned commands. */
 const exitCodes = [];
 
@@ -125,6 +135,14 @@ globalThis.__NEUTRALINO_STUB__ = {
   // exactly that. A window still beating must never have its unsaved work
   // offered to somebody else.
   touch: (path, modifiedAt) => times.set(path, modifiedAt),
+  // Say that a pid is a running window of this application, so the journal it
+  // owns must be left alone. Without this every recorded owner is dead, which
+  // is what a crashed session's is.
+  alsoRunning: (pid) => alsoRunning.add(Number(pid)),
+  // Make the process listing fail, which is the one case where the application
+  // cannot know whether a journal is live - and must therefore offer it without
+  // deleting it.
+  breakProcessListing: () => { processListingWorks = false; },
   calls: () => calls.map((call) => ({ ...call })),
   reset: () => reset(),
 };
@@ -158,6 +176,8 @@ export function reset() {
   dirs.clear();
   dirs.add("/");
   dialogAnswers.length = 0;
+  alsoRunning.clear();
+  processListingWorks = true;
   listeners.clear();
 }
 
@@ -401,6 +421,26 @@ export const os = {
    */
   async execCommand(command, options) {
     record("execCommand", [command, options]);
+
+    // The process listing recovery asks for, to find out which pids are windows
+    // of this application. Answered with this window plus whatever a test says
+    // is also running - see liveProcesses() - because a journal's owner being
+    // in that list is the whole of what decides between "offer this back" and
+    // "somebody is typing in it".
+    //
+    // The shape is real output: `ps -A -o pid=,comm=` prints the full path on
+    // macOS, and a name truncated to fifteen characters on Linux.
+    if (command.startsWith("ps -A")) {
+      if (!processListingWorks) {
+        return { pid: 0, stdOut: "", stdErr: "ps: cannot fetch process table", exitCode: 1 };
+      }
+      const rows = [`    1 /sbin/launchd`, `${NL_PID} ${APP_PATH}`];
+      for (const pid of alsoRunning) {
+        rows.push(`${pid} ${APP_PATH}`);
+      }
+      return { pid: 0, stdOut: `${rows.join("\n")}\n`, stdErr: "", exitCode: 0 };
+    }
+
     if (!command.startsWith("osascript ") || !command.includes("choose file name")) {
       return { pid: 0, stdOut: "", stdErr: `unexpected command: ${command}`, exitCode: 127 };
     }

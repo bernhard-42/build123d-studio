@@ -56,7 +56,11 @@ test("the name field gets the file name and the panel opens in its folder", asyn
   assert.equal(chosen, "/Users/b/Desktop/test/notes2.py");
   const [command] = os.asked.commands;
   assert.match(command, /default name "notes\.py"/);
-  assert.match(command, /default location \(POSIX file "\/Users\/b\/Desktop\/test" as alias\)/);
+  assert.match(command, /default location theFolder/);
+  assert.match(command, /set theFolder to POSIX file "\/Users\/b\/Desktop\/test" as alias/);
+  // System Events owns the panel, which is what gives it the keyboard.
+  assert.match(command, /tell application "System Events"/);
+  assert.match(command, /-e 'activate'/);
   // The regression itself: the whole path must never be the name.
   assert.ok(
     !command.includes(`default name "/Users/b/Desktop/test/notes.py"`),
@@ -68,7 +72,25 @@ test("the name field gets the file name and the panel opens in its folder", asyn
 test("an unnamed buffer asks for a folder and no name", () => {
   const lines = saveScript({ title: "Save", name: null, folder: "/Users/b/Documents" }).join("\n");
   assert.ok(!lines.includes("default name"), lines);
-  assert.match(lines, /default location \(POSIX file "\/Users\/b\/Documents" as alias\)/);
+  assert.match(lines, /set theFolder to POSIX file "\/Users\/b\/Documents" as alias/);
+  assert.match(lines, /default location theFolder/);
+});
+
+test("the folder is resolved before the block that uses it", () => {
+  // Inside a tell, the coercion is System Events' to perform rather than this
+  // script's, and the panel then opens without the folder it was given.
+  const lines = saveScript({ title: "Save", name: "x.py", folder: "/Users/b" });
+  assert.ok(
+    lines.indexOf("set theFolder to POSIX file \"/Users/b\" as alias")
+      < lines.indexOf(`tell application "System Events"`),
+    lines.join("\n"),
+  );
+});
+
+test("a panel with no folder does not resolve one", () => {
+  const lines = saveScript({ title: "Save", name: "x.py", folder: null }).join("\n");
+  assert.ok(!lines.includes("theFolder"), lines);
+  assert.match(lines, /default name "x\.py"/);
 });
 
 test("cancel is an empty path rather than an error", async () => {

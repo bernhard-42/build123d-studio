@@ -21,6 +21,8 @@ const browser = {
   // and the reason they have to be listed rather than inferred.
   NL_OS: "readonly",
   NL_ARCH: "readonly",
+  // This process, which is how a recovery journal names its owner.
+  NL_PID: "readonly",
   NL_PORT: "readonly",
   NL_PATH: "readonly",
   NL_TOKEN: "readonly",

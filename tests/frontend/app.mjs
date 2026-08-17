@@ -31,6 +31,10 @@ const SIDECAR = { type: "listening", port: 45999, token: "harness-token" };
 const GLOBALS = (platform, argv) => `
   var NL_OS = ${JSON.stringify(platform)};
   var NL_ARCH = "arm64";
+  // This window's own process. Recovery records it in the journal it owns and
+  // asks the operating system which pids are still windows of this
+  // application, so the stub's process listing has to contain this one.
+  var NL_PID = "4242";
   var NL_ARGS = ${JSON.stringify(argv)};
   var NL_PATH = "/app";
   var NL_CWD = "/app";
@@ -239,9 +243,14 @@ export async function open(page, options = {}) {
     argv = ["/app/build123d-studio"],
     settings = null,
     files = {},
+    // Other pids the process listing should report as windows of this
+    // application. Recovery asks the operating system which of them are live,
+    // so this is how a test says "that journal belongs to somebody who is still
+    // running" - and, with brokenListing, how it says the listing failed.
+    running = [],
+    brokenListing = false,
     // Modification times for seeded files, where a test needs one to mean
-    // something - the recovery journal decides whether a session is still
-    // running from how recently its beat file was written.
+    // something.
     times = {},
     ready = true,
   } = options;
@@ -274,13 +283,15 @@ export async function open(page, options = {}) {
   });
 
   await page.addInitScript(
-    ([harness, seed, stored, stamps]) => {
+    ([harness, seed, stored, stamps, processes]) => {
       globalThis.__HARNESS__ = harness;
       globalThis.__HARNESS_FILES__ = seed;
       globalThis.__HARNESS_SETTINGS__ = stored;
       globalThis.__HARNESS_TIMES__ = stamps;
+      globalThis.__HARNESS_PROCESSES__ = processes;
     },
-    [{ sidecar: SIDECAR, env: {} }, files, settings, times],
+    [{ sidecar: SIDECAR, env: {} }, files, settings, times,
+      { running, brokenListing }],
   );
 
   await page.goto("/");

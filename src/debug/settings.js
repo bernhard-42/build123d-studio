@@ -67,17 +67,14 @@ export function onStopExpression() {
 /**
  * Whether the on-stop expression runs at every stop or only at breakpoints.
  *
- * True by default, because the expression is the expensive one: a step through
- * a multi-line call stops on every argument line - measured, `base -=
- * Cylinder(a, b, c)` stops six times - and tessellating a whole assembly at
- * each of them is seconds each time. Landing on a breakpoint is somewhere
- * somebody asked to be, and drawing there is what they asked for.
- *
- * Turned off, the model is redrawn as you step, which is the closest this gets
- * to watching a shape being built. That is worth having and worth choosing
- * deliberately.
+ * **False by default**: the model is redrawn as you step, which is the closest
+ * this gets to watching a shape being built, and it is what somebody who starts
+ * a debugger expects to see. On is the setting for a large assembly, where the
+ * cost is real - a step through a multi-line call stops on every argument line
+ * (measured: `base -= Cylinder(a, b, c)` stops six times) and tessellating the
+ * whole thing at each of them is seconds each time.
  */
 export function onStopBreakpointsOnly() {
-  const stored = getSetting(ON_STOP_BREAKPOINTS_ONLY_KEY, true);
-  return typeof stored === "boolean" ? stored : true;
+  const stored = getSetting(ON_STOP_BREAKPOINTS_ONLY_KEY, false);
+  return typeof stored === "boolean" ? stored : false;
 }

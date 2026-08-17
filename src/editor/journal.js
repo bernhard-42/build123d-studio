@@ -192,107 +192,87 @@ export function createRecorder({ delay = 1000, schedule = setTimeout, cancel = c
 }
 
 /**
- * How often a window says it is still here, and how long before it is not.
+ * The file that says which process owns this journal.
  *
- * The frontend has no lock. The sidecar does - instance.py holds one for its
- * whole life and the operating system releases it on any death, including a
- * kill - but recovery has to run at startup, and the sidecar is spawned last,
- * after the window is already usable. So liveness here is a file whose
- * modification time is refreshed while the window runs.
+ * One line, written once: the pid of the window that created the directory.
+ * Liveness is a question for the operating system - see liveness.js - and not
+ * something this directory asserts.
  *
- * Stale is three missed beats rather than one, because the cost of the two
- * mistakes is not symmetric: calling a live sibling dead offers somebody their
- * own unsaved work back while they are typing it, and calling a dead session
- * live only defers the offer to the next start.
+ * A lock would be better and the frontend cannot hold one: instance.py takes
+ * one for the sidecar's whole life and the OS releases it on any death, but
+ * Neutralino exposes no locking API, and recovery runs at startup, before the
+ * sidecar exists. A pid answers the same question with the same authority, and
+ * the window can ask it alone.
  */
-export const BEAT = 30 * 1000;
-export const STALE_AFTER = 3 * BEAT;
-
-const ALIVE = "alive";
+const OWNER = "owner";
 
 /**
- * Whether a session that looked dead has beaten since we looked.
+ * Say which process this journal belongs to. Once, at startup.
  *
- * This is what replaced a suspend heuristic, and the replacement is the point.
- * A machine that sleeps stops its timers, so a window that was open when the
- * lid closed has a beat as old as the nap - and from one reading there is no
- * way to tell that from a window that died. The old test called any beat more
- * than two intervals old a suspend and skipped the session, which is every
- * crashed session that is not restarted within a minute: recovery was off, and
- * the journals piled up unread. Twenty-one of them, on the machine this was
- * found on.
- *
- * A second reading answers it outright. A live window beats again within its
- * interval, whether or not the machine has just woken; a dead one never does.
- * So the question is only asked where it decides something destructive - see
- * offerRecovery, which re-reads before clearing anybody's journal - and never
- * to decide whether to *offer*, because a session that is merely offered loses
- * nothing by being offered.
- *
- * A beat that appears where there was none counts: an older version that never
- * beat, or a directory created between the two readings.
+ * Before anything is copied into it, so a directory that exists always has an
+ * owner. An area holding copies but naming nobody is unattributable, and the
+ * only safe reading of that is "dead" - wrong for a window that is merely
+ * young.
  */
-export function stillBeating(before, after) {
-  if (after === null || after === undefined) {
-    return false;
-  }
-  if (before === null || before === undefined) {
-    return true;
-  }
-  return after > before;
-}
-
-/**
- * What time a session's beat last said it was, or null if it has never said.
- *
- * Null rather than zero for "no usable time", so a caller can tell "it has not
- * beaten" from "it beat at the epoch" - see stampOf, which draws the same line
- * for the same reason.
- */
-export async function beatOf({ filesystem }, root) {
-  try {
-    const said = Number(await filesystem.readFile(`${root}/${ALIVE}`));
-    return Number.isFinite(said) && said > 0 ? said : null;
-  } catch {
-    // No beat file, or nothing readable in it.
-    return null;
-  }
-}
-
-
-/**
- * Say this window is still running, and when it thought that was.
- *
- * The time is the content, not decoration: a reader comparing only the file's
- * age cannot tell a window that stopped beating from a machine that stopped
- * running, and those want opposite answers. See sleptThrough.
- */
-export async function beat({ filesystem, log, root }) {
+export async function claim({ filesystem, log, root, pid }) {
   try {
     await filesystem.createDirectory(root);
   } catch {
     // Already there.
   }
   try {
-    // The wall-clock time this beat believed it was, so a reader can tell a
-    // window that stopped beating from a machine that stopped running.
-    await filesystem.writeFile(`${root}/${ALIVE}`, String(Date.now()));
+    await filesystem.writeFile(`${root}/${OWNER}`, String(pid));
   } catch (error) {
-    log.warn("Could not mark this session as running:", error);
+    log.warn("Could not record which process owns the recovery journal:", error);
   }
 }
 
 /**
- * Whether a journal belongs to a session that is no longer running.
+ * Which process owns a journal, or null when it does not say.
  *
- * A directory with no beat at all is dead: it was written by a version that
- * did not beat, or the beat never landed. Both mean nobody is refreshing it.
+ * Null covers three things a caller must not tell apart by guessing: a
+ * directory written by a version that recorded no owner, one whose owner file
+ * never landed, and one holding something that is not a pid.
  */
-export function isStale(beatAt, now, staleAfter = STALE_AFTER) {
-  if (beatAt === null || beatAt === undefined) {
-    return true;
+export async function ownerOf({ filesystem }, root) {
+  try {
+    const said = Number(await filesystem.readFile(`${root}/${OWNER}`));
+    return Number.isInteger(said) && said > 0 ? said : null;
+  } catch {
+    return null;
   }
-  return now - beatAt > staleAfter;
+}
+
+/**
+ * When this session last wrote a copy, or 0 if it never did.
+ *
+ * The newest copy's own modification time, not the directory's: a directory's
+ * changes only when an entry is added or removed, which is a property of how
+ * the copies happen to be written rather than of when somebody was typing.
+ *
+ * It orders the prompt, and through that decides which copy of a path wins when
+ * two sessions both held it - so it has to mean "last worked in", not "started
+ * first".
+ */
+export async function lastWritten({ filesystem }, root) {
+  let names;
+  try {
+    names = (await filesystem.readDirectory(root)).map((entry) => entry.entry);
+  } catch {
+    return 0;
+  }
+  let newest = 0;
+  for (const name of names.filter((entry) => entry.endsWith(".py"))) {
+    try {
+      const stats = await filesystem.getStats(`${root}/${name}`);
+      if (typeof stats.modifiedAt === "number" && stats.modifiedAt > newest) {
+        newest = stats.modifiedAt;
+      }
+    } catch {
+      // Gone between the listing and the stat. It orders nothing.
+    }
+  }
+  return newest;
 }
 
 /**

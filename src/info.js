@@ -22,9 +22,13 @@ let uvVersionCache = null;
 /**
  * The log files, current and rotated, and what else writes into them.
  *
- * The rotated one is only named when it is actually there. A path to a file
- * that does not exist reads as "here is your other log" and sends someone
- * looking for something that was never written.
+ * Three files, three subjects: this application's own account, what the browser
+ * and its libraries printed, and what the measurement backend said. Each is
+ * named only when it exists, and so is the rotated one - a path to a file
+ * nobody wrote sends the reader looking for something that was never there.
+ *
+ * The previous log is named because a bug report usually wants the one from
+ * *before* the restart that made the problem obvious.
  */
 async function logRows() {
   const current = log.logPath();
@@ -151,16 +155,6 @@ async function gather() {
           : "starting…",
       ),
       row("Kernel connection file", info?.info?.connectionFile ?? "starting…"),
-      // Beside the environment rather than inside it, so they survive the clean
-      // rebuild the note above describes - the log of the run that went wrong is
-      // exactly what is wanted after deleting the environment.
-      //
-      // Both of them, because a bug report usually wants the one from *before*
-      // the restart that made the problem obvious, and until now the dialog
-      // named only the current file. The sidecar and the kernel do not have
-      // logs of their own: their stderr is timestamped into this same file,
-      // which is said out loud so nobody goes looking for a third one.
-      ...(await logRows()),
     ],
   });
 
@@ -187,6 +181,19 @@ async function gather() {
       rows: all.map((p) => row(p.name, p.version)),
     });
   }
+
+  // Last, because it is what a bug report is told to fetch rather than
+  // something anybody reads while looking at versions.
+  //
+  // The files live beside the environment rather than inside it, so they
+  // survive the clean rebuild the note above describes - the log of the run
+  // that went wrong is exactly what is wanted after deleting the environment.
+  // The sidecar and the kernel have no logs of their own: their stderr is
+  // timestamped into this same file, so nobody goes looking for a third one.
+  sections.push({
+    title: "Log files",
+    rows: await logRows(),
+  });
 
   return sections;
 }
