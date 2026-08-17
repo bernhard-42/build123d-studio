@@ -22,7 +22,6 @@ import subprocess
 import threading
 
 from channel import log
-from debugger import debug_python  # noqa: F401 - re-exported for main.py's use
 
 
 class RunSession:

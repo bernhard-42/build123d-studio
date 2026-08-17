@@ -17,12 +17,25 @@ What is left here is this host's own: when a model is indexed, which model an
 answer describes, and the notification shape the frontend sends.
 """
 
+import sys
 import threading
 
 import orjson
 from ocp_viewer_core.backend import ViewerBackend
 
-from channel import log
+
+def log(*parts):
+    """To stderr, with the prefix the sidecar routes on.
+
+    Defined here rather than imported from channel, which is the sidecar's
+    websocket module: this file runs only inside measure_process, whose whole
+    reason to exist is importing as little as possible - loading a .pyd holds
+    the Windows loader lock while CPython holds the GIL, and every thread the
+    process starts needs that lock. Pulling `websockets` in behind a three-line
+    function was the opposite of the point.
+    """
+    print("measure:", *parts, file=sys.stderr, flush=True)
+
 
 
 class ShownModel:

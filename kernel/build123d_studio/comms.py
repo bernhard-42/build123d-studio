@@ -73,10 +73,14 @@ class StudioComms(Comms[None]):
         takes the mapping out of it before the backend sees it - ocp_viewer at
         `sockets.py`'s `handle_event(orjson.loads(payload)["model"], ...)`, the
         websocket client at `websocket.py:341`. This host unwraps at the sending
-        end rather than the receiving one, because the sidecar hands those bytes
-        to the measurement process untouched: unwrapping there would mean
-        parsing and re-encoding the whole mapping - kilobytes for a box and far
-        more for an assembly - to remove one key.
+        end rather than the receiving one, because unwrapping on the sidecar
+        would mean parsing and re-encoding the whole mapping - kilobytes for a
+        box and far more for an assembly - to remove one key.
+
+        (The sidecar does not in fact hand the bytes on untouched, as an earlier
+        version of this said: they are decoded, wrapped, re-encoded and parsed
+        again on the way to the measurement process. That is worth removing, and
+        it is a separate matter from where the unwrap belongs.)
 
         Getting this wrong is silent, which is the reason for the paragraph:
         `load_model` walks an envelope, finds no shapes, indexes nothing, and

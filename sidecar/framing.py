@@ -14,6 +14,11 @@ answer to the same two functions once the socket is wrapped with makefile().
 
 import json
 
+# The largest body either protocol on this framing has any business sending.
+# Both carry JSON about one buffer - a completion list, a stack frame - and the
+# model path does not come through here at all.
+MAX_BODY = 64 * 1024 * 1024
+
 
 def encode(message):
     """One message, header and all, ready to write."""
@@ -44,6 +49,13 @@ def read_message(stream):
             except ValueError:
                 return None
     if length is None:
+        return None
+    # Checked before it is used, which is what every other length-prefixed
+    # reader here already does. A negative one makes read() consume to EOF -
+    # a hang rather than an error - and an absurd one asks for an allocation
+    # nothing on this wire could justify. Both come off a socket or a pipe
+    # somebody else is writing, so neither is hypothetical.
+    if length < 0 or length > MAX_BODY:
         return None
     try:
         body = stream.read(length)

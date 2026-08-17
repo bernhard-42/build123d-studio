@@ -82,13 +82,29 @@ export function fail(message, detail) {
  * a splash with no way out is worse than a possibly-degraded app: the log stays
  * on screen until it is dismissed, and the same text is in the log file.
  */
+let waiting = false;
+
 export function acknowledge() {
+  // One waiter, and a second is answered rather than queued.
+  //
+  // There is a single button and a single set of listeners, so two callers
+  // awaiting it both attach handlers to it and one Enter resolves both. That
+  // is reachable: the settings dialog's environment actions and the
+  // kernel.restart_failed handler can each be waiting here. confirm.js solved
+  // exactly this for its own overlay and says so; this had the same shape and
+  // not the same guard.
+  if (waiting) {
+    return Promise.resolve();
+  }
+  waiting = true;
+
   const button = document.getElementById("splash-ok");
   button.hidden = false;
   button.focus();
 
   return new Promise((resolve) => {
     const finish = () => {
+      waiting = false;
       button.hidden = true;
       button.removeEventListener("click", finish);
       document.removeEventListener("keydown", onKey, true);

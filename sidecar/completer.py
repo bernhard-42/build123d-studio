@@ -213,6 +213,9 @@ class LanguageServer:
         # launching basedpyright and node again - after their stop step.
         self._stopping = False
         self._replies = {}
+        # Ids whose caller has given up. A reply for one of these is read off
+        # the wire and thrown away rather than stored - see request().
+        self._abandoned = set()
         self._arrived = threading.Condition()
         self._next_id = 1
         # Guards the id counter and the write end. LSP framing is a header and a
@@ -342,9 +345,18 @@ class LanguageServer:
                     # Dropped rather than remembered: every keystroke is a
                     # request, so a map that keeps what timed out grows for the
                     # life of the process.
+                    #
+                    # The reply may still arrive - a slow answer, not a lost
+                    # one - and _read files it under this id regardless. So the
+                    # id is remembered as abandoned and _read is told not to
+                    # keep it; without that, the comment above described a
+                    # prevention nothing implemented, and every timed-out
+                    # request left an entry behind for good.
+                    self._abandoned.add(request_id)
                     log(f"basedpyright did not answer {method} in {timeout}s")
                     return None
                 self._arrived.wait(remaining)
+            self._abandoned.discard(request_id)
             return self._replies.pop(request_id).get("result")
 
     def notify(self, method, params):
@@ -385,7 +397,12 @@ class LanguageServer:
                 self._notified(message)
                 continue
             with self._arrived:
-                self._replies[message.get("id")] = message
+                request_id = message.get("id")
+                if request_id in self._abandoned:
+                    # Nobody is waiting for this any more.
+                    self._abandoned.discard(request_id)
+                    continue
+                self._replies[request_id] = message
                 self._arrived.notify_all()
 
         if process is self._process:

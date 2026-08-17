@@ -19,7 +19,12 @@ import black
 
 
 def format_source(source, line_length):
-    """The formatted text, or None when there is nothing to change.
+    """The formatted text and a line saying what happened.
+
+    A pair, always: the text - or None when there is nothing to write back -
+    and a sentence for the log, because "nothing changed" and "it would not
+    parse" look identical from the caller's side and only one of them is worth
+    a reader's attention.
 
     None covers both "already formatted" and "cannot be parsed", and they are
     deliberately the same answer to the caller. An unparseable buffer is the
