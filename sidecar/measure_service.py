@@ -235,6 +235,11 @@ class MeasurementService:
     def _request(self, message):
         """One round trip, starting the process again if it has died."""
         with self._lock:
+            if self._stopping.is_set():
+                # A frame queued before the teardown began, dispatched during
+                # it. Starting the backend here means a fresh OCP import -
+                # seconds of it - behind a stop step that has already run.
+                return None
             if self._process is None or self._process.poll() is not None:
                 died = self._process is not None
                 if died:

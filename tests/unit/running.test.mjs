@@ -94,3 +94,44 @@ test("asking twice during one quit kills once", async () => {
   assert.deepEqual(killed, ["uv"]);
   assert.equal(registry.count(), 0);
 });
+
+// --- the window a quit can land in -----------------------------------------
+
+test("a process that arrives after the quit kills itself", async () => {
+  // The native side creates the process while handling the spawn request, so
+  // it exists before the handle does. A quit draining the set in that window
+  // found nothing to kill, and app.exit() followed - which is exactly the
+  // failure this module exists to prevent, through a few milliseconds.
+  const killed = [];
+  const registry = createRegistry();
+
+  await registry.stopAll();
+  registry.track(handle("uv", killed));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.deepEqual(killed, ["uv"], "a late arrival was recorded rather than killed");
+  assert.equal(registry.count(), 0, "it was added to a set nobody will read again");
+});
+
+test("and a bootstrap that retries after being killed does not escape either", async () => {
+  // Killing `uv sync` makes run() resolve non-zero, and the bootstrap answers a
+  // failed sync by retrying it. The retry spawns a fresh uv, after the quit.
+  const killed = [];
+  const registry = createRegistry();
+  registry.track(handle("uv sync", killed));
+
+  await registry.stopAll();
+  registry.track(handle("uv sync (retry)", killed));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.deepEqual(killed.sort(), ["uv sync", "uv sync (retry)"]);
+});
+
+test("a late arrival that cannot be killed does not throw at the caller", async () => {
+  // This runs from track(), which is on the spawn path, not the quit path.
+  const registry = createRegistry();
+  await registry.stopAll();
+
+  registry.track(handle("stale", [], { throws: new Error("no such process") }));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+});

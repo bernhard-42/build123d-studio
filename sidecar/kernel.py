@@ -327,6 +327,13 @@ class Kernel:
         self.client = None
         self._iopub_thread = None
 
+        # Set once for the process's life, by shutdown(). Publishing a manager
+        # before its process exists closed the window where a stop could not
+        # *see* a kernel; this closes the one where it can see it and still not
+        # stop it, because there is nothing behind the manager yet. start()
+        # asks again with the manager published and refuses to spawn.
+        self._stopping = threading.Event()
+
         # One generation of kernel, client and stop flag, handed to the pump as
         # arguments rather than read off self.
         #
@@ -692,6 +699,15 @@ class Kernel:
         # through here, and that is where it was first reached: a stop landing
         # during a restart saw None and left the fresh kernel running.
         self.manager = manager
+        # Asked again with the manager published, because publishing it is not
+        # the same as being able to stop it: a shutdown arriving in this window
+        # finds a manager with no kernel behind it, cannot stop what does not
+        # exist yet, and spawning anyway would put a kernel behind a shutdown
+        # that has already run. The generation is retired the same way.
+        if self._stopping.is_set():
+            log("Not spawning a kernel: the sidecar is shutting down")
+            self.manager = None
+            return None
         self.spawn(manager)
         self.client = manager.client()
         self.client.start_channels()
@@ -1167,6 +1183,9 @@ class Kernel:
         The order is the guarantee, and it is the same one restart() uses:
         retire the sender, then close what it was sending on.
         """
+        # Before anything else, so a start() racing this one refuses to spawn
+        # rather than putting a kernel behind a shutdown that has already run.
+        self._stopping.set()
         self._retire_pump()
         self._retire_shell("the sidecar is shutting down")
         self._shutdown(now=now)

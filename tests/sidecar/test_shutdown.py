@@ -112,6 +112,31 @@ class ShutdownTest(unittest.TestCase):
         self.assertEqual(len(self.stopped), 9, self.stopped)
         first.join(timeout=20)
 
+    def test_a_frame_arriving_during_the_teardown_starts_nothing(self):
+        """The lanes keep delivering while stop() walks its steps.
+
+        A frame queued before the teardown began is dispatched during it, and a
+        handler that spawns answers it by starting a process whose stop step has
+        already run. Each is collected in the end by a parent-death contract -
+        a poller, a pty, a pipe - so they are orphans of seconds rather than
+        leaks, which is exactly why they are worth refusing: those contracts are
+        what this teardown exists so as not to depend on.
+
+        Un-applied by removing the _refusing checks: the run starts.
+        """
+        started = []
+
+        class Runner(Recorder):
+            def start(self, *args, **arguments):
+                started.append("run")
+
+        self.sidecar.run = Runner("run", self.stopped)
+        self.sidecar.stop()
+
+        self.sidecar.on_run_start({"path": "/p/part.py"})
+
+        self.assertEqual(started, [], "a run was started after its stop step")
+
     def test_a_step_that_raises_does_not_strand_the_ones_after_it(self):
         # A language server that will not die is no reason to leave a kernel
         # behind.

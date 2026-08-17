@@ -336,8 +336,11 @@ class LaunchWindowTest(unittest.TestCase):
     Un-applied by moving the assignment back below `spawn()`: `self.manager` is
     None while the process starts, and both assertions below fail.
 
-    "Nameable" and "stoppable" are the same property here, because that None
-    check is the only thing standing between a kernel and its shutdown.
+    Publishing it is necessary and was not sufficient. A stop landing between
+    the assignment and the spawn finds a manager with no kernel behind it: it
+    cannot stop what does not exist, and spawning afterwards would put a kernel
+    behind a shutdown that has already run. So start() asks again once the
+    manager is published, and refuses. Both halves are held below.
     """
 
     def test_the_manager_is_nameable_before_the_process_is_started(self):
@@ -355,6 +358,42 @@ class LaunchWindowTest(unittest.TestCase):
         self.assertEqual(len(seen), 1, "the process was not started through spawn()")
         self.assertIsNotNone(seen[0], "the kernel was spawned before it could be named")
         self.assertIs(seen[0], kernel.manager, "a different manager was published")
+
+    def test_a_kernel_is_not_spawned_after_a_shutdown_has_run(self):
+        """Publishing the manager is not the same as being able to stop it.
+
+        The window is real rather than theoretical: `stop()` runs on the
+        channel's receive thread while a restart runs on a lane, so a quit
+        arriving during one lands here. Before this the shutdown found a manager
+        with no kernel, could stop nothing, and the spawn a moment later put a
+        live kernel behind a shutdown step that had already run - collected only
+        by the parent poller, which is the contract the teardown exists so as
+        not to depend on.
+
+        Un-applied by removing the check between the assignment and spawn():
+        the process is started and the test says so.
+        """
+        started = []
+
+        class StoppingMidLaunch(TestableKernel):
+            def new_manager(self):
+                manager = super().new_manager()
+                # Exactly the instant the manager is published and the process
+                # does not exist yet.
+                self.shutdown()
+                return manager
+
+            def spawn(self, manager):
+                started.append("spawn")
+                super().spawn(manager)
+
+        kernel = StoppingMidLaunch(on_iopub=lambda message: None)
+        self.addCleanup(kernel.shutdown)
+
+        kernel.start()
+
+        self.assertEqual(started, [], "a kernel was spawned after its shutdown ran")
+        self.assertIsNone(kernel.manager, "a manager with no kernel was left published")
 
     def test_the_process_is_started_after_the_manager_is_published(self):
         # The other half, and the one that would catch a fix that published the

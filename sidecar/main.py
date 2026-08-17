@@ -341,6 +341,24 @@ class Sidecar:
 
     # --- lifecycle ---
 
+    def _refusing(self, what):
+        """Whether a handler must not start anything, because we are leaving.
+
+        The same reasoning as _abandoning_startup, one layer out. stop() walks
+        its steps once, but the lanes keep delivering: a frame queued before the
+        teardown began is dispatched during it, and a handler that spawns
+        answers it by starting a process whose stop step has already run.
+
+        Each of those is collected in the end by a parent-death contract - a
+        poller, a pty, a pipe - so they are orphans of seconds rather than
+        leaks. That is exactly why they are worth refusing: those contracts are
+        what this teardown exists so as not to depend on.
+        """
+        if not self._stopped:
+            return False
+        log(f"Not starting {what}: the sidecar is shutting down")
+        return True
+
     def _abandoning_startup(self):
         """Whether a stop has begun, so nothing further should be brought up.
 
@@ -1173,6 +1191,8 @@ class Sidecar:
         a relative path and a show() have to mean what they would have meant
         under Shift-F5.
         """
+        if self._refusing("a run"):
+            return
         path = message.get("path")
         error = self.run.start(
             path,
@@ -1197,6 +1217,8 @@ class Sidecar:
         and this application's kernel-side package, so a shape it draws arrives
         in the same viewer. Measured - 0.02 s from the evaluate to the model.
         """
+        if self._refusing("a debug session"):
+            return
         path = message.get("path")
         error = self.debug.start(
             path,
@@ -1286,6 +1308,8 @@ class Sidecar:
         The UI is told before and after, because the gap is seconds long and
         nothing else about it is visible.
         """
+        if self._refusing("a kernel restart"):
+            return
         self.channel.send("kernel.restarting")
         # Said as it happens, and this is the half that was missing.
         #
@@ -1485,7 +1509,14 @@ def watch_stdin(sidecar):
     """
 
     def watch():
-        for _ in sys.stdin:
+        try:
+            for _ in sys.stdin:
+                pass
+        except OSError:
+            # A broken pipe reads as an error rather than as EOF on some
+            # platforms, and means the same thing here. _supervise.py guards the
+            # identical read and says so; without it here, the one signal that
+            # cannot be missed would be missed by this thread dying quietly.
             pass
         log("stdin closed, shutting down")
         sidecar.stop()

@@ -22,10 +22,31 @@
  */
 export function createRegistry() {
   const live = new Set();
+  // Whether the quit has already been through here. See track().
+  let closed = false;
 
   return {
-    /** Record a process as running. Returns it, so it can wrap a spawn. */
+    /**
+     * Record a process as running. Returns it, so it can wrap a spawn.
+     *
+     * **After a quit has drained the set, this kills instead of recording.**
+     * Tracking happens once the spawn resolves, and the process exists before
+     * that - the native side creates it while handling the request - so a quit
+     * landing in between drained a set that did not yet contain it, and
+     * app.exit() followed. That is the whole failure this module was written
+     * for, reachable through a window of a few milliseconds.
+     *
+     * It is not only a race, either: killing `uv sync` makes run() resolve
+     * non-zero, and the bootstrap answers a failed sync by retrying it. Without
+     * this the retry spawns a fresh uv that nothing is left to collect.
+     */
     track(handle) {
+      if (closed) {
+        Promise.resolve(handle.kill()).catch(() => {
+          // Already gone, or never really started. Either way nothing to do.
+        });
+        return handle;
+      }
       live.add(handle);
       return handle;
     },
@@ -56,6 +77,9 @@ export function createRegistry() {
      * has nothing to do rather than killing twice.
      */
     async stopAll({ onError } = {}) {
+      // Before the snapshot, so anything that arrives while these kills are in
+      // flight kills itself rather than joining a set nobody will read again.
+      closed = true;
       const stopping = [...live];
       live.clear();
       await Promise.all(stopping.map(async (handle) => {

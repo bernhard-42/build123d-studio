@@ -154,12 +154,17 @@ def analysis_settings(kernel_dir):
     }
 
 
-# What stop() is allowed to spend on each step. They add up to less than the
-# sidecar's shutdown deadline on purpose: this is its first step, and a first
-# step that can outlast the deadline is one that stops every later one running.
-CLOSE_TIMEOUT = 1.0
-EXIT_TIMEOUT = 2.0
-SIGNAL_TIMEOUT = 1.0
+# What stop() is allowed to spend on each step.
+#
+# Kept small because this is one of two steps that can take seconds, and the
+# other one now runs first: the kernel is stopped before this so that a
+# computation holding the GIL cannot outlive us, and its own escalation allows
+# about five. Five and six would be eleven against an eight second deadline, so
+# these are the half that gives - a language server holds an analysis it can
+# rebuild, where the step in front of it holds the user's namespace.
+CLOSE_TIMEOUT = 0.5
+EXIT_TIMEOUT = 1.0
+SIGNAL_TIMEOUT = 0.5
 
 
 def _close_within(stream, timeout):
@@ -203,6 +208,10 @@ class LanguageServer:
         # deduce it from their absence.
         self.on_state = on_state
         self._process = None
+        # Set once, by stop(). A completion or a buffer sync queued before the
+        # teardown began is dispatched during it, and start() answers it by
+        # launching basedpyright and node again - after their stop step.
+        self._stopping = False
         self._replies = {}
         self._arrived = threading.Condition()
         self._next_id = 1
@@ -218,6 +227,9 @@ class LanguageServer:
         """Launch the server and complete the handshake. True if it is usable."""
         if self.alive():
             return True
+        if self._stopping:
+            log("Not starting basedpyright: the sidecar is shutting down")
+            return False
         command = [_langserver_binary(), "--stdio"]
         try:
             self._process = subprocess.Popen(
@@ -289,6 +301,7 @@ class LanguageServer:
         tests/integration.py is what would notice a basedpyright release
         dropping either.
         """
+        self._stopping = True
         process, self._process = self._process, None
         if process is None:
             return
