@@ -18,6 +18,7 @@ does when asked to stop.
 
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -369,6 +370,52 @@ class StdinDuringStartupTest(unittest.TestCase):
     # Comfortably inside the sidecar's own wait for a client, so arriving
     # under it cannot be that timeout being mistaken for a shutdown.
     HEARD = 10.0
+
+    def test_a_signal_runs_the_teardown_rather_than_skipping_it(self):
+        """SIGTERM must not be the one way out that stops nothing.
+
+        Without a handler the default disposition ends the process and stop()
+        never runs, so every child falls back to its own contract. That is fine
+        for the ones held by a pipe or a pty and it is not fine for the kernel:
+        its contract is a Python thread polling for its parent, and a user
+        computation inside one long OCCT call holds the GIL for the whole of it.
+        The kernel cannot notice we have gone until the call returns - never,
+        for a runaway one - while holding a loaded geometry kernel.
+
+        Reachable by `kill <sidecar-pid>`, and by a Linux logout that SIGTERMs
+        before it SIGKILLs.
+
+        Un-applied by removing take_signals(): the process still dies, so what
+        this asserts is the exit *code*, which only the handler produces.
+        """
+        repo = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        root = tempfile.mkdtemp(prefix="studio-signal-")
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+
+        process = subprocess.Popen(
+            [sys.executable, os.path.join(repo, "sidecar", "main.py"),
+             "--env-root", root, "--app-dir", repo],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+        self.addCleanup(self._reap, process)
+
+        announced = process.stdout.readline()
+        self.assertIn(b"listening", announced, f"no handshake: {announced!r}")
+        self.assertIsNone(process.poll(), "it exited before it was signalled")
+
+        started = time.monotonic()
+        process.send_signal(signal.SIGTERM)
+        try:
+            code = process.wait(timeout=30)
+        except subprocess.TimeoutExpired:
+            self.fail("the sidecar did not act on SIGTERM")
+        heard = time.monotonic() - started
+
+        self.assertLess(heard, 10, f"SIGTERM took {heard:.1f}s")
+        # The handler's own exit. The default disposition would be -SIGTERM.
+        self.assertEqual(code, 0, "the teardown did not run; the default disposition did")
 
     def test_the_sidecar_goes_when_stdin_closes_during_startup(self):
         repo = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))

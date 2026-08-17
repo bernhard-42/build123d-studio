@@ -16,6 +16,7 @@ import argparse
 import faulthandler
 import json
 import os
+import signal
 import sys
 import threading
 
@@ -1488,6 +1489,42 @@ class Sidecar:
         os._exit(0)
 
 
+def take_signals(sidecar):
+    """Make a signal run the teardown rather than skip it.
+
+    Without this, `kill <sidecar-pid>` - or a Linux logout that SIGTERMs before
+    it SIGKILLs - ends this process with the default disposition, so stop()
+    never runs and every child falls back to its own contract. That is fine for
+    the ones held by a pipe or a pty, and it is not fine for the kernel: its
+    contract is a Python thread polling for its parent, and a user computation
+    inside one long OCCT call holds the GIL for the whole of it. The kernel then
+    cannot notice we have gone until the call returns - never, for a runaway
+    one - and it is holding a loaded geometry kernel and the whole namespace.
+    stop() reaches it with a signal that needs nothing of the GIL, which is why
+    running it here is worth more than the two lines it costs.
+
+    Registered on the main thread, which is the only place Python delivers
+    them, and before anything is spawned so there is no window without it.
+    """
+
+    def leave(signum, _frame):
+        log(f"Signal {signum}, shutting down")
+        sidecar.stop()
+        sys.stderr.flush()
+        # The same reason the other two exit paths do: returning here would hand
+        # over to an interpreter teardown that joins websockets' non-daemon
+        # connection thread, possibly from inside this very shutdown.
+        os._exit(0)
+
+    for received in (signal.SIGTERM, signal.SIGHUP):
+        try:
+            signal.signal(received, leave)
+        except (OSError, ValueError, AttributeError):
+            # SIGHUP does not exist on Windows, and a handler cannot be set from
+            # a thread. Neither is worth failing a startup over.
+            pass
+
+
 def watch_stdin(sidecar):
     """Take the sidecar down when the application closes our stdin.
 
@@ -1578,6 +1615,7 @@ def main():
     # Before anything is brought up, so that a quit is heard during startup and
     # not only after it. Nothing has been spawned yet at this point, so there is
     # nothing this could be too early for.
+    take_signals(sidecar)
     watch_stdin(sidecar)
 
     sidecar.channel.bind()
@@ -1596,7 +1634,15 @@ def main():
     except Exception as exc:  # noqa: BLE001
         sidecar.channel.error("Sidecar startup", exc)
         sidecar.stop()
-        return 1
+        # Exited rather than returned, for the reason the successful path gives
+        # below: returning hands over to CPython's teardown, which joins
+        # websockets' non-daemon connection thread - and Channel.close() shuts
+        # the listener without touching live connections, so with a webview
+        # attached that join never returns. The process then neither exits nor
+        # disconnects, and the frontend waits out its whole ready timeout to
+        # learn about a failure that already happened.
+        sys.stderr.flush()
+        os._exit(1)
     finally:
         faulthandler.cancel_dump_traceback_later()
 

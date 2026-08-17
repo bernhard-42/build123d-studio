@@ -135,3 +135,27 @@ test("a late arrival that cannot be killed does not throw at the caller", async 
   registry.track(handle("stale", [], { throws: new Error("no such process") }));
   await new Promise((resolve) => setTimeout(resolve, 0));
 });
+
+test("stopAll waits for the kills its own drain provoked", async () => {
+  // The retry case, one step further: killing uv sync makes the bootstrap
+  // spawn another, and that kill is started from track(). Beginning it without
+  // waiting is no better than not beginning it - app.exit() is the caller's
+  // next statement, and the request may never leave the process.
+  const killed = [];
+  const registry = createRegistry();
+  const slow = handle("retry", killed, { delay: 20 });
+
+  registry.track({
+    name: "uv sync",
+    kill: async () => {
+      killed.push("uv sync");
+      // The bootstrap answering a failed sync, during the drain.
+      registry.track(slow);
+    },
+  });
+
+  await registry.stopAll();
+
+  assert.deepEqual(killed, ["uv sync", "retry"],
+    "stopAll returned before the respawn had been collected");
+});

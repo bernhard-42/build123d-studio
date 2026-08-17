@@ -203,8 +203,14 @@ class DebugSession:
         except subprocess.TimeoutExpired:
             # Deliberately not killed. Killing the supervisor is the one action
             # that would leave the debuggee running, because its watcher would
-            # never get to act - and if we are here, something is wrong enough
-            # that the sweep at the next start is the right owner of it.
+            # never get to act.
+            #
+            # What collects it instead is the same pipe, one level up: this
+            # process exits moments from now, its end of the supervisor's stdin
+            # goes with it, and the supervisor's watcher takes the debuggee.
+            # (An earlier version of this comment said the sweep at the next
+            # start owned the case. It does not - the sweep removes instance
+            # *directories* and has never touched a process.)
             log("The debug supervisor did not exit in time")
         except OSError:
             pass

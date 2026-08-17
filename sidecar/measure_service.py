@@ -81,12 +81,21 @@ class MeasurementService:
     # --- lifecycle ---
 
     def start(self):
-        """Spawn it and return at once.
+        """Spawn it and return at once, unless we are on the way out.
 
         Nothing waits for this. The import inside costs seconds and the sidecar
         has a kernel to start; by the time a model has been shown and a measure
         tool clicked, it has long since finished.
+
+        The refusal is here as well as in _request because start() is reachable
+        after the stop step has run - a queued frame on the measure lane, or the
+        point-check window in Sidecar.start(). Spawning then means a fresh OCP
+        import, seconds of it, behind a shutdown that has already walked past
+        this process.
         """
+        if self._stopping.is_set():
+            log("Not starting the measurement backend: the sidecar is stopping")
+            return
         with self._lock:
             self._spawn()
 

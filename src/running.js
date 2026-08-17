@@ -24,6 +24,9 @@ export function createRegistry() {
   const live = new Set();
   // Whether the quit has already been through here. See track().
   let closed = false;
+  // Kills started by track() after the set was drained. They are begun there
+  // and awaited here, because the caller's next statement is app.exit().
+  let late = [];
 
   return {
     /**
@@ -42,9 +45,9 @@ export function createRegistry() {
      */
     track(handle) {
       if (closed) {
-        Promise.resolve(handle.kill()).catch(() => {
+        late.push(Promise.resolve(handle.kill()).catch(() => {
           // Already gone, or never really started. Either way nothing to do.
-        });
+        }));
         return handle;
       }
       live.add(handle);
@@ -91,6 +94,21 @@ export function createRegistry() {
           }
         }
       }));
+
+      // And anything that arrived while those were in flight, until nothing
+      // new does. Killing `uv sync` makes the bootstrap retry it, so the
+      // arrival is not hypothetical - and starting that kill without waiting
+      // for it is no better than not starting it, because app.exit() is the
+      // caller's next statement and the request may never leave.
+      //
+      // Bounded rather than while(true): each round can only be caused by the
+      // previous one, and a bootstrap that answers three kills with three
+      // respawns is broken in a way this cannot fix.
+      for (let round = 0; round < 3 && late.length > 0; round += 1) {
+        const settling = late;
+        late = [];
+        await Promise.all(settling);
+      }
       return stopping.length;
     },
   };

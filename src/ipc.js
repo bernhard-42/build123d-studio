@@ -8,6 +8,16 @@ import * as log from "./log.js";
 // protocol than the job needs.
 const BACKEND_PREFIX = "measure:";
 
+// How long the sidecar has to announce its port before the start is called off.
+//
+// It has to be at least the sidecar's own startup watchdog, which is 120 s and
+// was chosen for a cold Windows machine whose virus scanner is reading the
+// whole environment. At 30 s this gave up first: the splash said the backend
+// could not start while the sidecar was still legitimately coming up, on
+// exactly the machines that number exists for. Announcing is early in its
+// startup, so the extra patience costs nothing on a machine that is working.
+const ANNOUNCE_TIMEOUT = 130_000;
+
 // Webview end of the sidecar link.
 //
 // The sidecar binds a random loopback port and announces it on stdout; that one
@@ -425,7 +435,7 @@ export async function startSidecar({ python, envRoot, appDir }) {
   handshakeBuffer = "";
 
   const announcement = await new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error("Sidecar did not announce a port")), 30000);
+    const timer = setTimeout(() => reject(new Error("Sidecar did not announce a port")), ANNOUNCE_TIMEOUT);
 
     spawn(command, {
       cwd: appDir,
@@ -559,9 +569,22 @@ export async function restartSidecar() {
     const previous = sidecar;
     sidecar = null; // before killing, so its exit is not reported as a failure
     try {
+      // Both, and the order matters. The kill is what ends it promptly on
+      // POSIX, where it is a group SIGINT the sidecar turns into its own
+      // teardown. On Windows it reaches cmd.exe and uv's launcher stub and
+      // stops there - the real interpreter is a level deeper - so without the
+      // stdin close the old sidecar would keep its kernel, console, measurement
+      // backend and language server running alongside the replacement. Closing
+      // stdin is the one signal that cannot be missed, and stopSidecar has
+      // always sent it; a restart is a stop too and was only sending half.
       await previous.kill();
     } catch (error) {
       log.warn("Could not stop the previous sidecar:", error);
+    }
+    try {
+      await previous.closeStdin();
+    } catch {
+      // Already gone, which is the ordinary case after a successful kill.
     }
   }
   // Closed straight after the kill, and that order carries more than it looks.
