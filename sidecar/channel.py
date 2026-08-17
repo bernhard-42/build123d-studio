@@ -18,8 +18,10 @@ for its own webview link.
 Two frame types:
 
 * text - JSON control messages, ``{"type": ..., ...}``
-* binary - a 1-byte kind, a 4-byte big-endian header length, that many bytes of
-  JSON header, then the raw payload
+* binary - a 1-byte kind, 3 padding bytes, a 4-byte big-endian header length,
+  that many bytes of JSON header, padding to the next 8-byte boundary, then the
+  raw payload. The padding is load-bearing rather than cosmetic; see
+  HEADER_FORMAT below, and src/frame.js, which documents the identical layout
 
 The binary form exists so tessellated geometry and pty output never have to be
 base64-encoded. Keeping the payload at a known offset also means the webview can

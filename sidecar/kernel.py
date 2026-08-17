@@ -1210,8 +1210,10 @@ class Kernel:
                 self.manager.shutdown_kernel(now=now)
         except Exception as exc:  # noqa: BLE001
             log(f"Kernel shutdown: {exc}")
-        # jupyter_client removes the ipc socket files itself, but only for
-        # connections it wrote - be explicit so nothing is left behind.
+        # Removes the connection file, if this manager is the one that wrote it.
+        # The ipc half of cleanup_resources does nothing here: cleanup_ipc_files
+        # returns at once unless the transport is ipc, and this application is
+        # tcp on every platform - see the module docstring.
         try:
             if self.manager is not None:
                 self.manager.cleanup_resources()

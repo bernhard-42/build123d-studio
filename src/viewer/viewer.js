@@ -46,6 +46,12 @@ function paneSize() {
   };
 }
 
+// Whether the sidecar has ever taken a report from us, and whether the current
+// run of dropped ones has been mentioned. Both exist to tell two situations
+// apart that look identical here.
+let everDelivered = false;
+let dropReported = false;
+
 /**
  * The channel the page reports on: `send(command, message)`.
  *
@@ -54,12 +60,6 @@ function paneSize() {
  * measurement, since a selection or an active tool rides on the change and is
  * never accumulated.
  */
-// Whether the sidecar has ever taken a report from us, and whether the current
-// run of dropped ones has been mentioned. Both exist to tell two situations
-// apart that look identical here.
-let everDelivered = false;
-let dropReported = false;
-
 function send(command, message) {
   if (!ipc.isConnected()) {
     // Two very different cases, and only one is worth a warning.

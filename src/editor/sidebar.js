@@ -436,7 +436,6 @@ function cancelCreating() {
   render();
 }
 
-/** Write it, and show what was made rather than leaving it to be found. */
 /** Whether anything at all is at a path - a file, a folder, or a link. */
 async function somethingIsAt(path) {
   try {
@@ -448,6 +447,7 @@ async function somethingIsAt(path) {
   }
 }
 
+/** Write it, and show what was made rather than leaving it to be found. */
 async function commitCreating(name) {
   if (pending === null) {
     return;

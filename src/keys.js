@@ -442,22 +442,6 @@ for (const digit of "0123456789") {
 }
 
 /**
- * The chord a keydown represents, or null if it is not one yet.
- *
- * Null covers the two cases a recorder meets constantly and must not treat as
- * input: a modifier pressed on its own, which is what happens while somebody is
- * still assembling a chord, and a key this application has no token for.
- *
- * The platform split is the whole reason `mod` and `ctrl` are separate tokens.
- * On macOS Command is `mod` and Control is `ctrl`; everywhere else Control is
- * `mod`, and Meta is the Super key, which the window manager owns - so a chord
- * recorded with it is refused rather than bound to something that will never
- * arrive.
- *
- * @param {string} platform NL_OS: "Windows", "Darwin" or "Linux"
- * @param {KeyboardEvent} event
- */
-/**
  * The token for the key that was pressed: the keycap for a letter, the physical
  * key for everything else.
  *
@@ -478,6 +462,22 @@ function keyToken(event) {
   return CODES[event.code];
 }
 
+/**
+ * The chord a keydown represents, or null if it is not one yet.
+ *
+ * Null covers the two cases a recorder meets constantly and must not treat as
+ * input: a modifier pressed on its own, which is what happens while somebody is
+ * still assembling a chord, and a key this application has no token for.
+ *
+ * The platform split is the whole reason `mod` and `ctrl` are separate tokens.
+ * On macOS Command is `mod` and Control is `ctrl`; everywhere else Control is
+ * `mod`, and Meta is the Super key, which the window manager owns - so a chord
+ * recorded with it is refused rather than bound to something that will never
+ * arrive.
+ *
+ * @param {string} platform NL_OS: "Windows", "Darwin" or "Linux"
+ * @param {KeyboardEvent} event
+ */
 export function chordFromEvent(platform, event) {
   const key = keyToken(event);
   if (key === undefined) {

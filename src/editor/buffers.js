@@ -16,8 +16,8 @@
  * No monaco import here, deliberately. A model is an opaque handle and everything
  * this module does with one - make it, throw it away, read its text, replace its
  * text, ask which version it is on - arrives through initBuffers. That keeps the
- * bookkeeping
- * testable under `node --test`, which cannot load the editor, and it is the same
+ * bookkeeping testable under `node --test`, which cannot load the editor, and it
+ * is the same
  * split as keys/keybindings and clipboard/editing: the decisions live in the half
  * that has no window.
  */

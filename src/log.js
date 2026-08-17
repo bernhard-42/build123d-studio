@@ -256,27 +256,11 @@ export function error(...parts) {
   write(format("ERROR", parts));
 }
 
-/**
- * Send what the libraries print to the log as well as to the console.
- *
- * There is no developer console to read on macOS, and there never will be with
- * this toolkit: Safari lists a WKWebView only when its `isInspectable` is set,
- * which macOS has required since 13.3, and that symbol appears in no
- * Neutralino release. So the log file *is* the console - for support, and for
- * this application's own developers.
- *
- * It matters because the interesting messages are the ones nobody here wrote.
- * three-cad-viewer and three.js report a malformed model, a NaN bounding
- * sphere or a dropped option through `console.error`, and until now every one
- * of those was written to a console with no reader.
- *
- * The originals are called first and unchanged, so a console that *is* being
- * watched behaves exactly as before.
- */
 // How much of the browser console reaches the log, chosen in Settings. Errors
 // only by default: those are what a fault report needs, and a library that
-// chatters on `console.log` would otherwise evict them - the file rotates at a
-// megabyte with a single backup, so noise costs signal rather than space.
+// chatters on `console.log` would otherwise bury them - each file holds one
+// session and the one before it, so noise costs signal inside the very session
+// being reported rather than costing space.
 //
 // It governs the *mirror* and nothing else. What this application logs itself -
 // the kernel's lifecycle, a model rendered, uv's output - is written whatever
@@ -313,6 +297,23 @@ export function setConsoleLevel(level) {
   return mirrored;
 }
 
+/**
+ * Send what the libraries print to the log as well as to the console.
+ *
+ * There is no developer console to read on macOS, and there never will be with
+ * this toolkit: Safari lists a WKWebView only when its `isInspectable` is set,
+ * which macOS has required since 13.3, and that symbol appears in no
+ * Neutralino release. So the log file *is* the console - for support, and for
+ * this application's own developers.
+ *
+ * It matters because the interesting messages are the ones nobody here wrote.
+ * three-cad-viewer and three.js report a malformed model, a NaN bounding
+ * sphere or a dropped option through `console.error`, and until now every one
+ * of those was written to a console with no reader.
+ *
+ * The originals are called first and unchanged, so a console that *is* being
+ * watched behaves exactly as before.
+ */
 function mirrorConsole() {
   for (const method of ["error", "warn", "log", "info", "debug"]) {
     const original = console_[method] ?? console[method].bind(console);

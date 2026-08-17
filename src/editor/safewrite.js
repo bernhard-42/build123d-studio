@@ -89,8 +89,10 @@ async function discardTemporary({ filesystem }, temporary) {
  * It makes the name longer, which matters only where a path length is capped -
  * Windows, at 260 unless long paths are enabled. What that costs is bounded and
  * worth stating: a temporary that cannot be created falls through to the direct
- * write below, which since the same change puts the file back if it fails. So a
- * deep path loses atomicity and never content.
+ * write below, which puts the file back if it fails. So a deep path loses
+ * atomicity, and loses content only where putBack cannot restore it either - an
+ * original that exists and cannot be read, which putBack deliberately leaves
+ * alone, or a restore that fails in turn, which it can only log.
  */
 function temporaryFor({ instanceId }, path) {
   return `${path}.${instanceId}.b123d-tmp`;

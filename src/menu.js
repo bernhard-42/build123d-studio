@@ -1,9 +1,9 @@
 // The native menu bar, as data.
 //
-// Its first job is copy and paste. There is no menu today, so on macOS the
-// standard editing shortcuts are never bound to anything and Cmd-C in the
-// console or a dialog simply does nothing - the keystroke is swallowed before
-// the page sees it. A menu is the mechanism that gets it delivered.
+// Its first job is copy and paste. Without a menu, macOS binds the standard
+// editing shortcuts to nothing at all and Cmd-C in the console or a dialog
+// simply does nothing - the keystroke is swallowed before the page sees it. The
+// menu is the mechanism that gets it delivered, which is why this file exists.
 //
 // ## What the documentation guarantees, which is all this relies on
 //
@@ -158,19 +158,6 @@ function item(id, text, { platform, shortcut, enabled = true, role = false }) {
   return built;
 }
 
-/**
- * Build the whole menu.
- *
- * @param {object} options
- * @param {string} options.platform NL_OS
- * @param {(id: string) => object|null} options.chordFor parsed chord per command, or null
- * @param {(id: string) => boolean} options.isEnabled
- * @param {boolean} options.nativeClipboard whether the Edit items carry native
- *   roles rather than being handled by us. See menubar.js.
- * @param {Array<{id: string, label: string}>} options.runCommands from keys.js,
- *   so the menu cannot drift from what Monaco actually bound
- */
-
 // The Run menu's shape, which is not the order the keymap happens to list its
 // commands in. Three ideas, separated: run part of this file, run the whole of
 // it, debug it. Grouping is the only thing a menu can say about which items
@@ -211,6 +198,18 @@ function runGroups(runCommands, at) {
   return items;
 }
 
+/**
+ * Build the whole menu.
+ *
+ * @param {object} options
+ * @param {string} options.platform NL_OS
+ * @param {(id: string) => object|null} options.chordFor parsed chord per command, or null
+ * @param {(id: string) => boolean} options.isEnabled
+ * @param {boolean} options.nativeClipboard whether the Edit items carry native
+ *   roles rather than being handled by us. See menubar.js.
+ * @param {Array<{id: string, label: string}>} options.runCommands from keys.js,
+ *   so the menu cannot drift from what Monaco actually bound
+ */
 export function buildMenu({
   platform, chordFor, isEnabled, nativeClipboard, runCommands, appName = "build123d Studio",
 }) {

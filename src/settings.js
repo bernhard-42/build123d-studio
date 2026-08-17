@@ -74,10 +74,12 @@ import {
 
 // Package sources.
 //
-// Only build123d has a source picker. The rest of what the application declares
-// is frozen on purpose - ocp_vscode has to match the three-cad-viewer build in
-// the frontend - and offering a switch for it would only let people break the
-// viewer. Anything else a user wants goes in the additional-packages field,
+// A picker per entry in PACKAGES: build123d, and ocp-viewer-core because it is
+// not on PyPI yet, so the location is the only thing that can name a version.
+// Everything else the application declares is frozen on purpose - ocp-viewer-core
+// is tied to the three-cad-viewer build in the frontend, both halves shipping as
+// one version - and offering a switch for the rest would only let people break
+// the viewer. Anything else a user wants goes in the additional-packages field,
 // where the line itself says where the package comes from.
 //
 // Nothing here checks whether the chosen combination is satisfiable. uv refuses

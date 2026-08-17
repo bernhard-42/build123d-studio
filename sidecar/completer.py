@@ -154,14 +154,12 @@ def analysis_settings(kernel_dir):
     }
 
 
-# What stop() is allowed to spend on each step.
+# What stop() is allowed to spend on each step: two seconds in the worst case.
 #
-# Kept small because this is one of two steps that can take seconds, and the
-# other one now runs first: the kernel is stopped before this so that a
-# computation holding the GIL cannot outlive us, and its own escalation allows
-# about five. Five and six would be eleven against an eight second deadline, so
-# these are the half that gives - a language server holds an analysis it can
-# rebuild, where the step in front of it holds the user's namespace.
+# Small because the kernel is stopped first and its own escalation allows about
+# five, against a shutdown deadline of eight. This is the step that gives, since
+# a language server holds an analysis it can rebuild and the one ahead of it
+# holds the user's namespace.
 CLOSE_TIMEOUT = 0.5
 EXIT_TIMEOUT = 1.0
 SIGNAL_TIMEOUT = 0.5

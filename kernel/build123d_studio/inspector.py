@@ -38,7 +38,8 @@ from collections.abc import Iterable, Iterator, Mapping, Sequence, Sized
 from itertools import islice
 
 # Names that are always noise in this context: IPython's own machinery and the
-# modules the app pre-imports to make the first run fast.
+# names the app pre-imports to make the first run fast - show and its siblings
+# come from the kernel-side package, not from anything the user wrote.
 HIDDEN = {
     "In",
     "Out",

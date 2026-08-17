@@ -68,10 +68,12 @@ INSTANCES_DIR = "instances"
 LOCK_NAME = "lock"
 CONNECTION_NAME = "kernel.json"
 
-# What the connection file used to be called, before there was more than one of
-# them. Removed when it is found, rather than left: a stale file at the
-# advertised path is worse than no file, because `jupyter console --existing`
-# reads it and tries to attach to a kernel that stopped days ago.
+# The same name, at the old *place*: `<env_root>/kernel.json`, where the single
+# connection file lived before there was one per instance - which is why this is
+# the same string as CONNECTION_NAME above rather than a different one. Removed
+# when it is found rather than left, because a stale file at the advertised path
+# is worse than no file: `jupyter console --existing` reads it and tries to
+# attach to a kernel that stopped days ago.
 LEGACY_CONNECTION_NAME = "kernel.json"
 
 

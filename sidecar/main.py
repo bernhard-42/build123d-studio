@@ -427,7 +427,7 @@ class Sidecar:
         # And the measurement backend answers a question it does not need, for
         # the same reason: the reply cannot arrive until its import has
         # finished, so this is the moment that cost is paid rather than the
-        # first click on a measure tool. On the inspect lane, which is where
+        # first click on a measure tool. On the measure lane, which is where
         # measurements are served, so a real one arriving early queues behind a
         # warm backend rather than racing it.
         self.channel.submit(MEASURE, self.measurements.warm)
@@ -808,8 +808,10 @@ class Sidecar:
         the wrong shape. `show()` draws nothing, a measurement answers nothing,
         completion is silent - and the application knew all along.
 
-        Three states, and no more, because a person acts on three: `ready`,
-        `degraded` (it is working, with something worth knowing) and `failed`.
+        Four states, ranked in src/health.js and shown by the toolbar chip as
+        the worst anything is in: `ready`, `starting` (on its way up, and
+        deliberately not a fault), `degraded` (working, with something worth
+        knowing) and `failed`.
         """
         log(f"Subsystem {name}: {state}" + (f" - {detail}" if detail != "" else ""))
         self.channel.send("subsystem", name=name, state=state, detail=detail)

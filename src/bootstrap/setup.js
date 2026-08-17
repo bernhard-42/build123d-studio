@@ -139,11 +139,6 @@ async function verifyNativeLibraries(python) {
 }
 
 /**
- * Make sure the encapsulated Python environment exists and matches uv.lock.
- *
- * @returns {Promise<{envRoot: string, python: string, firstRun: boolean}>}
- */
-/**
  * Bring the environment in line with the current package selection.
  *
  * @returns {Promise<number>} exit code of the last uv command
@@ -166,6 +161,11 @@ async function syncSelection(envRoot, selection, onLine, custom = customPackages
   return runUv(["sync"], envRoot, { onLine });
 }
 
+/**
+ * Make sure the encapsulated Python environment exists and matches uv.lock.
+ *
+ * @returns {Promise<{envRoot: string, python: string, firstRun: boolean}>}
+ */
 export async function ensureEnvironment() {
   const { path: envRoot } = await resolveEnvRoot();
   log.info("Environment root:", envRoot);

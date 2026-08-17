@@ -7,8 +7,9 @@
 // decisions that can cost somebody their work are made in this file even where
 // the mechanics live elsewhere:
 //
-// - **safewrite.js** performs a write that cannot leave a fragment; this file
-//   decides which buffer's text is written, to which path, and when.
+// - **safewrite.js** writes through a temporary, and puts the old contents
+//   back if it has to fall back to a direct write; this file decides which
+//   buffer's text is written, to which path, and when.
 // - **ondisk.js** compares what is on disk with what a buffer agreed with; this
 //   file records the stamps and asks the question before every write.
 // - **journal.js** keeps a copy of unsaved work for an end that asks nobody;
@@ -611,8 +612,9 @@ export async function restoreWorkspace() {
   // Not guarded by mayOpen, deliberately. Every one of these was opened once
   // and answered for then, and a startup that stops to ask about a file the
   // user has had open for a week - before the window is usable, several times
-  // over - would be the guard doing harm. A binary file cannot be here at all,
-  // because it could never have been opened to be saved in the workspace.
+  // over - would be the guard doing harm. A binary file is only here if
+  // something replaced a text file since it was written to the workspace:
+  // what went in was a buffer that had been opened as text.
   for (const tab of saved === null ? [] : saved.tabs) {
     try {
       // Stamped before the read, for the reason openPath gives.
@@ -671,8 +673,8 @@ export async function openFile() {
  * tab can name a file outside the project folder - the tree would never see it.
  * There is no watcher, deliberately: createWatcher stayed deferred until a real
  * build establishes it on all three platforms, so this runs when the tree is
- * refreshed. It is therefore not live, and it is never wrong the other way - a
- * struck-through tab really is gone.
+ * refreshed. It is therefore not live, and any stat failure counts as gone -
+ * so a file on a volume that has gone away is struck through as deleted.
  */
 export async function checkOpenFilesExist() {
   const missing = [];
@@ -821,26 +823,6 @@ function withPythonExtension(path) {
 }
 
 /**
- * Write a file without ever truncating the existing one.
- *
- * writeFile opens the target and truncates it before the new contents are
- * there, so a crash, a full disk or the process being killed mid-write leaves a
- * half-written .py - the one file this application must never damage. Writing
- * beside it and moving into place means the target is either the old file or
- * the new one.
- *
- * The temporary lives in the same directory deliberately: a move within one
- * filesystem is a rename, while /tmp would be a copy across devices and no
- * better than writing directly.
- *
- * The fallback is not decoration. std::filesystem::rename onto an existing file
- * is well defined on POSIX and not on Windows, and there is no Windows machine
- * here to find that out on. If the move fails the content is already safely on
- * disk, so the direct write is at worst what this code did before - and if that
- * fails too, the temporary is left alone and named in the error, because at
- * that point it is the only copy of the user's work.
- */
-/**
  * A sentence about a failure, whatever shape the failure arrived in.
  *
  * Neutralino rejects with a plain object carrying `code` and `message` rather
@@ -894,8 +876,9 @@ const recorder = createRecorder();
 // The version each buffer was last shadowed at, so an idle buffer is not
 // rewritten and a save does not have to remember to cancel anything.
 const recorded = new Map();
-// And the path each copy was last labelled with, so the sixty bytes that say
-// which file it is are written on a Save As and not on every burst of typing.
+// And the path each copy was last labelled with, so the small file saying
+// which file it is - and what it looked like on disk - is written on a Save As
+// and not on every burst of typing.
 const labelled = new Map();
 let journalDir = null;
 let saidAboutLargeBuffers = false;
@@ -1011,9 +994,9 @@ export async function startHeartbeat() {
  * session per start - leaves somebody's work waiting for a restart that may
  * never come, and these are copies of work nobody chose to discard.
  *
- * Recovered buffers open **dirty and are never written**. Nothing touches disk
- * until the user saves, and the changed-on-disk check then asks if the file
- * moved in the meantime. A file that has since been deleted recovers as a
+ * Recovered buffers open **dirty**. Their file is not written until the user
+ * saves - only this session's journal is, below - and the changed-on-disk check
+ * then asks if the file moved in the meantime. A file that has since been deleted recovers as a
  * dirty buffer that saving recreates, which is what somebody who lost work in
  * a crash is asking for.
  */

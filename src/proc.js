@@ -8,10 +8,9 @@ import * as log from "./log.js";
 //
 // Everything the app runs - uv, the sidecar - goes through here, and what is
 // started through run() is also recorded so a quit can collect it: see
-// running.js. Neutralino
-// delivers a spawned process's output as "spawnedProcess" events keyed by
-// process id, so a single global listener fans them back out to the right
-// caller.
+// running.js. Neutralino delivers a spawned process's output as
+// "spawnedProcess" events keyed by process id, so a single global listener fans
+// them back out to the right caller.
 
 const handlers = new Map();
 let listening = false;
@@ -143,14 +142,6 @@ export async function spawn(command, { cwd, envs, onStdOut, onStdErr } = {}) {
   };
 }
 
-/**
- * Run a process to completion, streaming its output line-wise to onLine.
- *
- * stdout and stderr are merged, because for uv the interesting progress
- * reporting arrives on stderr.
- *
- * @returns {Promise<number>} exit code
- */
 // Everything run() starts, so that a quit can collect whatever is still going.
 //
 // Deliberately here and not in spawn(). The sidecar is spawned directly and is
@@ -172,6 +163,14 @@ export async function stopRunning() {
   });
 }
 
+/**
+ * Run a process to completion, streaming its output line-wise to onLine.
+ *
+ * stdout and stderr are merged, because for uv the interesting progress
+ * reporting arrives on stderr.
+ *
+ * @returns {Promise<number>} exit code
+ */
 export async function run(command, { cwd, envs, onLine } = {}) {
   let buffer = "";
 

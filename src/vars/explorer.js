@@ -96,14 +96,6 @@ function accept(detail) {
   render();
 }
 
-/**
- * Point the pane at the kernel or at the paused frame.
- *
- * Everything open is dropped on the way through. The two worlds share no
- * addresses - a path into the kernel's namespace means nothing in a stack frame
- * - so carrying state across would be carrying a question to somewhere that
- * cannot answer it.
- */
 /** A new stop: same tree, new frame. */
 export function refreshDebugFrame() {
   if (source === "debug") {
@@ -135,6 +127,14 @@ export function showVariablePane(visible) {
   refreshLayout();
 }
 
+/**
+ * Point the pane at the kernel or at the paused frame.
+ *
+ * Everything open is dropped on the way through. The two worlds share no
+ * addresses - a path into the kernel's namespace means nothing in a stack frame
+ * - so carrying state across would be carrying a question to somewhere that
+ * cannot answer it.
+ */
 export function setVariableSource(kind) {
   source = kind;
   expanded.clear();

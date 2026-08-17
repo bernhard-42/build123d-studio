@@ -23,8 +23,9 @@
 // escapes the whole document into a second string of its own size, ships a
 // bigger payload, and makes recovery parse all of it back - three passes over
 // the buffer, on the main thread, for something that is already exactly the
-// bytes wanted. The path it belongs to goes in a separate file of about sixty
-// bytes, rewritten only when it changes, which is a Save As and nothing else.
+// bytes wanted. What the copy belongs to - its path, and the stamp the buffer
+// last agreed with disk on - goes in a small JSON file beside it, rewritten
+// only when it changes, which is a Save As and nothing else.
 //
 // It also means a recovery copy is an ordinary source file. Somebody who does
 // not trust the prompt, or who wants it while the application is not running,
@@ -48,21 +49,14 @@ export const RECORD_DELAY = 1000;
 /**
  * Past this, a buffer is not shadowed at all.
  *
- * Nothing on the keystroke path does I/O, but the copy itself is a
- * JSON.stringify of the whole buffer and an IPC payload of the same size, and
- * both are O(size) on the main thread. Files above ten megabytes only *ask*
- * before opening rather than being refused, so without a cap the worst case is
- * whatever somebody said yes to - a 32 MB buffer serialised every second while
- * they type in it, which would be felt in the editor and is exactly what this
- * must not do.
+ * The copy is one IPC payload of the buffer's size, on the main thread. Files
+ * over ten megabytes only *ask* before opening, so without a cap the worst case
+ * is whatever somebody said yes to - a 32 MB buffer written every second while
+ * they type in it. Two megabytes is far above any plausible Python source
+ * (forty thousand lines is about one), so this bounds that case and no other,
+ * and the log says so once when it bites.
  *
- * Two megabytes is far above any plausible Python source - forty thousand lines
- * is about one - so in practice this bounds the pathological case and no other.
- * A buffer past it is said so in the log once, because silently having no
- * recovery is worse than having none.
- *
- * Characters rather than bytes: it is a bound, not an accounting, and length is
- * free where encoding the whole string to measure it is not.
+ * Characters, not bytes: it is a bound, not an accounting.
  */
 export const MAX_RECORDED_CHARS = 2 * 1024 * 1024;
 

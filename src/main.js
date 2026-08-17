@@ -179,11 +179,12 @@ events.on("windowClose", () => {
 
 // Cmd-Q / Ctrl-Q.
 //
-// There is no native menu bar yet, so macOS never wires the standard Quit
-// shortcut to anything and the app simply ignores it. Handling the key in the
-// webview is the only place it can be caught. Ctrl-Q is included for Linux and
-// Windows, where it is the common equivalent. This goes when the menu lands and
-// carries a real Quit item.
+// Kept now that the menu has landed and carries a real Quit item (menu.js),
+// because a menu shortcut only *binds* on macOS: on Windows and GNU/Linux the
+// field displays the accelerator and nothing more - menu.js records that as what
+// the Neutralino documentation guarantees. So this is what actually delivers
+// Ctrl-Q on those two platforms, and removing it as redundant would take the
+// shortcut with it there.
 window.addEventListener("keydown", (event) => {
   if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "q") {
     event.preventDefault();
@@ -221,9 +222,11 @@ function withTitle(action) {
 /**
  * Run a folder command and rebuild the menu after it.
  *
- * Opening or closing a project is the only thing that changes which items are
- * enabled, so it is also the only thing that has to rebuild the menu - there is
- * no documented way to change one item, so the whole menu is rebuilt.
+ * Rebuilt whole rather than item by item: there is no documented way to change
+ * one item's state. This is the folder path only - a tab opening or closing, a
+ * Settings change, a Run and a debug session all rebuild it from their own call
+ * sites, because what is greyed out depends on every one of them. See
+ * watchSession below, which says the same thing from the other end.
  */
 async function withMenu(action) {
   try {

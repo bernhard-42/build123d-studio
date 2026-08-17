@@ -64,7 +64,7 @@ class ShownModel:
     def __init__(self, mapping_bytes):
         self.mapping_bytes = mapping_bytes
         self._backend = None
-        # The index is built once, on first use. The inspect lane is serial so
+        # The index is built once, on first use. The measure lane is serial so
         # two callers cannot arrive together today, but the cost of being wrong
         # about that is indexing a large assembly twice.
         self._lock = threading.Lock()

@@ -881,8 +881,10 @@ export function initEditor() {
     // that needs more.
     lineNumbersMinChars: 3,
     // Ten pixels of lane between the fold controls and the text, holding
-    // nothing: this is the width for decorations, and the only one this editor
-    // draws is the breakpoint, which is in the glyph margin.
+    // nothing: this is the width for *inline* decorations, and this editor
+    // draws none. The breakpoint is a glyph, the cell and stopped-line
+    // highlights are whole-line backgrounds, and the cell separator above a
+    // marker is a margin border.
     lineDecorationsWidth: 0,
     tabSize: 4,
     insertSpaces: true,
@@ -947,6 +949,12 @@ const LANGUAGE_TIMEOUT = 6000;
 // about how long formatting ought to take.
 const FORMAT_TIMEOUT = 30000;
 
+/** What to ask about, for a position in whichever buffer is on screen. */
+function queryFor(model, position) {
+  const key = buffers.activeKeyOf();
+  return completionQuery(model.getValue(), position, bufferPath(key), key);
+}
+
 /**
  * Route Monaco's completion and signature requests to the sidecar.
  *
@@ -965,12 +973,6 @@ const FORMAT_TIMEOUT = 30000;
  * this avoids is handing Monaco a list for a cursor position it has already
  * left behind.
  */
-/** What to ask about, for a position in whichever buffer is on screen. */
-function queryFor(model, position) {
-  const key = buffers.activeKeyOf();
-  return completionQuery(model.getValue(), position, bufferPath(key), key);
-}
-
 function registerLanguageFeatures() {
   monaco.languages.registerCompletionItemProvider("python", {
     // Monaco asks on word characters by itself; the dot is the case that has to
@@ -1137,19 +1139,6 @@ export function forgetBuffer(key, path) {
   }
 }
 
-/**
- * Bind the run commands from the keymap rather than from literals here.
- *
- * The chords are Jupyter's where Jupyter has an opinion - Shift-Enter runs the
- * cell and advances, Ctrl-Enter runs it and stays - but which chord each command
- * answers to is settings.json's business, not this file's. See keys.js: the
- * modifier names do not mean what they look like, and getting that wrong is
- * silent, so it is decided in one tested place instead of at four call sites.
- *
- * Returns the disposables, so a later binding change can re-register rather than
- * leaving both the old and the new chord live. Group 5's dialog is what will
- * call it a second time.
- */
 // What registerRunActions handed back last time, so a binding change can undo
 // the old chords instead of leaving both live.
 let runActions = [];
@@ -1172,6 +1161,19 @@ export function rebindRunActions() {
   runActions = registerRunActions(editor);
 }
 
+/**
+ * Bind the run commands from the keymap rather than from literals here.
+ *
+ * The chords are Jupyter's where Jupyter has an opinion - Shift-Enter runs the
+ * cell and advances, Ctrl-Enter runs it and stays - but which chord each command
+ * answers to is settings.json's business, not this file's. See keys.js: the
+ * modifier names do not mean what they look like, and getting that wrong is
+ * silent, so it is decided in one tested place instead of at four call sites.
+ *
+ * Returns the disposables, so a later binding change can re-register rather than
+ * leaving both the old and the new chord live. Group 5's dialog is what will
+ * call it a second time.
+ */
 export function registerRunActions(target) {
   const actions = [
     { id: "run.cell", run: () => runCell() },

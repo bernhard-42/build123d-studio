@@ -74,8 +74,10 @@ class MeasurementService:
 
         self._next_id = 0
         # One request in flight at a time, which is what makes the reply on the
-        # pipe unambiguously this request's. The inspect lane serves viewer
-        # changes while the warm-up runs on another, so this is not theoretical.
+        # pipe unambiguously this request's. The measure lane serves the warm-up
+        # and viewer changes in turn, but `load` arrives on the model socket's
+        # thread and `stop` on whichever thread is quitting, so this is not
+        # theoretical.
         self._lock = threading.Lock()
 
     # --- lifecycle ---
@@ -302,7 +304,8 @@ class MeasurementService:
             # Only the first selection of a model pays for indexing; the rest
             # are lookups. Both are worth seeing, and the difference between
             # them is the thing somebody would otherwise guess at.
-            # Which of the two it was, because "answered in 50 ms" was being
+            #
+            # And which of the two it was, because "answered in 50 ms" was being
             # written for a round trip that produced nothing at all - a line
             # that says the opposite of what happened is worse than none.
             if reply is None:

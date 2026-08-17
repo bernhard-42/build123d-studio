@@ -194,16 +194,6 @@ export function findProblems(entries, declared) {
 }
 
 /**
- * Escape a value for a TOML basic string.
- *
- * This is the whole of what this module owes the file's integrity. A line
- * carrying a quote must not be able to close the string it sits in, end the
- * dependencies array and open a table of its own - which is how free text in a
- * generated file redirects a frozen package. It makes no judgement about the
- * content: `nonsense-!!!` is escaped faithfully and uv says what is wrong with
- * it.
- */
-/**
  * Why a package redirected to a local checkout cannot be applied, or null.
  *
  * The picker's rule rather than this field's, kept here because it is the same
@@ -231,6 +221,16 @@ export function localSourceProblem(label, path) {
   return null;
 }
 
+/**
+ * Escape a value for a TOML basic string.
+ *
+ * This is the whole of what this module owes the file's integrity. A line
+ * carrying a quote must not be able to close the string it sits in, end the
+ * dependencies array and open a table of its own - which is how free text in a
+ * generated file redirects a frozen package. It makes no judgement about the
+ * content: `nonsense-!!!` is escaped faithfully and uv says what is wrong with
+ * it.
+ */
 export function tomlString(value) {
   const escaped = value
     .replace(/\\/g, "\\\\")

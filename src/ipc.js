@@ -350,7 +350,8 @@ function redactToken(line) {
   // is the one that did not arrive whole. A handshake truncated mid-token has
   // no closing quote, so a pattern that required one matched nothing and
   // printed the token - and a truncated handshake is exactly what reaches the
-  // "malformed" branch below, which is the only place this is used.
+  // "malformed" branch below. Both branches there use this: the near-miss case
+  // above is the one that parses and carries the token whole.
   return line.replace(/("token"\s*:\s*")[^"]*("|$)/g, "$1<redacted>$2");
 }
 
@@ -467,14 +468,13 @@ export async function startSidecar({ python, envRoot, appDir }) {
           if (line.trim() === "") {
             continue;
           }
-          // The measurement backend's own output, which the sidecar prefixes
-          // as it reads that process's stdout, goes to its own file: it is a
-          // different subject - which shape was clicked, what was indexed -
-          // and mixing it in costs the application log its narrative.
-          // The measurement process's own output keeps its own file, because
-          // it is a different subject to search afterwards - but on screen it
-          // is just the machinery talking, like everything else here, and the
-          // Backend tab gets it through the log like the rest.
+          // The measurement process's own output, which the sidecar prefixes
+          // as it reads that process's stdout, keeps a file of its own: it is a
+          // different subject to search afterwards - which shape was clicked,
+          // what was indexed - and mixing it in costs the application log its
+          // narrative. On screen it is just the machinery talking, like
+          // everything else here, so the Backend tab gets it through the log
+          // like the rest.
           if (line.startsWith(BACKEND_PREFIX)) {
             log.backend(line.slice(BACKEND_PREFIX.length).trim());
             continue;
@@ -587,16 +587,15 @@ export async function restartSidecar() {
       // Already gone, which is the ordinary case after a successful kill.
     }
   }
-  // Closed straight after the kill, and that order carries more than it looks.
+  // Closed straight after the kill, and before a replacement connects.
   //
   // On POSIX the kill above is SIGINT to the process group, which the sidecar
-  // takes as a KeyboardInterrupt out of its wait. That propagates past the
-  // handler, so the os._exit at the end of its main() is never reached and the
-  // process leaves through CPython's own teardown - which joins every
-  // non-daemon thread, and websockets makes its connection thread one. Closing
-  // this end is what ends that thread, so it is the only reason the interpreter
-  // gets to finish at all. Leave it until after startSidecar below and a
-  // restart hangs onto the process it just killed.
+  // takes as a KeyboardInterrupt out of its wait - and main() catches it, runs
+  // the teardown and leaves through os._exit, so nothing here decides whether
+  // *it* can exit. What this is for is this end: the module holds a single
+  // `socket`, and connect() below assigns over it, so leaving this until after
+  // startSidecar would abandon a live socket belonging to the process that was
+  // just killed.
   if (socket !== null) {
     const previous = socket;
     socket = null;
