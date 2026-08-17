@@ -105,6 +105,7 @@ async function shutdown() {
   if (shuttingDown || asking) {
     return;
   }
+  let promptFailed = false;
   asking = true;
   try {
     if (!(await confirmDiscardAll())) {
@@ -115,6 +116,10 @@ async function shutdown() {
     // Never trap the user in an app that will not close because the prompt
     // itself failed.
     log.error("Unsaved-changes prompt failed, quitting anyway:", error);
+    // But this is now an end that asked nobody, which is exactly what the
+    // recovery journal is for - so it is kept rather than cleared below, and
+    // the next start offers the work back.
+    promptFailed = true;
   } finally {
     asking = false;
   }
@@ -124,10 +129,14 @@ async function shutdown() {
   // answering a question nobody is going to be asked again. Whatever survived
   // that prompt was either saved or deliberately discarded, and offering it
   // back at the next start would argue with the answer they gave.
-  try {
-    await discardRecovery();
-  } catch (error) {
-    log.warn("Could not clear the recovery journal:", error);
+  if (promptFailed) {
+    log.warn("Keeping the recovery journal: nobody was asked about this quit");
+  } else {
+    try {
+      await discardRecovery();
+    } catch (error) {
+      log.warn("Could not clear the recovery journal:", error);
+    }
   }
   try {
     await saveWorkspace();

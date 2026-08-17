@@ -100,13 +100,31 @@ test.describe("a session that ended without being asked", () => {
     await expect.poll(() => tabLabels(page)).toContain("two.py");
   });
 
+  test("Not now leaves the copies where they are", async ({ page }) => {
+    // Escape maps to cancel, and cancel used to mean Discard - so the reflexive
+    // dismiss-a-dialog keypress, moments after a crash, deleted the only copy
+    // of the work. It now means "ask me again next start".
+    await openApp(page, crashed(DEAD, {
+      7: { path: `${PROJECT}/bracket.py`, text: "RECOVERED = 1\n" },
+    }));
+
+    await expect(page.locator(".confirm-overlay")).toBeVisible();
+    await page.keyboard.press("Escape");
+
+    await expect.poll(() => tabLabels(page)).not.toContain("bracket.py");
+    expect(
+      await page.evaluate((p) => globalThis.__NEUTRALINO_STUB__.wrote(p), `${DEAD}/7.py`),
+      "dismissing the dialog destroyed the copy",
+    ).toBe("RECOVERED = 1\n");
+  });
+
   test("Discard throws the copies away rather than leaving them to ask again", async ({ page }) => {
     await openApp(page, crashed(DEAD, {
       7: { path: `${PROJECT}/bracket.py`, text: "RECOVERED = 1\n" },
     }));
 
     await expect(page.locator(".confirm-overlay")).toBeVisible();
-    await page.locator('.confirm-overlay [data-answer="cancel"]').click();
+    await page.locator('.confirm-overlay [data-answer="discard"]').click();
 
     await expect.poll(() => tabLabels(page)).not.toContain("bracket.py");
     await expect

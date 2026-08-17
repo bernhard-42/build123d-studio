@@ -96,13 +96,29 @@ function temporaryFor({ instanceId }, path) {
   return `${path}.${instanceId}.b123d-tmp`;
 }
 
-/** What is in a file now, or null when there is nothing there to lose. */
+/**
+ * What is in a file now: its text, or that there is nothing there, or neither.
+ *
+ * Three answers rather than two, because the difference decides whether the
+ * failed write below may delete what it wrote over. A path that does not exist
+ * can be removed if a write half-creates it. A path that exists but cannot be
+ * *read* - a directory somebody put there, a file the platform is refusing -
+ * must never be removed: it holds something, and this module has no idea what.
+ *
+ * @returns {Promise<{text: string|null, exists: boolean}>}
+ */
 async function contentOf({ filesystem }, path) {
   try {
-    return await filesystem.readFile(path);
+    return { text: await filesystem.readFile(path), exists: true };
   } catch {
-    // No file yet, which is a Save As or a new file. Nothing to put back.
-    return null;
+    // Unreadable, so ask a cheaper question: is anything there at all?
+  }
+  try {
+    await filesystem.getStats(path);
+    return { text: null, exists: true };
+  } catch {
+    // Nothing there, which is a Save As or a new file.
+    return { text: null, exists: false };
   }
 }
 
@@ -116,11 +132,18 @@ async function contentOf({ filesystem }, path) {
  * best effort by nature and says so rather than throwing over it.
  */
 async function putBack({ filesystem, log }, path, original) {
+  if (original.text === null && original.exists) {
+    // Something is there and we could not read it, so we cannot put it back -
+    // and removing it would destroy whatever it is. Leaving it is the only
+    // honest answer; the caller is already throwing.
+    log.error(`${path} exists but could not be read, so it was left alone`);
+    return;
+  }
   try {
-    if (original === null) {
+    if (original.text === null) {
       await filesystem.remove(path);
     } else {
-      await filesystem.writeFile(path, original);
+      await filesystem.writeFile(path, original.text);
     }
   } catch (error) {
     log.error(`${path} could not be put back as it was:`, error);

@@ -1,3 +1,30 @@
+// Files: opening them, saving them, closing them, and remembering which were
+// open.
+//
+// The largest module in the application and the one with the most reach, which
+// is worth saying plainly rather than leaving to be discovered. Everything that
+// puts a user's text on disk or takes it off passes through here, and the
+// decisions that can cost somebody their work are made in this file even where
+// the mechanics live elsewhere:
+//
+// - **safewrite.js** performs a write that cannot leave a fragment; this file
+//   decides which buffer's text is written, to which path, and when.
+// - **ondisk.js** compares what is on disk with what a buffer agreed with; this
+//   file records the stamps and asks the question before every write.
+// - **journal.js** keeps a copy of unsaved work for an end that asks nobody;
+//   this file books those copies, removes them once they are no longer the only
+//   one, and offers them back at the next start.
+// - **buffers.js** owns the bookkeeping; this file owns the lifecycle around it.
+//
+// The rule that shapes most of it: a save is not instant, and the window is
+// live throughout. Anything sampled at the start of one and used at the end of
+// it must be carried explicitly, by key, rather than asked for again - which is
+// why saveBuffer takes a buffer key and never asks what is on screen.
+//
+// The workspace - which folder is open, which tabs, where the carets were - is
+// read and written here too, and is deliberately paths only. What is *in* a
+// buffer that has never been saved is the journal's job, not the workspace's.
+
 import { filesystem, os } from "@neutralinojs/lib";
 
 import {
@@ -40,6 +67,7 @@ import {
   forgetBuffer,
   isStale,
   journalRoot,
+  sleptThrough,
   readJournal,
   recordBuffer,
   setAside,
@@ -587,6 +615,8 @@ export async function restoreWorkspace() {
   // because it could never have been opened to be saved in the workspace.
   for (const tab of saved === null ? [] : saved.tabs) {
     try {
+      // Stamped before the read, for the reason openPath gives.
+      const before = await stampAt(tab.path);
       const content = await filesystem.readFile(tab.path);
       const key = openBuffer({ path: tab.path, text: content, caret: tab.caret });
       // Stamped here as well as in openPath, and this is the path that matters
@@ -594,7 +624,7 @@ export async function restoreWorkspace() {
       // a buffer without a stamp here would be one the changed-on-disk check
       // stays silent about for the whole session - and a file left open
       // overnight is exactly the one something else has written to.
-      recordStamp(key, await stampAt(tab.path));
+      recordStamp(key, before);
       opened.set(tab.path, key);
     } catch {
       log.info(`Not reopening a file that is no longer readable: ${tab.path}`);
@@ -743,6 +773,8 @@ export async function openPath(path) {
     return null;
   }
 
+  // Before the read: see the stamp comment below.
+  const before = await stampAt(path);
   let content;
   try {
     content = await filesystem.readFile(path);
@@ -752,10 +784,15 @@ export async function openPath(path) {
     return null;
   }
   showInTab({ path, text: content });
-  // What the file looked like when this buffer agreed with it. Read after the
-  // content rather than before, so a write landing between the two is noticed
-  // at the next save rather than recorded as though it were ours.
-  recordStamp(bufferForPath(path), await stampAt(path));
+  // Stamped from *before* the content was read, not after.
+  //
+  // The two cannot be one instant, so the only question is which way the gap
+  // fails. A stamp taken afterwards adopts a write that landed in between: the
+  // buffer holds the older text, the stamp says it agrees with disk, and the
+  // next save overwrites somebody's edit without asking. Taken beforehand, the
+  // same gap makes the stamp look out of date and the next save asks - a
+  // question nobody needed, which is the cheap half of the two.
+  recordStamp(bufferForPath(path), before);
   await rememberFolder(path);
   syncKernelDirectory();
   await saveWorkspace();
@@ -834,6 +871,7 @@ async function stampAt(path) {
 // modification time makes the check below size-only, which is worth knowing
 // when reading a log about a file that was overwritten anyway.
 let saidAboutTimestamps = false;
+let saidAboutBeatTimes = false;
 
 function recordStamp(key, stamp) {
   if (stamp !== null && !hasTimestamp(stamp) && !saidAboutTimestamps) {
@@ -996,36 +1034,83 @@ export async function offerRecovery() {
   const dead = [];
   for (const root of sessions) {
     const beatAt = await stampAt(`${root}/alive`);
+    const modifiedAt = beatAt === null ? null : beatAt.modifiedAt;
+
+    // What that beat believed the time was. A beat older than the machine has
+    // been awake means the machine slept, not that the window died - so the
+    // live sibling is left alone rather than having its journal taken.
+    let said = null;
+    try {
+      said = Number(await filesystem.readFile(`${root}/alive`));
+    } catch {
+      // A beat with no time in it: written by an older version, or never
+      // written. isStale below still answers from the file's own age.
+    }
+    if (sleptThrough(said, Date.now())) {
+      log.info(`Not offering ${root}: its last beat predates a suspend`);
+      continue;
+    }
+
+    // Where a platform reports no usable modification time, every sibling
+    // would look dead for ever. Said once, and treated as alive rather than
+    // dead: the cost of leaving a crashed session for the next start is one
+    // more start, and the cost of the other answer is somebody's work.
+    if (beatAt !== null && !hasTimestamp(beatAt)) {
+      if (!saidAboutBeatTimes) {
+        saidAboutBeatTimes = true;
+        log.warn(
+          "This platform reports no file modification time, so a crashed"
+          + " session cannot be told from a running one; recovery is off.",
+        );
+      }
+      continue;
+    }
+
     // A session still beating is a window somebody is typing in. Offering its
     // unsaved work back would be taking it from them.
-    if (isStale(beatAt === null ? null : beatAt.modifiedAt, Date.now())) {
-      dead.push(root);
+    if (isStale(modifiedAt, Date.now())) {
+      dead.push({ root, beatAt: modifiedAt === null ? 0 : modifiedAt });
     }
   }
   if (dead.length === 0) {
     return 0;
   }
 
+  // Oldest session first, by when it last said it was alive.
+  //
+  // It used to sort the directory names, which are random hex - so "newest
+  // wins" below was decided by a coin flip, and the copy the user was actually
+  // working on last could be the one set aside instead of the one restored.
   const entries = [];
-  for (const root of dead.sort()) {
-    entries.push(...(await readJournal({ filesystem, log }, root)));
+  for (const session of [...dead].sort((a, b) => a.beatAt - b.beatAt)) {
+    entries.push(...(await readJournal({ filesystem, log }, session.root)));
   }
   if (entries.length === 0) {
-    await Promise.all(dead.map((root) => clearJournal({ filesystem, log }, root)));
+    await Promise.all(dead.map((s) => clearJournal({ filesystem, log }, s.root)));
     return 0;
   }
 
   const names = entries.map((entry) => nameOf(entry.path)).join(", ");
-  const answer = await askTwoWay({
+  // Three answers, not two, because dismissing a dialog must not be a decision
+  // to destroy. Escape maps to cancel, and cancel here used to mean Discard -
+  // so the reflexive keypress, at startup, moments after a crash, deleted the
+  // only copy of the work. Cancel now means "ask me again next time" and leaves
+  // everything where it is; discarding has to be chosen.
+  const answer = await askThreeWay({
     title: "Recover unsaved changes?",
     detail: `${entries.length} file(s) from ${dead.length} session(s) that ended`
       + ` unexpectedly.\n\n${names}`,
-    confirm: "Recover",
-    cancel: "Discard",
+    save: "Recover",
+    discard: "Discard",
+    cancel: "Not now",
   });
-  if (answer !== "confirm") {
+  if (answer === "cancel") {
+    log.info(`Left ${entries.length} recovery copies for the next start`);
+    return 0;
+  }
+  if (answer !== "save") {
     log.info(`Discarded ${entries.length} recovery copies at the user's request`);
-    await Promise.all(dead.map((root) => clearJournal({ filesystem, log }, root)));
+    await Promise.all(dead.map((s) => clearJournal({ filesystem, log }, s.root)));
     return 0;
   }
 
@@ -1092,7 +1177,7 @@ export async function offerRecovery() {
   }
 
   log.info(`Recovered ${recoveredKeys.length} buffer(s) from ${dead.length} session(s)`);
-  await Promise.all(dead.map((root) => clearJournal({ filesystem, log }, root)));
+  await Promise.all(dead.map((s) => clearJournal({ filesystem, log }, s.root)));
   await saveWorkspace();
   return recoveredKeys.length;
 }

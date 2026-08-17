@@ -214,9 +214,39 @@ export function createRecorder({ delay = 1000, schedule = setTimeout, cancel = c
 export const BEAT = 30 * 1000;
 export const STALE_AFTER = 3 * BEAT;
 
+/**
+ * Whether the clock jumped by more than a suspend-free machine can explain.
+ *
+ * Timers do not tick while a machine sleeps, so a window that was open when the
+ * lid closed has a beat as old as the nap. Judged dead on that alone, its live
+ * journal is offered to whoever starts next and then cleared - taking the
+ * shadow copies of somebody still typing.
+ *
+ * So the beat also records what time it thought it was. A gap far larger than
+ * the interval means the machine was away, not that the window was: the
+ * staleness question is asked again after the beats have had a chance to
+ * resume rather than answered from a timestamp that slept through it.
+ */
+export function sleptThrough(recordedAt, now, beat = BEAT) {
+  // Zero and below are not times. A beat file written by a version that did
+  // not record one reads back as 0, and treating that as an ancient timestamp
+  // would make every crashed session look like a suspend - which is to say,
+  // would turn recovery off entirely. Same reasoning as stampOf's.
+  if (typeof recordedAt !== "number" || !Number.isFinite(recordedAt) || recordedAt <= 0) {
+    return false;
+  }
+  return now - recordedAt > beat * 2;
+}
+
 const ALIVE = "alive";
 
-/** Say this window is still running. Costs one write of nothing. */
+/**
+ * Say this window is still running, and when it thought that was.
+ *
+ * The time is the content, not decoration: a reader comparing only the file's
+ * age cannot tell a window that stopped beating from a machine that stopped
+ * running, and those want opposite answers. See sleptThrough.
+ */
 export async function beat({ filesystem, log, root }) {
   try {
     await filesystem.createDirectory(root);
@@ -224,7 +254,9 @@ export async function beat({ filesystem, log, root }) {
     // Already there.
   }
   try {
-    await filesystem.writeFile(`${root}/${ALIVE}`, "");
+    // The wall-clock time this beat believed it was, so a reader can tell a
+    // window that stopped beating from a machine that stopped running.
+    await filesystem.writeFile(`${root}/${ALIVE}`, String(Date.now()));
   } catch (error) {
     log.warn("Could not mark this session as running:", error);
   }

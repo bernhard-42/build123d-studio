@@ -13,6 +13,7 @@ import { strict as assert } from "node:assert";
 import { test } from "node:test";
 
 import {
+  BEAT,
   beat,
   clearJournal,
   createRecorder,
@@ -23,6 +24,7 @@ import {
   readJournal,
   recordBuffer,
   setAside,
+  sleptThrough,
   STALE_AFTER,
   worthRecording,
 } from "../../../src/editor/journal.js";
@@ -237,11 +239,40 @@ test("and a journal with no beat at all is not running either", () => {
   assert.equal(isStale(undefined, 1_000_000), true);
 });
 
-test("a beat costs one write of nothing", async () => {
+test("a beat records what time it thought it was", async () => {
+  // Not empty: a reader has to be able to tell a window that stopped beating
+  // from a machine that stopped running, and the file's own mtime cannot say
+  // which - it is old either way.
   const filesystem = fakeFilesystem();
   await beat(deps(filesystem));
 
-  assert.equal(filesystem.files[`${ROOT}/alive`], "");
+  const said = Number(filesystem.files[`${ROOT}/alive`]);
+  assert.ok(Number.isFinite(said) && said > 0, "the beat carried no time");
+});
+
+test("a beat older than the machine has been awake means it slept", () => {
+  // Timers do not tick while a machine sleeps, so the window that was open
+  // when the lid closed has a beat as old as the nap. Judged dead on that
+  // alone, its journal is offered to somebody else and then cleared.
+  const now = 1_000_000;
+  assert.equal(sleptThrough(now - 5 * BEAT, now), true);
+});
+
+test("and an ordinary late beat does not", () => {
+  const now = 1_000_000;
+  assert.equal(sleptThrough(now - BEAT, now), false);
+  assert.equal(sleptThrough(now, now), false);
+});
+
+test("a beat with no time in it cannot claim a suspend", () => {
+  // Written by an older version, or never written. The file's own age still
+  // answers the staleness question; this must not veto it. Zero is the shape
+  // an empty beat file reads back as, and treating it as an ancient timestamp
+  // would make every crashed session look like a suspend - recovery off.
+  assert.equal(sleptThrough(null, 1_000_000), false);
+  assert.equal(sleptThrough(Number.NaN, 1_000_000), false);
+  assert.equal(sleptThrough(0, 1_000_000), false);
+  assert.equal(sleptThrough(-1, 1_000_000), false);
 });
 
 // --- reading it back -------------------------------------------------------

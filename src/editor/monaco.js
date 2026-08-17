@@ -811,7 +811,20 @@ export function initEditor() {
     dispose: (model) => model.dispose(),
     versionOf: (model) => model.getAlternativeVersionId(),
     textOf: (model) => model.getValue(),
-    replaceText: (model, text) => model.setValue(text),
+    // An edit, not setValue. setValue replaces the text *and throws away the
+    // undo stack*, so a reload the user did not mean would be unrecoverable -
+    // and a reload is offered exactly when they have unsaved work to lose.
+    // pushEditOperations over the whole range is the same replacement with the
+    // history kept, so Cmd-Z puts their version back.
+    replaceText: (model, text) => {
+      model.pushStackElement();
+      model.pushEditOperations(
+        [],
+        [{ range: model.getFullModelRange(), text }],
+        () => null,
+      );
+      model.pushStackElement();
+    },
   });
 
   // Give Cut, Copy and Paste their chords back, so the context menu shows them

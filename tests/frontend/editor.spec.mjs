@@ -371,6 +371,22 @@ test.describe("a file that changed on disk", () => {
     ).toHaveCount(0);
   });
 
+  test("Reload can be undone, because it is an edit and not a replacement", async ({ page }) => {
+    // Reload is offered exactly when somebody has unsaved work to lose, so a
+    // misread click must not be final. setValue replaces the text and throws
+    // away the undo stack; an edit keeps it.
+    await editedElsewhere(page);
+    await page.locator('.confirm-overlay [data-answer="discard"]').click();
+    await expect.poll(() => editorText(page)).toContain("THEIRS = 1");
+
+    await page.locator(".monaco-editor .view-lines").first().click();
+    await page.keyboard.press("Meta+z");
+
+    await expect
+      .poll(() => editorText(page), { message: "the reload could not be undone" })
+      .toContain("MINE");
+  });
+
   test("and an untouched file is never asked about", async ({ page }) => {
     // The false positive matters as much: a dialog on every save is one people
     // learn to click through without reading.
