@@ -959,6 +959,31 @@ export async function discardRecovery() {
   await clearJournal(journalDeps(root), root);
 }
 
+/**
+ * A file was renamed on disk. Take the tab holding it along.
+ *
+ * A buffer left pointing at the old name is a tab that saves to a file nobody
+ * can see any more - and that save would create it again, so the rename would
+ * appear to have half worked.
+ *
+ * The stamp goes with it: it describes the bytes, which have not changed, and
+ * dropping it would make the next save ask whether the file had changed
+ * underneath - about a file this application had just moved itself.
+ */
+export function fileRenamed(from, to) {
+  const key = bufferForPath(from);
+  if (key === null) {
+    return;
+  }
+  if (!setCurrentFile(key, to)) {
+    log.warn(`Renamed ${from} to ${to}, but another buffer already holds that path`);
+    return;
+  }
+  refreshTabs();
+  saveWorkspace().catch((error) => log.warn("Could not record the rename:", error));
+  log.info(`The tab for ${from} now holds ${to}`);
+}
+
 /** Whether anything is still booked, for a test. */
 export function pendingRecoveryWrites() {
   return recorder.pending();

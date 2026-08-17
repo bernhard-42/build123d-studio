@@ -53,6 +53,7 @@ import {
   openFile,
   openFolder,
   checkOpenFilesExist,
+  fileRenamed,
   openPath,
   restoreWorkspace,
   saveAll,
@@ -466,6 +467,7 @@ async function main() {
       checkOpenFilesExist().catch((error) =>
         log.warn("Could not check whether the open files are still there:", error));
     },
+    onRenamed: (from, to) => fileRenamed(from, to),
   });
   initViewer();
   initVariables();

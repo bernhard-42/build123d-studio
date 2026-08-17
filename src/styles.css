@@ -538,11 +538,13 @@ html body {
   color: var(--fg);
 }
 
-/* The row last clicked, which is what New file and New folder create beside.
-   A different thing from the active file and so a different mark: the active
-   file is a bar down the left edge, this is the row itself picked out. Without
-   it, clicking a folder selected it invisibly and there was no way to tell what
-   the buttons would do - which is exactly how it was reported. */
+/* Two things wear this mark, and neither is "the file on screen" - that is
+   .tree-active above, a bar down the left edge.
+
+   A folder, because it is what New file and New folder create beside, and
+   without it clicking a folder selected it invisibly with no way to tell what
+   the buttons would do. And a row a right-click menu is open on, for as long as
+   its action lasts, so it is plain which file those items are about. */
 .tree-row.tree-selected {
   background: var(--hover);
 }

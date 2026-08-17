@@ -252,3 +252,40 @@ test.describe("what does not run", () => {
     expect(executed(sidecar)).toEqual([]);
   });
 });
+
+test.describe("an interrupt that does not land", () => {
+  test("offers to restart the kernel, and only after it has had its five seconds", async ({ page }) => {
+    // Python raises KeyboardInterrupt between operations, so a single long
+    // native call - a boolean on a large assembly - cannot be interrupted at
+    // all. The button then does nothing visible, for ever, and nothing says why.
+    const { sidecar } = await openWithCells(page);
+    sidecar.send("kernel.status", { state: "busy" });
+    await expect(page.locator("#kernel-status")).toHaveClass(/busy/);
+
+    await page.locator("#btn-interrupt").click();
+
+    // Nothing yet: the kernel is given the five seconds before it is doubted.
+    await page.waitForTimeout(2000);
+    await expect(page.locator(".confirm-overlay")).toHaveCount(0);
+
+    await expect(page.locator(".confirm-overlay")).toBeVisible({ timeout: 10_000 });
+    await page.locator('.confirm-overlay [data-answer="save"]').click();
+
+    await expect
+      .poll(() => sidecar.received.filter((frame) => frame.type === "kernel.restart").length)
+      .toBe(1);
+  });
+
+  test("and says nothing when it did land", async ({ page }) => {
+    const { sidecar } = await openWithCells(page);
+    sidecar.send("kernel.status", { state: "busy" });
+    await expect(page.locator("#kernel-status")).toHaveClass(/busy/);
+
+    await page.locator("#btn-interrupt").click();
+    sidecar.send("kernel.status", { state: "idle" });
+    await expect(page.locator("#kernel-status")).toHaveClass(/idle/);
+
+    await page.waitForTimeout(7000);
+    await expect(page.locator(".confirm-overlay")).toHaveCount(0);
+  });
+});

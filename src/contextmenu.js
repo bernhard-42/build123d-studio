@@ -19,14 +19,27 @@
 import { contextMenuItems } from "./clipboard.js";
 
 let openMenu = null;
+// Told when the menu goes, and whether anything was picked. The tree marks the
+// row a menu belongs to and needs that mark taken off again - after the action,
+// where there is one, and at once where the menu was simply dismissed.
+let onMenuClosed = null;
 
-/** Take down the menu that is showing, if any. */
-export function closeContextMenu() {
+/**
+ * Take down the menu that is showing, if any.
+ *
+ * @param {string|null} picked the item chosen, or null if it was dismissed
+ */
+export function closeContextMenu(picked = null) {
   if (openMenu === null) {
     return;
   }
   openMenu.remove();
   openMenu = null;
+  const closed = onMenuClosed;
+  onMenuClosed = null;
+  if (closed !== null) {
+    closed(picked);
+  }
 }
 
 // The colours Monaco resolves for its own menu, translated into ours.
@@ -89,8 +102,9 @@ function positionWithin(menu, x, y) {
  *          items: Array<{id: string, label: string, enabled: boolean}>,
  *          onPick: (id: string) => void}} options
  */
-export function showContextMenu({ x, y, items, onPick }) {
+export function showContextMenu({ x, y, items, onPick, onClose = null }) {
   closeContextMenu();
+  onMenuClosed = onClose;
   if (items.length === 0) {
     return;
   }
@@ -120,7 +134,7 @@ export function showContextMenu({ x, y, items, onPick }) {
     // caret in the menu rather than in the terminal.
     button.addEventListener("mousedown", (event) => {
       event.preventDefault();
-      closeContextMenu();
+      closeContextMenu(item.id);
       onPick(item.id);
     });
     menu.appendChild(button);

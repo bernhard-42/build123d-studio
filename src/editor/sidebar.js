@@ -15,7 +15,7 @@
 // Ordering, filtering and path joining are in tree.js, which has no DOM and is
 // tested. This file is rows and clicks.
 
-import { filesystem } from "@neutralinojs/lib";
+import { filesystem, os } from "@neutralinojs/lib";
 
 import {
   baseName,
@@ -28,7 +28,8 @@ import {
   targetFolder,
   visibleEntries,
 } from "./tree.js";
-import { notifyFailure, notifyRefusal } from "../confirm.js";
+import { askTwoWay, notifyFailure, notifyRefusal } from "../confirm.js";
+import { showContextMenu } from "../contextmenu.js";
 import { getSetting, setSetting } from "../store.js";
 import { refreshLayout } from "../layout/splitter.js";
 import * as log from "../log.js";
@@ -41,6 +42,8 @@ const HIDDEN_KEY = "sidebarHidden";
 
 let root = null;
 let openFile = null;
+// Told when a file is renamed here, so a tab holding it can follow.
+let renamedOnDisk = () => {};
 // Told after every refresh, so the editor can check whether the files its tabs
 // name are still there. The tree does not know about buffers and should not.
 let refreshed = () => {};
@@ -58,15 +61,19 @@ let selected = null;
 // until the name is accepted, so changing your mind leaves no untitled.py
 // behind to tidy up. { kind, folder, name } or null.
 let pending = null;
+// The row a right-click menu is about, marked while its action runs. Not the
+// selection: see the contextmenu handler.
+let marked = null;
 // Which directories are showing their contents, and what those contents are.
 // Both are keyed by full path, so an expanded folder stays expanded across a
 // refresh even if its parent's listing changed underneath it.
 const expanded = new Set();
 const children = new Map();
 
-export function initSidebar({ onOpenFile, onRefreshed = () => {} }) {
+export function initSidebar({ onOpenFile, onRefreshed = () => {}, onRenamed = () => {} }) {
   openFile = onOpenFile;
   refreshed = onRefreshed;
+  renamedOnDisk = onRenamed;
   hidden = getSetting(HIDDEN_KEY) === true;
   document.getElementById("tree-refresh").addEventListener("click", () => {
     refreshSidebar().catch((error) => log.warn("Could not refresh the tree:", error));
@@ -245,12 +252,18 @@ function rowsUnder(path, depth, out) {
   // The row being named comes first in its folder, where the eye already is
   // after clicking the button - rather than in sort position, which for
   // "untitled" is usually the bottom of a long list.
-  if (pending !== null && pending.folder === path) {
+  if (pending !== null && pending.folder === path && pending.replacing === null) {
     out.push({ pending: true, depth });
   }
   for (const entry of children.get(path) ?? []) {
     const full = joinPath(path, entry.name);
-    out.push({ ...entry, path: full, depth });
+    // A rename is edited where the file already is, rather than as a new row
+    // above it: the thing being renamed must stay where the eye left it.
+    out.push(
+      pending !== null && pending.replacing === full
+        ? { pending: true, depth }
+        : { ...entry, path: full, depth },
+    );
     if (entry.isDirectory && expanded.has(full)) {
       rowsUnder(full, depth + 1, out);
     }
@@ -302,7 +315,14 @@ function renderRow(row) {
   if (row.path === active) {
     classes.push("tree-active");
   }
-  if (row.path === selected) {
+  // A file's highlight is the active bar and nothing else: opening it is what
+  // marks it, so there is either one file marked - the one on screen - or none.
+  // The last-clicked mark is kept for folders, where it is the only thing that
+  // says what New file and New folder would create in.
+  //
+  // A right click adds a mark of its own, for as long as its menu's action
+  // lasts, so it is plain which file those items are about.
+  if (row.path === marked || (row.path === selected && row.isDirectory)) {
     classes.push("tree-selected");
   }
   element.className = classes.join(" ");
@@ -338,11 +358,28 @@ function renderRow(row) {
     // be scrolled away from whatever is selected - and "New file" with no
     // indication of where is a question with a hidden second half.
     describeCreateTargets();
+    // A left click anywhere ends whatever a right click was pointing at.
+    marked = null;
     if (row.isDirectory) {
       toggle(row.path).catch((error) => log.warn("Could not expand the folder:", error));
       return;
     }
+    render();
     openFile(row.path);
+  });
+
+  // A right click opens nothing. It marks the row its menu is about and leaves
+  // the tab strip alone - which is the difference that makes the menu usable on
+  // a file somebody has no intention of opening.
+  //
+  // The mark is not the selection: the selection says where a new file would be
+  // created and outlives the menu, while this says what these two items would
+  // act on and is taken off as soon as they are done or dismissed.
+  element.addEventListener("contextmenu", (event) => {
+    event.preventDefault();
+    marked = row.path;
+    render();
+    showRowMenu(row, event.clientX, event.clientY);
   });
   return element;
 }
@@ -409,6 +446,9 @@ async function beginCreating(kind) {
   pending = {
     kind,
     folder,
+    // Nothing is being replaced: this row is new, and goes above the folder's
+    // contents. See beginRenaming for the other shape.
+    replacing: null,
     // Already typed, so Enter alone makes a file - and numbered, so Enter twice
     // makes two rather than one failure.
     name: freeName("untitled", kind === "folder" ? "" : ".py", existing),
@@ -432,7 +472,10 @@ function cancelCreating() {
   if (pending === null) {
     return;
   }
+  // Escape or a click away, which for a rename ends what the right-click menu
+  // started - so the mark goes with it.
   pending = null;
+  marked = null;
   render();
 }
 
@@ -450,6 +493,10 @@ async function somethingIsAt(path) {
 /** Write it, and show what was made rather than leaving it to be found. */
 async function commitCreating(name) {
   if (pending === null) {
+    return;
+  }
+  if (pending.replacing !== null) {
+    await commitRenaming(name);
     return;
   }
   const { kind, folder } = pending;
@@ -511,6 +558,170 @@ async function commitCreating(name) {
   }
   render();
   openFile(path);
+}
+
+/**
+ * The right-click actions for a row.
+ *
+ * Files only. A folder's delete is recursive and its rename moves everything
+ * under it, which are different questions from these two and want their own
+ * answers rather than the same dialog with a different noun.
+ */
+/** Take the right-click mark off, once whatever it was about has finished. */
+function unmark() {
+  if (marked === null) {
+    return;
+  }
+  marked = null;
+  render();
+}
+
+function showRowMenu(row, x, y) {
+  if (row.isDirectory) {
+    return;
+  }
+  showContextMenu({
+    x,
+    y,
+    items: [
+      { id: "rename", label: "Rename…", enabled: true },
+      { id: "delete", label: "Delete…", enabled: true },
+    ],
+    onPick: (id) => {
+      if (id === "rename") {
+        beginRenaming(row.path);
+      } else if (id === "delete") {
+        confirmDelete(row.path).catch((error) => log.warn("Could not delete it:", error));
+      }
+    },
+    // Dismissed without choosing anything, so the mark has nothing left to
+    // point at. A pick leaves it: the action it started is what takes it off.
+    onClose: (picked) => {
+      if (picked === null) {
+        unmark();
+      }
+    },
+  });
+}
+
+/**
+ * Turn a row into a field holding its current name.
+ *
+ * The same row, the same validation and the same two keys as creating one - see
+ * renderPendingRow. The extension is left out of the selection, so Enter after
+ * typing keeps `.py` without anybody retyping it.
+ */
+function beginRenaming(path) {
+  const folder = parentOf(path) ?? root;
+  pending = { kind: "file", folder, replacing: path, name: baseName(path) };
+  render();
+  focusPendingRow();
+}
+
+/**
+ * Rename it on disk, and take any tab that holds it along.
+ *
+ * A buffer left pointing at the old name is a tab that saves to a file nobody
+ * can see any more, and it would be created again by that save.
+ */
+async function commitRenaming(name) {
+  const { replacing: from, folder } = pending;
+  const to = joinPath(folder, name);
+  pending = null;
+  if (to === from) {
+    unmark();
+    render();
+    return;
+  }
+
+  // Asked immediately before the move, for commitCreating's reason: the listing
+  // this was vetted against can be arbitrarily old, and move() would overwrite
+  // whatever is there now without a word.
+  if (await somethingIsAt(to)) {
+    marked = null;
+    render();
+    await notifyRefusal(
+      "Could not rename it",
+      `${to} already exists.\n\nIt was created after this folder was last read.`,
+    );
+    return;
+  }
+
+  try {
+    await filesystem.move(from, to);
+  } catch (error) {
+    log.warn(`Could not rename ${from}:`, error);
+    marked = null;
+    render();
+    await notifyFailure("Could not rename it", `${from}\n\n${error?.message ?? error}`);
+    return;
+  }
+
+  log.info(`Renamed ${from} to ${to}`);
+  renamedOnDisk(from, to);
+  marked = null;
+  await read(folder);
+  render();
+}
+
+/**
+ * Delete a file, after asking, and say what it will cost.
+ *
+ * The application's own delete rather than the platform's trash: Neutralino has
+ * no trash API, so this cannot be undone from the desktop. That is what the
+ * prompt has to say, because "Delete" elsewhere usually means "put it where I
+ * can get it back".
+ */
+async function confirmDelete(path) {
+  const answer = await askTwoWay({
+    title: "Move this file to the Trash?",
+    detail: path,
+    confirm: "Move to Trash",
+    cancel: "Cancel",
+  });
+  if (answer !== "confirm") {
+    unmark();
+    return;
+  }
+
+  try {
+    await os.trashItem(path);
+  } catch (error) {
+    // No trash to move it to: a volume that has none, a platform where the
+    // desktop provides none. Asked again rather than deleted anyway, because
+    // the question that was answered was "move it somewhere I can get it back
+    // from" and this is a different one.
+    log.warn(`Could not move ${path} to the trash:`, error);
+    const anyway = await askTwoWay({
+      title: "There is no Trash for this file",
+      detail: `${path}\n\nIt could not be moved to the Trash. Deleting it here `
+        + "removes it from disk, and that cannot be undone.",
+      confirm: "Delete permanently",
+      cancel: "Cancel",
+    });
+    if (anyway !== "confirm") {
+      unmark();
+      return;
+    }
+    try {
+      await filesystem.remove(path);
+    } catch (failure) {
+      log.warn(`Could not delete ${path}:`, failure);
+      unmark();
+      await notifyFailure("Could not delete it", `${path}\n\n${failure?.message ?? failure}`);
+      return;
+    }
+  }
+
+  log.info(`Deleted ${path}`);
+  marked = null;
+  if (selected === path) {
+    selected = null;
+  }
+  // A tab holding it keeps its contents and is marked missing, which is what
+  // already happens when something is deleted from outside the application -
+  // the buffer is the only copy left, and closing it would throw that away.
+  await refreshSidebar();
 }
 
 /** The row being named: an input where a label would be. */

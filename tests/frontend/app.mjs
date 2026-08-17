@@ -249,6 +249,8 @@ export async function open(page, options = {}) {
     // running" - and, with brokenListing, how it says the listing failed.
     running = [],
     brokenListing = false,
+    // No trash on this volume, so a delete has to ask a second question.
+    trashFails = false,
     // Modification times for seeded files, where a test needs one to mean
     // something.
     times = {},
@@ -291,7 +293,7 @@ export async function open(page, options = {}) {
       globalThis.__HARNESS_PROCESSES__ = processes;
     },
     [{ sidecar: SIDECAR, env: {} }, files, settings, times,
-      { running, brokenListing }],
+      { running, brokenListing, trashFails }],
   );
 
   await page.goto("/");

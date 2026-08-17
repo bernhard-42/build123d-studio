@@ -2,6 +2,7 @@ import { window as neuWindow } from "@neutralinojs/lib";
 
 import { closeActiveTab, newFile, openFile, saveFile } from "./editor/files.js";
 import { toggleSidebar } from "./editor/sidebar.js";
+import { askTwoWay } from "./confirm.js";
 import { toggleBottomRow } from "./layout/splitter.js";
 import {
   focusAt,
@@ -28,7 +29,13 @@ import { titleWithChord } from "./keys.js";
 
 // Toolbar wiring and the kernel state indicator.
 
+// What the indicator is showing, which is also the only thing that can answer
+// "did the interrupt land": an interrupted kernel goes idle, and one that
+// ignored the signal stays busy.
+let kernelState = "idle";
+
 function setKernelState(state) {
+  kernelState = state;
   const container = document.getElementById("kernel-status");
   const label = document.getElementById("kernel-label");
   container.classList.remove("idle", "busy", "dead");
@@ -115,6 +122,56 @@ function setEnabled(ids, enabled) {
     if (button !== null) {
       button.disabled = !enabled;
     }
+  }
+}
+
+// How long an interrupt is given before it is treated as having missed.
+//
+// An interrupt reaches the kernel as SIGINT, and Python raises KeyboardInterrupt
+// at the next bytecode boundary - which never comes while a single native call
+// is running. A boolean on a large assembly is exactly that: OCCT holds the GIL
+// for the whole operation and the signal waits behind it. So this is not a
+// timeout on the kernel answering; it is how long somebody watches a button do
+// nothing before they deserve to be told why.
+const INTERRUPT_GRACE = 5000;
+
+// One offer at a time. Pressing Interrupt three times must not queue three
+// dialogs behind each other, each about a kernel that may have stopped since.
+let offeringRestart = false;
+
+/**
+ * If the kernel is still running five seconds after an interrupt, offer to
+ * restart it.
+ *
+ * Asked rather than done, because the two costs are not comparable: waiting
+ * longer costs time, and restarting costs the namespace - every variable the
+ * session has built, which for CAD work can be a model that took minutes.
+ */
+async function offerRestartIfItDidNotStop() {
+  if (offeringRestart) {
+    return;
+  }
+  offeringRestart = true;
+  try {
+    await new Promise((resolve) => setTimeout(resolve, INTERRUPT_GRACE));
+    if (kernelState !== "busy") {
+      return;
+    }
+    const answer = await askTwoWay({
+      title: "The kernel did not stop",
+      detail: "It is still running five seconds after the interrupt. Python can only "
+        + "raise KeyboardInterrupt between operations, so a single long call - a "
+        + "boolean on a large assembly - cannot be interrupted at all.\n\n"
+        + "Restarting it stops that work, and empties the namespace with it: "
+        + "everything the session has defined is lost.",
+      confirm: "Restart the kernel",
+      cancel: "Keep waiting",
+    });
+    if (answer === "confirm") {
+      await ipc.send("kernel.restart");
+    }
+  } finally {
+    offeringRestart = false;
   }
 }
 
@@ -257,7 +314,10 @@ export function initToolbar() {
     // Wrapped like the rest: with the sidecar gone these throw out of a click
     // handler, where only the global rejection logger would ever see it.
     "btn-interrupt": () =>
-      withErrorReporting("Interrupt", async () => ipc.send("kernel.interrupt")),
+      withErrorReporting("Interrupt", async () => {
+        await ipc.send("kernel.interrupt");
+        await offerRestartIfItDidNotStop();
+      }),
     "btn-restart": () => withErrorReporting("Restart", async () => ipc.send("kernel.restart")),
     "btn-palette": openCommandPalette,
     "btn-info": showInfo,

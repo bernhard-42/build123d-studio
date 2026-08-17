@@ -43,6 +43,7 @@ const alsoRunning = new Set(
   (globalThis.__HARNESS_PROCESSES__?.running ?? []).map(Number),
 );
 let processListingWorks = globalThis.__HARNESS_PROCESSES__?.brokenListing !== true;
+let trashBroken = globalThis.__HARNESS_PROCESSES__?.trashFails === true;
 
 /** Exit codes queued for the next spawned commands. */
 const exitCodes = [];
@@ -143,6 +144,8 @@ globalThis.__NEUTRALINO_STUB__ = {
   // cannot know whether a journal is live - and must therefore offer it without
   // deleting it.
   breakProcessListing: () => { processListingWorks = false; },
+  // No trash on this volume, which is the second question's case.
+  trashFails: () => { trashBroken = true; },
   calls: () => calls.map((call) => ({ ...call })),
   reset: () => reset(),
 };
@@ -178,6 +181,7 @@ export function reset() {
   dialogAnswers.length = 0;
   alsoRunning.clear();
   processListingWorks = true;
+  trashBroken = false;
   listeners.clear();
 }
 
@@ -377,6 +381,32 @@ export const os = {
   async getPath(name) {
     record("getPath", [name]);
     return paths[name] ?? "/appdata";
+  },
+
+  /**
+   * The system trash, which is where a delete goes.
+   *
+   * It removes the file here rather than only recording the call: a test that
+   * asserted on the call alone would pass against an application that trashed
+   * the wrong path, or trashed one file and left another.
+   *
+   * Made to fail with trashFails(), because the application asks a second
+   * question when there is no trash to move something to, and that branch has
+   * to be reachable.
+   */
+  async trashItem(path) {
+    record("trashItem", [path]);
+    if (trashBroken) {
+      const error = new Error(`NE_OS_TRASHER: ${path}`);
+      error.code = "NE_OS_TRASHER";
+      throw error;
+    }
+    if (!files.has(path) && !dirs.has(path)) {
+      missing(path);
+    }
+    files.delete(path);
+    dirs.delete(path);
+    return "OK";
   },
 
   async getEnv(name) {
