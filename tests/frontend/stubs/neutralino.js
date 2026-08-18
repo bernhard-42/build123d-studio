@@ -208,6 +208,8 @@ export function emit(name, detail) {
 
 // --- filesystem ------------------------------------------------------------
 
+let watcherId = 0;
+
 export const filesystem = {
   async readFile(path) {
     record("readFile", [path]);
@@ -234,6 +236,20 @@ export const filesystem = {
     }
     const pos = options.pos ?? 0;
     return bytes.slice(pos, pos + (options.size ?? bytes.byteLength - pos));
+  },
+
+  // Watching a folder. Recorded rather than simulated - there is no filesystem
+  // here to change behind the application's back - and a test drives the change
+  // itself: seed the file, then emit the event the platform would have.
+  async createWatcher(path) {
+    record("createWatcher", [path]);
+    watcherId += 1;
+    return watcherId;
+  },
+
+  async removeWatcher(id) {
+    record("removeWatcher", [id]);
+    return true;
   },
 
   async writeFile(path, contents) {

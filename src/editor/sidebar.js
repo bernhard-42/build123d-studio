@@ -7,15 +7,14 @@
 // projects worth opening. filesystem.readDirectory takes a `recursive` option
 // and this deliberately never passes it.
 //
-// What is read is cached and only re-read on Refresh. Live updates through
-// createWatcher are the obvious next step and are deliberately not here yet:
-// the API is undocumented enough that its behaviour wants establishing with a
-// real build on all three platforms before anything depends on it.
+// What is read is cached, and kept current by watching the folder: an open
+// project has one recursive watcher on its root, and anything that changes on
+// disk re-reads the directories that are actually on screen. See watchFolder.
 //
 // Ordering, filtering and path joining are in tree.js, which has no DOM and is
 // tested. This file is rows and clicks.
 
-import { filesystem, os } from "@neutralinojs/lib";
+import { events, filesystem, os } from "@neutralinojs/lib";
 
 import {
   baseName,
@@ -84,6 +83,10 @@ export function initSidebar({ onOpenFile, onRefreshed = () => {}, onRenamed = ()
   document.getElementById("tree-new-folder").addEventListener("click", () => {
     beginCreating("folder").catch((error) => log.warn("Could not start a new folder:", error));
   });
+  // One listener for the life of the window: the watcher comes and goes with
+  // the folder, this does not.
+  events.on("watchFile", folderChanged)
+    .catch((error) => log.warn("Not watching the folder for changes:", error));
   // Draw once with no folder, which is what greys the toolbar's toggle before
   // anything has been opened.
   render();
@@ -121,6 +124,7 @@ export async function showFolder(path) {
   expanded.add(path);
   await read(path);
   render();
+  await watchFolder(path);
 }
 
 export function hideFolder() {
@@ -129,6 +133,82 @@ export function hideFolder() {
   expanded.clear();
   children.clear();
   render();
+  stopWatching();
+}
+
+// --- what the folder does while nobody is looking --------------------------
+//
+// One watcher on the project root, which efsw watches recursively - so a file
+// written by a script, a `git checkout`, or the export somebody just ran in
+// another window shows up without a Refresh.
+//
+// Coalesced rather than acted on one event at a time, and that is the whole
+// design: a build, a checkout or a save from another editor arrives as a burst
+// of them, and re-reading the tree once per event would read the same
+// directories over and over while the burst was still going. What a refresh
+// costs is bounded by what is on screen - only expanded directories are
+// re-read - so the cost of being late is nothing and the cost of being eager
+// is real.
+
+/** Long enough to swallow a burst, short enough to feel immediate. */
+const SETTLE_MS = 300;
+
+let watcherId = null;
+let settling = null;
+
+/**
+ * Watch a project, having stopped watching the last one.
+ *
+ * Failure is not fatal and not worth a dialog: the tree still refreshes on
+ * demand, which is what it did before it was watched at all. It is worth a log
+ * line, because "my tree does not update" is otherwise unanswerable.
+ */
+async function watchFolder(path) {
+  await stopWatching();
+  try {
+    watcherId = await filesystem.createWatcher(path);
+  } catch (error) {
+    watcherId = null;
+    log.warn(`Not watching ${path} for changes:`, error);
+  }
+}
+
+/** Stop watching, and stop any refresh the last events had booked. */
+async function stopWatching() {
+  if (settling !== null) {
+    clearTimeout(settling);
+    settling = null;
+  }
+  if (watcherId === null) {
+    return;
+  }
+  const stopping = watcherId;
+  watcherId = null;
+  try {
+    await filesystem.removeWatcher(stopping);
+  } catch (error) {
+    log.warn("Could not stop watching the folder:", error);
+  }
+}
+
+/**
+ * Something changed under the folder.
+ *
+ * Every watcher in the process reports here, so the id is checked: another
+ * window's is not ours, and neither is one left by a folder that has closed.
+ */
+function folderChanged(event) {
+  const reported = event?.detail?.id;
+  if (watcherId === null || reported !== watcherId) {
+    return;
+  }
+  if (settling !== null) {
+    clearTimeout(settling);
+  }
+  settling = setTimeout(() => {
+    settling = null;
+    refreshSidebar().catch((error) => log.warn("Could not refresh the tree:", error));
+  }, SETTLE_MS);
 }
 
 /**

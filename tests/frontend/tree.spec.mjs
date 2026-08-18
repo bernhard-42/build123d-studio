@@ -203,3 +203,112 @@ test.describe("the right-click actions on a file", () => {
     await expect(page.locator(".context-menu")).toHaveCount(0);
   });
 });
+
+test.describe("watching the folder", () => {
+  // The tree used to be a photograph: what was on disk when it was read, until
+  // somebody pressed Refresh. A project is written to from outside constantly -
+  // a script that exports a STEP file, a git checkout, another editor - and a
+  // tree that disagrees with the disk is worse than no tree, because it is
+  // believed.
+
+  const calls = (page, name) =>
+    page.evaluate(
+      (wanted) => globalThis.__NEUTRALINO_STUB__.calls().filter((call) => call.name === wanted),
+      name,
+    );
+
+  test("opening a folder starts one watcher on it", async ({ page }) => {
+    await openApp(page);
+
+    const made = await calls(page, "createWatcher");
+    expect(made).toHaveLength(1);
+    expect(made[0].args[0]).toBe(PROJECT);
+  });
+
+  test("a file that appears on disk appears in the tree", async ({ page }) => {
+    await openApp(page);
+    await expect(row(page, "part.py")).toBeVisible();
+
+    await page.evaluate((project) => {
+      globalThis.__NEUTRALINO_STUB__.given(`${project}/exported.py`, "EXPORTED = 1\n");
+      globalThis.__NEUTRALINO_STUB__.emit("watchFile", {
+        id: 1, dir: project, filename: "exported.py", action: "add",
+      });
+    }, PROJECT);
+
+    await expect(row(page, "exported.py")).toBeVisible();
+  });
+
+  test("and one that goes away leaves it", async ({ page }) => {
+    await openApp(page);
+    await expect(row(page, "hinge.py")).toBeVisible();
+
+    await page.evaluate((project) => {
+      globalThis.__NEUTRALINO_STUB__.removePath(`${project}/hinge.py`);
+      globalThis.__NEUTRALINO_STUB__.emit("watchFile", {
+        id: 1, dir: project, filename: "hinge.py", action: "delete",
+      });
+    }, PROJECT);
+
+    await expect(page.locator(".tree-row", { hasText: "hinge.py" })).toHaveCount(0);
+  });
+
+  test("a burst of changes is one refresh, not one each", async ({ page }) => {
+    // A checkout or a build arrives as dozens of events. Re-reading per event
+    // would read the same directories over and over while the burst was still
+    // arriving.
+    await openApp(page);
+    const before = (await calls(page, "readDirectory")).length;
+
+    await page.evaluate((project) => {
+      for (let i = 0; i < 20; i += 1) {
+        globalThis.__NEUTRALINO_STUB__.given(`${project}/b${i}.py`, "B = 1\n");
+        globalThis.__NEUTRALINO_STUB__.emit("watchFile", {
+          id: 1, dir: project, filename: `b${i}.py`, action: "add",
+        });
+      }
+    }, PROJECT);
+
+    await expect(row(page, "b19.py")).toBeVisible();
+    const after = (await calls(page, "readDirectory")).length;
+    expect(after - before, "the tree was re-read once per event").toBeLessThanOrEqual(2);
+  });
+
+  test("closing the folder stops the watcher", async ({ page }) => {
+    await openApp(page);
+
+    await page.evaluate(() =>
+      globalThis.__NEUTRALINO_STUB__.emit("mainMenuItemClicked", { id: "file.closeFolder" }),
+    );
+
+    await expect.poll(async () => (await calls(page, "removeWatcher")).length).toBe(1);
+    const [stopped] = (await calls(page, "removeWatcher"))[0].args;
+    expect(stopped).toBe((await calls(page, "createWatcher")).length);
+  });
+
+  test("and an event from a watcher that is not ours changes nothing", async ({ page }) => {
+    // With the same event under our own id at the end, because otherwise this
+    // passes just as well against an application that watches nothing at all.
+    await openApp(page);
+    const before = (await calls(page, "readDirectory")).length;
+
+    await page.evaluate((project) => {
+      globalThis.__NEUTRALINO_STUB__.given(`${project}/other.py`, "OTHER = 1\n");
+      globalThis.__NEUTRALINO_STUB__.emit("watchFile", {
+        id: 99, dir: project, filename: "other.py", action: "add",
+      });
+    }, PROJECT);
+
+    await page.waitForTimeout(600);
+    expect((await calls(page, "readDirectory")).length).toBe(before);
+    await expect(page.locator(".tree-row", { hasText: "other.py" })).toHaveCount(0);
+
+    await page.evaluate((project) => {
+      globalThis.__NEUTRALINO_STUB__.emit("watchFile", {
+        id: 1, dir: project, filename: "other.py", action: "add",
+      });
+    }, PROJECT);
+
+    await expect(row(page, "other.py")).toBeVisible();
+  });
+});

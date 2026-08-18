@@ -185,7 +185,7 @@ Everything in this section is about the save path, and all of it is implemented 
 
 **Proves** the save writes the buffer it started with. **From** D1.
 
-1. Make the window wide enough to walk into. Format on save is on by default and black costs roughly a quarter of a millisecond per line, so a large file gives seconds:
+1. Make the window wide enough to walk into. Format on save is on by default, and a file of this size gives the save long enough to walk into even though the formatter itself is quick:
    ```sh
    python3 -c "open('big.py','w').write('x = 1\n' * 40000)"
    ```
@@ -538,6 +538,19 @@ Drawing the bar and its keyboard are covered by `tests/frontend/titlebar.spec.mj
 
 **macOS and Linux:** opening a folder creates no second window - the platforms restore the focus themselves. Worth one check that opening a folder there still leaves the keyboard where it should be.
 
+### M35 — The tree follows the disk
+
+The project's root is watched, recursively, for as long as it is open. What needs a person is that the platform's watcher behaves as the source says it does, on a real tree rather than against a stub.
+
+1. **A file written from outside appears.** With a project open, `touch` a file in its root from a terminal. It appears in the tree within a second, with no Refresh.
+2. **Deep, and only where it shows.** Expand a subdirectory two levels down and write a file into it - it appears. Write one into a *collapsed* directory: nothing needs to happen on screen, and expanding it later shows the file.
+3. **A burst is one refresh.** `git checkout` a branch that changes many files, or unpack an archive into the project. The tree ends up correct, and the window stays responsive throughout.
+4. **Deletes and renames.** `rm` a file and `mv` another; both follow. A renamed file that is open in a tab is a different case - see M30.
+5. **Closing the folder stops it.** Close the folder, then write more files into it: nothing happens, and no error appears in the log. Open another folder and the new one is followed instead.
+6. **Nothing is left behind.** After opening and closing several folders, the process count is what it was - the watcher is a thread inside the application, so what this checks is that memory and handles are not climbing.
+
+**Windows:** worth one extra pass, because the watcher there is a different implementation to macOS's FSEvents.
+
 ## Results
 
 One row per platform per run. Record the build, not just the date.
@@ -579,6 +592,7 @@ One row per platform per run. Record the build, not just the date.
 | M32 user snippets | ok | ok |  |
 | M33 menu bar in window | n/a | ok |  |
 | M34 keyboard after Open Folder | ok | ok |  |
+| M35 tree follows the disk | | | |
 
 **The run of 2026-08-18, macOS and Windows, 0.3.0.dev167.** The first full pass; Linux has still never been run. What it left:
 
