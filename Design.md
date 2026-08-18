@@ -203,11 +203,11 @@ There is a fallback to writing the target directly, and it is not decoration: it
 
 Two properties keep that honest. **Nothing on the typing path does any work** - the content-change event replaces a timer and returns, and the copy is made a second after the typing stops, which is also exactly how much work a crash can cost. And the copy is **the document, unwrapped**: not JSON with the text inside it, which would escape the whole buffer into a second string of its own size and make recovery parse it all back. A recovery copy is therefore an ordinary source file, openable in any editor by somebody who does not trust the prompt. Buffers past two megabytes are not shadowed at all - files over ten only *ask* before opening, so without a cap the worst case would be whatever somebody said yes to, serialised every second - and that is said once in the log, because silently having no recovery is worse than having none.
 
-The liveness test is a heartbeat file, not a lock. The lock that answers dead-versus-running lives in the sidecar, and recovery runs at startup several seconds before the sidecar exists. A window touches its journal every thirty seconds and one is treated as abandoned after three missed beats: calling a live sibling dead would hand somebody else their unsaved work while they were still typing it, and calling a dead session live only defers the offer to the next start.
+The liveness test is the owning process itself. A journal records the pid of the window that made it, once, and a start asks the operating system which processes carrying this application's own name exist - `ps` on macOS and Linux, `tasklist` on Windows - calibrating the match on its own pid so the name is never guessed at. A journal whose owner is in that set belongs to a window somebody is typing in and is left alone; everything else is dead, including a journal that names nobody. Failing to get a listing at all is not the same as getting an empty one: an answer that could not be established offers the work back but deletes nothing, because calling a live sibling dead would hand somebody else their unsaved work while they were still typing it.
 
 There is exactly one open folder or none. Opening or closing a folder closes every tab. The kernel's working directory follows: the folder root when one is open, otherwise the active file's directory, otherwise home. The change travels the same lane as runs, so a run can never overtake its own `chdir`, and it lands as a silent internal call that never appears in the console.
 
-Language services come from two places and are merged in the sidecar. The static half is **basedpyright** over LSP, chosen over jedi because jedi binds `Self` to the defining class and so missed the builder variable in a `with BuildPart() as bd:` block. The live half is the kernel, which knows the object you built two cells ago; its entries win the merge because they carry real signatures. Diagnostics are pushed rather than polled, and ten severity overrides tuned for build123d idioms take a demo file from nine diagnostics, seven of them wrong, to exactly the two real ones. Formatting is black in-process, about a quarter of a millisecond per line; a buffer that does not parse is left alone silently, because the squiggle has already said so.
+Language services come from two places and are merged in the sidecar. The static half is **basedpyright** over LSP, chosen over jedi because jedi binds `Self` to the defining class and so missed the builder variable in a `with BuildPart() as bd:` block. The live half is the kernel, which knows the object you built two cells ago; its entries win the merge because they carry real signatures. Diagnostics are pushed rather than polled, and ten severity overrides tuned for build123d idioms take a demo file from nine diagnostics, seven of them wrong, to exactly the two real ones. Formatting is `ruff format -` on a lane of its own - 17 ms on six thousand lines - and a buffer that does not parse is left alone silently, because the squiggle has already said so.
 
 Monaco is assembled by hand - the editor API and the Python grammar only, plus about forty explicit widget imports. The barrel would add megabytes of unusable language services, and a provider registered without its widget succeeds and is then never asked, which is what once left the editor with no completion at all.
 
@@ -374,6 +374,7 @@ Runs in the webview. Owns every pixel, all UI state, and the environment bootstr
 | `ipc.js` | The webview end of the sidecar link: spawn, handshake, frames, requests, restart |
 | `keybindings.js` | `keys.js` plus `settings.json` plus this platform |
 | `keys.js` | Keyboard shortcuts as data — chord parsing, conflicts, the CtrlCmd/WinCtrl trap |
+| `liveness.js` | Which processes are windows of this application, per platform — pure, tested |
 | `log.js` | The application's own log, since a webview has no visible console |
 | `logfile.js` | Getting lines onto disk, append-only, apart from deciding what to write |
 | `logrepeat.js` | One line per distinct message, with a dot per repeat |
@@ -381,12 +382,14 @@ Runs in the webview. Owns every pixel, all UI state, and the environment bootstr
 | `menu.js` | The native menu bar as data — pure, and tested |
 | `menubar.js` | Installs that menu and routes what it sends back |
 | `merge.js` | What a settings write keeps from the file already on disk |
+| `nativedialog.js` | Getting the keyboard back after a native dialog, and the Windows activation bounce |
 | `packages.js` | Which source each upgradable package comes from, and the generated `pyproject.toml` |
 | `proc.js` | Thin wrappers over Neutralino's `spawnProcess`, and the output fan-out |
 | `quoting.js` | Shell quoting — pure, security-relevant, and untestable on the platform that matters |
 | `reload.js` | The application must never reload; this is what stops it |
 | `requirements.js` | The additional-packages field: what the user typed and what it becomes |
 | `running.js` | What has been started and can still be stopped, and what a quit does with it |
+| `savedialog.js` | The macOS save panel, which is AppleScript rather than Neutralino's |
 | `selection.js` | Keeping a mouse drag inside the pane it began in |
 | `settings.js` | The settings dialog: seven tabs, and the package-source pickers |
 | `store.js` | `settings.json`: typed values, per-key read-merge-write |
@@ -417,6 +420,7 @@ The application's own model of files, buffers and saving. Monaco is a text widge
 | `safewrite.js` | A write that cannot leave a fragment, and cannot empty a file it fails to replace |
 | `sidebar.js` | The folder tree: rows, clicks, lazy reads, and creating things |
 | `signature.js` | The parameter-hints popup |
+| `snippets.js` | VS Code `.code-snippets` files, read as VS Code reads them |
 | `starters.js` | The first-run sample and the New File template |
 | `tabs.js` | What each tab is called, including when two files share a name |
 | `tabstrip.js` | The row of tabs, and the debug step controls that appear in it |
@@ -435,10 +439,12 @@ Runs before any Python exists.
 | `splash.js` | The only UI during first-run setup; shows uv's own output rather than a spinner |
 | `uv.js` | Downloading uv, verifying its checksum, and installing it |
 
-### `src/viewer/`, `src/vars/`, `src/console/`, `src/debug/`, `src/run/`, `src/layout/`
+### `src/titlebar/`, `src/viewer/`, `src/vars/`, `src/console/`, `src/debug/`, `src/run/`, `src/layout/`
 
 | File | Purpose |
 |---|---|
+| `titlebar/mnemonics.js` | Which letter opens which menu, and what a keystroke does to the bar — pure, tested |
+| `titlebar/titlebar.js` | The in-window menu strip: drawing it, and the keyboard that walks it |
 | `viewer/viewer.js` | The viewer pane: pane geometry, the binary path, and the shared page |
 | `viewer/rehydrate.js` | Rebuilding tessellated arrays as typed-array views over the received frame |
 | `vars/explorer.js` | The variable explorer's rows, expansion and rendering |
@@ -496,6 +502,9 @@ On the kernel's `PYTHONPATH`. What the user's own code imports.
 
 | Path | Purpose |
 |---|---|
+| `index.html` | The one page: the panes, the strict CSP, and the icon it names |
+| `public/reactivate.html`, `public/reactivate.js` | A one-pixel window that takes the foreground and exits, so Windows hands the keyboard back |
+| `src/editor/default-snippets.code-snippets` | The build123d-portable snippets, shipped as the file they are |
 | `cli/studio`, `cli/studio.cmd` | The command-line launcher, copied onto PATH by the user |
 | `cli/create-build123d-studio-link.cmd` | The Windows shortcut, which carries the icon the executable does not |
 | `scripts/` | Packaging, the Neutralino binary fetch and its digest check, the uv pin tool, and the four test runners |

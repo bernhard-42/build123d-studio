@@ -1,7 +1,7 @@
-"""Formatting, against the real black rather than a fixture.
+"""Formatting, against the real ruff rather than a fixture.
 
 The same argument as test_completer: what is being claimed is not that this
-module passes strings around, it is that the pinned black turns the code this
+module passes strings around, it is that the pinned ruff turns the code this
 application is written for into the code the user expects back. A fake formatter
 would only ever agree with itself.
 
@@ -43,7 +43,7 @@ class FormatSourceTest(unittest.TestCase):
 
     def test_the_line_length_is_obeyed(self):
         # The setting's whole purpose, and the one thing a caller can get wrong
-        # in a way that looks like it worked - black accepts any width and the
+        # in a way that looks like it worked - ruff accepts any width and the
         # difference only shows on a line near the boundary.
         source = "result = some_function(argument_one, argument_two, argument_three, arg_four)\n"
         self.assertEqual(format_source(source, 88)[0], None)
@@ -68,8 +68,19 @@ class FormatSourceTest(unittest.TestCase):
             "    fillet(bd.edges(), radius=0.2)\n"
         )
         formatted, why = format_source(source, 88)
-        self.assertIsNone(formatted, f"black rewrote a builder block: {formatted}")
+        self.assertIsNone(formatted, f"ruff rewrote a builder block: {formatted}")
         self.assertEqual(why, "already formatted")
+
+    def test_text_survives_the_pipe(self):
+        # The formatter is a subprocess now, so the buffer crosses a pipe twice.
+        # Text mode would decode it with the platform's encoding - cp1252 on
+        # Windows - and a file with an accent in a string would come back
+        # mangled or not at all. Bytes, both ways, and this is what says so.
+        source = "name  =  'caf\u00e9 \u00b5 \u4e2d'\n"
+        formatted, why = format_source(source, 88)
+
+        self.assertEqual(why, "formatted")
+        self.assertEqual(formatted, 'name = "caf\u00e9 \u00b5 \u4e2d"\n')
 
 
 if __name__ == "__main__":

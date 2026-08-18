@@ -820,9 +820,8 @@ test.describe("a save carries its own buffer", () => {
    * writing to.
    *
    * Reproduced here by holding the format request open, which is what the real
-   * one does for as long as black takes: a quarter of a millisecond a line, so
-   * seconds on a large file, against a thirty second timeout. Nothing here is
-   * timing-dependent - the request is answered when the test says so.
+   * one does while ruff runs - against a thirty second timeout. Nothing here is
+   * timing-dependent: the request is answered when the test says so.
    *
    * Un-applied by reading getValue() and calling markSaved()/setCurrentFile()
    * without a key, as before: the first assertion finds other.py's text inside
@@ -867,7 +866,7 @@ test.describe("a save carries its own buffer", () => {
     await page.locator(".tab", { hasText: "other.py" }).click();
     await expect(page.locator(".tab-active .tab-label")).toHaveText("other.py");
 
-    // black declining to change the buffer, which is the ordinary answer for a
+    // ruff declining to change the buffer, which is the ordinary answer for a
     // file somebody is part-way through typing.
     sidecar.release("editor.format", { source: null });
   }
@@ -913,7 +912,7 @@ test.describe("a save carries its own buffer", () => {
 test.describe("formatting", () => {
   const TIDY = "b = Box(1, 2, 3)\n";
 
-  test("Shift-Alt-F replaces the buffer with what black sent back", async ({ page }) => {
+  test("Shift-Alt-F replaces the buffer with what ruff sent back", async ({ page }) => {
     const { sidecar } = await openApp(page);
     sidecar.answer("editor.format", () => ({ source: `FORMATTED = 1\n${TIDY}` }));
 
@@ -924,7 +923,7 @@ test.describe("formatting", () => {
   });
 
   test("the line length from settings is what is asked for", async ({ page }) => {
-    // The setting's only job is to reach black, and nothing on screen would
+    // The setting's only job is to reach ruff, and nothing on screen would
     // show that it had not - a buffer formatted at 88 when 60 was asked for
     // looks perfectly reasonable.
     const { sidecar } = await openApp(page, { formatLineLength: 60 });
@@ -938,7 +937,7 @@ test.describe("formatting", () => {
       .toBe(60);
   });
 
-  // There was a case here asserting that a buffer black would not change is not
+  // There was a case here asserting that a buffer ruff would not change is not
   // edited with itself, and it was deleted rather than kept. It could not be
   // made to fail: with formatEdits' guard removed it still passed, because
   // Monaco discards a no-op edit of its own accord - neither the undo stop nor
@@ -966,7 +965,7 @@ test.describe("formatting", () => {
     await expect.poll(() => editorText(page)).toContain("SAVED_FORMATTED = 1");
   });
 
-  test("and with it off, saving asks black nothing", async ({ page }) => {
+  test("and with it off, saving asks ruff nothing", async ({ page }) => {
     const { sidecar } = await openApp(page, { formatOnSave: false });
 
     await caretToEnd(page);

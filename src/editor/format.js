@@ -2,18 +2,18 @@
 //
 // Pure, for the usual reason: the line length is a number a user types, and a
 // number a user types is a decision that can be wrong. Sending a nonsense one
-// to black means an exception on the sidecar's lane instead of an answer, and
+// to ruff means an error on the sidecar's lane instead of an answer, and
 // storing one means the field cannot be corrected from the dialog it was typed
 // into - the same shape of trap as the custom packages field, which is why that
 // one is a pure module too.
 //
-// The formatter itself is black, in the sidecar. This half only says how wide
+// The formatter itself is ruff, in the sidecar. This half only says how wide
 // the result should be and what to do with what comes back.
 
 /**
- * black's own default, and the editor's ruler.
+ * ruff's own default, and the editor's ruler.
  *
- * 88 is not arbitrary on either side: it is what black chooses when nothing
+ * 88 is not arbitrary on either side: it is what ruff chooses when nothing
  * says otherwise, and `rulers: [88]` was already in the editor's options before
  * there was a formatter. Those two agreeing by accident is worth making
  * deliberate - the ruler now follows this setting, so the line the user is
@@ -23,7 +23,7 @@ export const DEFAULT_LINE_LENGTH = 88;
 
 // Narrow enough that nothing fits, and wide enough that nothing wraps. Neither
 // bound is a matter of taste - they are there so the stored value is always a
-// number black can be given.
+// number ruff can be given.
 const MIN_LINE_LENGTH = 20;
 const MAX_LINE_LENGTH = 1000;
 
@@ -32,7 +32,7 @@ const MAX_LINE_LENGTH = 1000;
  *
  * settings.json is a file people edit by hand, so this has to survive a string,
  * a float, a negative, a null and a missing key - and answer with something
- * black can be handed in every case. It falls back rather than refusing:
+ * ruff can be handed in every case. It falls back rather than refusing:
  * a broken setting must not stop the formatter working, it must stop being
  * broken.
  */
@@ -76,7 +76,7 @@ export function lineLengthProblem(text) {
  * The edits that turn the buffer into the formatted text.
  *
  * One edit over the whole document, which is what every formatter of a
- * whole-file tool does - black rewrites the file, so there is no smaller true
+ * whole-file tool does - ruff rewrites the file, so there is no smaller true
  * statement to make about what changed.
  *
  * Empty when nothing changed, and that is not an optimisation. An edit that

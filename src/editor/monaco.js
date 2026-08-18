@@ -938,9 +938,8 @@ export function initEditor() {
     tabSize: 4,
     insertSpaces: true,
     // The ruler is the formatter's own line length, so the line somebody is
-    // looking at is the line black will wrap at. It was literally 88 before
-    // there was a setting, which happened to be black's default too - that
-    // agreement is now caused rather than coincidental.
+    // looking at is the line ruff will wrap at. The setting feeds both, so the
+    // agreement is caused rather than coincidental.
     rulers: [formatLineLength()],
   });
 
@@ -992,10 +991,10 @@ export function initEditor() {
 // made once, where the work happens.
 const LANGUAGE_TIMEOUT = 6000;
 
-// Long enough for black to finish a file nobody should be editing by hand:
-// measured at about 0.25 ms a line, so this covers roughly a hundred thousand
-// lines. It is a backstop against the sidecar having gone, not a judgement
-// about how long formatting ought to take.
+// Long enough for the formatter to finish a file nobody should be editing by
+// hand: ruff measures 17 ms on six thousand lines, so this covers any file that
+// will ever arrive. It is a backstop against the sidecar having gone, not a
+// judgement about how long formatting ought to take.
 const FORMAT_TIMEOUT = 30000;
 
 // The user's snippets, read once at startup and whenever they say they have
@@ -1124,12 +1123,12 @@ function registerLanguageFeatures() {
   //
   // A longer timeout than the others on purpose: completion and hover are
   // answers that are worthless late, so they give up quickly and the user types
-  // on. A format is asked for once and waited for, and black costs about a
-  // quarter of a millisecond a line, so a large file legitimately takes
-  // seconds. Giving up on it at the language timeout would leave the one
-  // request the user is actually watching as the only one that fails.
+  // on. A format is asked for once and waited for, and it is the one request
+  // whose cost grows with the file. Giving up on it at the language timeout
+  // would leave the one request the user is actually watching as the only one
+  // that fails.
   monaco.languages.registerDocumentFormattingEditProvider("python", {
-    displayName: "black",
+    displayName: "ruff",
     provideDocumentFormattingEdits: async (model, options, token) => {
       const source = model.getValue();
       const reply = await ipc.request(

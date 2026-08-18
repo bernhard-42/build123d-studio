@@ -448,11 +448,11 @@ export async function showSettings({ tab = null } = {}) {
         </section>
 
         <section class="settings-panel" data-panel="editor" hidden>
-          <p class="settings-group">black</p>
+          <p class="settings-group">ruff</p>
           <p class="info-note">
-            The width black wraps at, and the column the editor's ruler is drawn
+            The width ruff wraps at, and the column the editor's ruler is drawn
             at - they are the same number so that the line you are looking at is
-            the line the formatter will break. 88 is black's own default.
+            the line the formatter will break. 88 is ruff's own default.
           </p>
           <label class="settings-field">
             <span>Line length</span>
@@ -461,7 +461,7 @@ export async function showSettings({ tab = null } = {}) {
           </label>
 
           <p class="info-note">
-            Format the buffer with black each time it is saved. black changes
+            Format the buffer with ruff each time it is saved. ruff changes
             layout and never meaning, the result is one undo away, and a buffer
             that does not parse is left exactly as it is rather than half done.
           </p>

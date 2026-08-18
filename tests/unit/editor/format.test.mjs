@@ -1,6 +1,6 @@
 // node --test tests/unit/editor/format.test.mjs
 //
-// The line length, and what to do with what black sends back. Both are small
+// The line length, and what to do with what ruff sends back. Both are small
 // and both have a way of being wrong that nothing else would catch: a stored
 // value that is not a number reaches the sidecar and raises there instead of
 // answering, and an edit that replaces the text with itself looks to Monaco
@@ -18,14 +18,14 @@ import {
 
 const RANGE = { startLineNumber: 1, startColumn: 1, endLineNumber: 9, endColumn: 1 };
 
-// --- what black is asked for ---
+// --- what ruff is asked for ---
 
 test("a plain number is used as it stands", () => {
   assert.equal(usableLineLength(100), 100);
   assert.equal(usableLineLength(20), 20);
 });
 
-test("nothing stored means black's own default", () => {
+test("nothing stored means ruff's own default", () => {
   assert.equal(usableLineLength(undefined), DEFAULT_LINE_LENGTH);
   assert.equal(usableLineLength(null), DEFAULT_LINE_LENGTH);
   assert.equal(DEFAULT_LINE_LENGTH, 88);
@@ -37,7 +37,7 @@ test("a number written as a string is read, because settings.json is edited by h
 });
 
 test("anything that is not a usable number falls back rather than reaching the sidecar", () => {
-  // The failure this prevents is not cosmetic: black is given this, and
+  // The failure this prevents is not cosmetic: ruff is given this, and
   // Mode(line_length="wide") raises on the format lane instead of answering.
   for (const stored of ["wide", "", true, {}, [], Number.NaN, Infinity, -40, 0, 100000]) {
     assert.equal(usableLineLength(stored), DEFAULT_LINE_LENGTH, `for ${JSON.stringify(stored)}`);
@@ -99,7 +99,7 @@ test("an unchanged buffer produces no edit at all", () => {
 });
 
 test("no answer produces no edit", () => {
-  // What the sidecar sends when black refused a buffer that does not parse, and
+  // What the sidecar sends when ruff refused a buffer that does not parse, and
   // what a dropped reply looks like. Neither may touch the user's text.
   assert.deepEqual(formatEdits("b=Box(", null, RANGE), []);
   assert.deepEqual(formatEdits("b=Box(", undefined, RANGE), []);

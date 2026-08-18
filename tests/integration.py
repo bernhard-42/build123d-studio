@@ -534,7 +534,7 @@ def main():
 
     # --- formatting ---
     #
-    # black, in the sidecar's own process on a lane of its own. The source
+    # ruff, in the sidecar's own process on a lane of its own. The source
     # travels in the request rather than being read from disk, because the
     # buffer is what the user is looking at and is very often unsaved - which is
     # precisely when somebody reaches for a formatter.
@@ -550,7 +550,7 @@ def main():
           "no reply" if reply is None else str(reply.get("id")))
 
     # The same buffer at two line lengths. One length proves nothing here,
-    # because black's own default is 88: a request whose lineLength was dropped
+    # because ruff's own default is 88: a request whose lineLength was dropped
     # on the way and one that carried it produce identical output at that
     # number, and the check would pass with the field never read.
     wide = "value = some_call(first_argument, second_argument, third_argument)\n"
@@ -567,7 +567,7 @@ def main():
     before = len(side.frames)
     side.send("editor.format", id="format-3", source=wide, lineLength=40)
     _, reply = side.wait_frame("editor.format", ACTION_TIMEOUT, since=before)
-    check("the configured line length is what black is given",
+    check("the configured line length is what ruff is given",
           reply is not None and reply.get("source") is not None
           and reply["source"].startswith("value = some_call(\n")
           and reply["source"].count("\n") == 5,

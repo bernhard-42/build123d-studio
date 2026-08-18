@@ -1583,7 +1583,7 @@ html body {
 /* The name of the tool a group of settings belongs to. A panel that will hold
    more than one tool's settings needs to say which is which before it has two,
    not after - "line length" alone is a question about the editor, and this one
-   is a question about black. */
+   is a question about ruff. */
 /* A group heading opens a new subject, so it needs room above it and almost
    none below - the note that explains it follows immediately. First in a panel
    it needs neither, because the panel's own padding is already there. */

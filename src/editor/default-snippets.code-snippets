@@ -3,8 +3,13 @@
 // Source: https://github.com/build123d/build123d-portable, scripts/build123d-OCP.code-snippets
 // "build123d CodeCAD speedmodeling snippet by Jern", Apache-2.0. See NOTICE.
 //
-// One line differs from upstream: the viewer is imported from build123d_studio
+// Two lines differ from upstream. The viewer is imported from build123d_studio
 // rather than from ocp_vscode, which is the module this application provides.
+// And `# fmt: on` is on a line of its own rather than trailing the `)` above
+// it: a trailing one does not re-enable the formatter, so upstream's version
+// leaves everything after the show_all block - the whole rest of the file, and
+// every line the user goes on to write - permanently unformatted. Measured
+// against ruff 0.16.3, and black behaves the same way.
 //
 // A user's own snippets.json is read on top of this - see snippets.js - and an
 // entry there with the same prefix replaces the one here, so this file can be
@@ -50,7 +55,8 @@
 			"    exclude = [\"\", ],",
 			"    show_sketch_local = False,",
 			"    helper_scale = 1,  # controls size of e.g. planes and axes",
-			")  # fmt: on",
+			")",
+			"# fmt: on",
 			"",
 		],
 		"description": "build123d python template"

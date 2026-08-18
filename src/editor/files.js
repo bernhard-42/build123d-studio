@@ -1410,7 +1410,7 @@ async function saveBuffer(key, saveAs) {
   // the buffer would leave the tab showing the old layout and claiming to be
   // clean. Awaited for the same reason - the write below reads the buffer.
   //
-  // Failure here is not failure to save. black declining a buffer that does not
+  // Failure here is not failure to save. ruff declining a buffer that does not
   // parse is the ordinary state of a file being typed into, and refusing to
   // write it would turn a formatter into an obstacle between somebody and their
   // own work.

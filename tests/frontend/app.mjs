@@ -66,7 +66,7 @@ class FakeSidecar {
    * Format on Save is on by default, so *every* save now waits on this frame -
    * and a harness that left it unanswered would make each save test hang for
    * the request's whole timeout and then fail as though saving were broken.
-   * `source: null` is what the real sidecar sends for a buffer black would not
+   * `source: null` is what the real sidecar sends for a buffer ruff would not
    * change, which is the common case and produces no edit at all.
    *
    * A test that cares about formatting overrides it with answer().
@@ -151,9 +151,8 @@ class FakeSidecar {
           // A builder that answers nothing holds the request open, and the
           // frame is kept so the test can answer it whenever it likes. That is
           // the only way to test what the application does *during* a request:
-          // a real sidecar can take as long as it takes - black is a quarter of
-          // a millisecond a line and the timeout is thirty seconds - and the
-          // window is live throughout.
+          // a real sidecar can take as long as it takes - the timeout is thirty
+          // seconds - and the window is live throughout.
           if (reply === undefined) {
             this.held.push(frame);
           } else {

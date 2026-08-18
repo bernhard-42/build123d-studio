@@ -74,10 +74,10 @@ COMPLETE = "complete"
 MEASURE = "measure"
 
 # Formatting gets one too, and for the opposite reason to completion's: it is
-# not that the answer goes stale, it is that the answer can be slow. black costs
-# about 0.25 ms a line, so a six thousand line file is a second and a half - on
-# the complete lane that would stall every suggestion typed while it ran, for
-# work the user asked for once and is waiting on anyway.
+# not that the answer goes stale, it is that the answer can be slow. Formatting
+# is the one request here whose cost grows with the file, and on the complete
+# lane a slow one would stall every suggestion typed while it ran - for work the
+# user asked for once and is waiting on anyway.
 FORMAT = "format"
 
 # Debugging gets a lane of its own because starting a session blocks: the
