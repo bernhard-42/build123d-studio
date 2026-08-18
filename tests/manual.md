@@ -293,35 +293,6 @@ The first: a session whose beat was over a minute old was skipped as "asleep", w
 4. **Restart immediately** - within a few seconds of the kill. It must offer at once, with no waiting.
 5. **Two windows.** Open a second Studio, leave unsaved work in both, kill only the first, and start a third. It must offer the killed window's files and **not** the running one's - and answering Discard must leave the running window's copies on disk. Check with `ls ~/Library/Application\\ Support/build123d-studio/recovery/*/`.
 
-### M28 — The process listing, per platform
-
-**Proves** the one thing recovery now depends on. **macOS and Linux are measured**; Windows is not, and this is where that is closed.
-
-The application asks the operating system which pids are windows of itself, and matches on the name it finds beside its *own* pid rather than on a constant - because the answer differs on every platform:
-
-```sh
-ps -A -o pid=,comm=      # macOS: full path.  Linux: name truncated to 15 chars
-```
-
-macOS reports `/Applications/build123d Studio.app/Contents/MacOS/build123d-studio`; Linux reports `build123d-studi`, because `comm` holds fifteen characters and the name is sixteen. Both measured on 2026-08-17.
-
-**On Windows**, run this with Studio open and confirm the shape:
-
-```powershell
-tasklist /NH /FO CSV | Select-String build123d
-```
-
-**Pass:** a quoted CSV row whose **first** field is the image name and whose **second** is the pid, e.g. `"build123d-studio.exe","1234","Console","1","50,000 K"`. If either the order or the quoting differs, `src/liveness.js` parses it wrongly and every journal will look dead - which offers a running window's work to another window. `tests/unit/liveness.test.mjs` holds the expected shape; correct it there.
-
-### M29 — Save All with an unnamed buffer
-
-**Proves** the command reaches the buffers with no other copy.
-
-1. Edit a saved file, then New File and type something into it. Both tabs dirty.
-2. **Save All.**
-
-**Pass:** the saved file is written, and the unnamed buffer opens a save panel asking where it should go. Answering it writes the file and clears both dots; cancelling it leaves that buffer dirty and stops the run, so a quit afterwards still asks about it.
-
 ### M17 — A file that is not UTF-8
 
 **Proves** bytes survive a round trip. **From** D8, and this one is an **experiment**: the answer is not yet known, so record what happens rather than expecting a pass.
@@ -471,6 +442,73 @@ Windows has no SIGKILL. `provisioner.kill()` becomes `TerminateProcess` on its *
 
 This is the same shape as M23 - a kill that reaches one level - but on jupyter_client's path, which M23 does not cover. Doing both in one Windows session is sensible.
 
+### M28 — The process listing, per platform
+
+**Proves** the one thing recovery now depends on. **macOS and Linux are measured**; Windows is not, and this is where that is closed.
+
+The application asks the operating system which pids are windows of itself, and matches on the name it finds beside its *own* pid rather than on a constant - because the answer differs on every platform:
+
+```sh
+ps -A -o pid=,comm=      # macOS: full path.  Linux: name truncated to 15 chars
+```
+
+macOS reports `/Applications/build123d Studio.app/Contents/MacOS/build123d-studio`; Linux reports `build123d-studi`, because `comm` holds fifteen characters and the name is sixteen. Both measured on 2026-08-17.
+
+**On Windows**, run this with Studio open and confirm the shape:
+
+```powershell
+tasklist /NH /FO CSV | Select-String build123d
+```
+
+**Pass:** a quoted CSV row whose **first** field is the image name and whose **second** is the pid, e.g. `"build123d-studio.exe","1234","Console","1","50,000 K"`. If either the order or the quoting differs, `src/liveness.js` parses it wrongly and every journal will look dead - which offers a running window's work to another window. `tests/unit/liveness.test.mjs` holds the expected shape; correct it there.
+
+### M29 — Save All with an unnamed buffer
+
+**Proves** the command reaches the buffers with no other copy.
+
+1. Edit a saved file, then New File and type something into it. Both tabs dirty.
+2. **Save All.**
+
+**Pass:** the saved file is written, and the unnamed buffer opens a save panel asking where it should go. Answering it writes the file and clears both dots; cancelling it leaves that buffer dirty and stops the run, so a quit afterwards still asks about it.
+
+### M30 — Rename and delete from the tree
+
+**Proves** the tab follows a rename, and that a delete is recoverable.
+
+1. Open a file from the tree, so it is the one on screen.
+2. Right-click it. **Pass:** the menu appears, the row is picked out, and nothing new opens in a tab.
+3. **Rename** it, type a new name, Enter.
+
+**Pass:** the file is renamed on disk, the tab holding it now reads the new name, and the row's temporary mark is gone. **Then edit and save it**: the bytes must land in the new file, and the old name must not reappear - a buffer left pointing at the old path recreates it on the next save, which is the failure worth looking for.
+
+4. Right-click another file and choose **Delete**.
+
+**Pass:** it asks, and answering moves the file to the platform's trash - check it is actually there and can be put back. Where a volume has no trash the application asks a second time before removing it for good.
+
+5. Dismiss a menu with Escape, and abandon a rename with Escape.
+
+**Pass:** the temporary mark comes off in both cases. Only the file on screen stays marked, or none if nothing is open.
+
+### M31 — An interrupt that cannot land
+
+**Proves** the button says something when it cannot work.
+
+1. Run something OCCT holds the GIL through - a boolean on a large assembly, not a `while True: pass`, which interrupts normally.
+2. Press **Interrupt**.
+
+**Pass:** nothing for five seconds, then a prompt offering to restart the kernel, saying why the interrupt could not arrive. **Cancel** leaves the work running; **Restart** stops it and empties the namespace. Pressing Interrupt several times must produce one prompt, not one per press.
+
+### M32 — User snippets
+
+**Proves** a snippet file written outside the application is found and usable.
+
+1. **With no file of your own**, type `?bdp` in a Python file. **Pass:** the shipped set is offered - build123d-portable's, vendored - and accepting inserts `with BuildPart() as p:`.
+2. Put a snippets file at the path About names - `snippets.json` beside the settings. **Copy a `.code-snippets` file in unedited**, comments and trailing commas included: it is read with jsonc-parser, the library VS Code itself uses. [build123d-portable's set](https://github.com/build123d/build123d-portable/blob/main/scripts/build123d-OCP.code-snippets) is the one to try. A file that will not parse says where in the log and costs nothing else.
+3. Start the application, or press Apply in Settings if it was already running.
+4. In a Python file type the first character of a prefix, e.g. `?`.
+
+**Pass:** the suggestion list opens showing every snippet with that mark, and narrows as more is typed. Accepting one **replaces the mark** - no stray `?` is left in front of the inserted text - and its tab stops are live, so Tab walks them. An entry of yours with a prefix the shipped set also uses replaces it.
+
 ## Results
 
 One row per platform per run. Record the build, not just the date.
@@ -502,8 +540,11 @@ One row per platform per run. Record the build, not just the date.
 | M22 quit during restart | | | |
 | M23 uv's children (Windows) | n/a | | n/a |
 | M24 deep path (Windows) | n/a | | n/a |
-| M25 Save As extension | | | |
+| M25 Save As name as typed | | | |
 | M26 stat carries mtime | record | record | record |
 | M27 wedged kernel (Windows) | n/a | record | n/a |
 | M28 process listing | | record | |
 | M29 Save All unnamed | | | |
+| M30 tree rename/delete | | | |
+| M31 interrupt cannot land | | | |
+| M32 user snippets | | | |

@@ -28,6 +28,7 @@
     "@neutralinojs/lib": "6.9.0",
     "@xterm/addon-fit": "0.11.0",
     "@xterm/xterm": "6.0.0",
+    "jsonc-parser": "3.3.1",
     "monaco-editor": "0.56.0",
     "ocp-viewer-core": "../ocp-viewer-core/dist/ocp-viewer-core-v0.1.0.tgz",
     "three-cad-viewer": "../three-cad-viewer/three-cad-viewer-v5.0.3.tgz"

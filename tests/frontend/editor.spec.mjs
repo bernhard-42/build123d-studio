@@ -180,6 +180,76 @@ test.describe("a new file", () => {
     await expect.poll(() => editorText(page)).toContain("MY_OWN_TEMPLATE");
   });
 
+  test("the toolbar button leaves the stops live, as the menu does", async ({ page }) => {
+    // The path a user actually presses, and the one that was broken: the button
+    // used to place the caret after the file was made, which is how Monaco is
+    // told a snippet session is over - so the stops were consumed and nothing
+    // could be tabbed between. The menu did not do that, so a test driving the
+    // menu event could not see it.
+    await openApp(page, { newFileTemplate: "part = ${1:Box}(1)\nshow(part)$0\n" });
+
+    await page.locator("#btn-new").click();
+    await expect(page.locator(".tab")).toHaveCount(2);
+    await expect.poll(() => editorText(page)).toContain("part = Box(1)");
+
+    await page.keyboard.type("Cylinder");
+    await expect.poll(() => editorText(page)).toContain("part = Cylinder(1)");
+  });
+
+  test("the template is a snippet, and Tab walks its stops", async ({ page }) => {
+    // The template is inserted rather than being the text the buffer starts
+    // with, which is what makes the stops exist at all - a snippet session is
+    // live editing state, not a string.
+    await openApp(page, {
+      newFileTemplate: "part = ${1:Box}(${2:1, 2, 3})\nshow(part)$0\n",
+    });
+
+    await page.evaluate(() =>
+      globalThis.__NEUTRALINO_STUB__.emit("mainMenuItemClicked", { id: "file.new" }),
+    );
+    await expect(page.locator(".tab")).toHaveCount(2);
+    await expect.poll(() => editorText(page)).toContain("part = Box(1, 2, 3)");
+
+    // The first stop is selected, so typing replaces it rather than inserting
+    // beside it.
+    await page.keyboard.type("Cylinder");
+    await expect.poll(() => editorText(page)).toContain("part = Cylinder(1, 2, 3)");
+
+    // And Tab moves to the second, which is the half a plain insertion cannot do.
+    await page.keyboard.press("Tab");
+    await page.keyboard.type("2, 4");
+    await expect.poll(() => editorText(page)).toContain("part = Cylinder(2, 4)");
+  });
+
+  test("a template with no stops still opens at its first line", async ({ page }) => {
+    // Inserting leaves the caret after what was inserted, which for a long
+    // template scrolls the first line out of sight - so the file appears to
+    // start in the middle of its own comment.
+    await openApp(page, {
+      newFileTemplate: `# FIRST LINE\n${"# filler\n".repeat(60)}# LAST LINE\n`,
+    });
+
+    await page.evaluate(() =>
+      globalThis.__NEUTRALINO_STUB__.emit("mainMenuItemClicked", { id: "file.new" }),
+    );
+    await expect(page.locator(".tab")).toHaveCount(2);
+
+    await expect.poll(() => editorText(page)).toContain("FIRST LINE");
+  });
+
+  test("a variable in the template is filled in", async ({ page }) => {
+    await openApp(page, { newFileTemplate: "# $CURRENT_YEAR\n" });
+
+    await page.evaluate(() =>
+      globalThis.__NEUTRALINO_STUB__.emit("mainMenuItemClicked", { id: "file.new" }),
+    );
+    await expect(page.locator(".tab")).toHaveCount(2);
+
+    const year = String(new Date().getFullYear());
+    await expect.poll(() => editorText(page)).toContain(year);
+    expect(await editorText(page)).not.toContain("CURRENT_YEAR");
+  });
+
   test("and is not dirty before anything has been typed", async ({ page }) => {
     // Quitting should not offer to save something the user never wrote.
     await openApp(page);
@@ -258,6 +328,154 @@ test.describe("Save As", () => {
       page.locator(".tab-close.tab-dirty"),
       "a cancelled Save As reported the buffer as saved",
     ).toHaveCount(1);
+  });
+});
+
+test.describe("the user's own snippets", () => {
+  // The shape build123d-portable ships, with its comments removed. The marks on
+  // the prefixes are deliberate: they keep these clear of anything basedpyright
+  // would suggest, and they are exactly what Monaco's own word handling cannot
+  // filter on - see src/editor/snippets.js.
+  const SNIPPETS = JSON.stringify({
+    BuildPart: { scope: "python", prefix: "?bdp", body: ["with BuildPart() as p$1:", "    $0"] },
+    BuildSketch: { scope: "python", prefix: "?bds", body: ["with BuildSketch($1) as s$2:", "    $0"] },
+    Extrude: { scope: "python", prefix: ">ext", body: ["extrude(amount=$1)"] },
+  });
+
+  async function openWithSnippets(page) {
+    await open(page, {
+      files: { ...FILES, "/appdata/build123d-studio/snippets.json": SNIPPETS },
+      settings: { workspace: WORKSPACE },
+    });
+    await expect(page.locator(".tab-active .tab-label")).toHaveText("part.py");
+  }
+
+  test("the shipped set is there with no file of your own", async ({ page }) => {
+    // What a new installation has: build123d-portable's set, vendored.
+    await open(page, { files: FILES, settings: { workspace: WORKSPACE } });
+    await expect(page.locator(".tab-active .tab-label")).toHaveText("part.py");
+
+    await caretToEnd(page);
+    await page.keyboard.press("Enter");
+    await page.keyboard.type("?bdp");
+    await expect(page.locator(".suggest-widget .monaco-list-row").first()).toBeVisible();
+    await page.keyboard.press("Enter");
+
+    await expect.poll(() => editorText(page)).toContain("with BuildPart() as p:");
+  });
+
+  test("and a snippet of your own replaces the shipped one with that prefix", async ({ page }) => {
+    await open(page, {
+      files: {
+        ...FILES,
+        "/appdata/build123d-studio/snippets.json": JSON.stringify({
+          Mine: { prefix: "?bdp", body: ["MY OWN BUILD PART$0"] },
+        }),
+      },
+      settings: { workspace: WORKSPACE },
+    });
+    await expect(page.locator(".tab-active .tab-label")).toHaveText("part.py");
+
+    await caretToEnd(page);
+    await page.keyboard.press("Enter");
+    await page.keyboard.type("?bdp");
+    await expect(page.locator(".suggest-widget .monaco-list-row").first()).toBeVisible();
+    await page.keyboard.press("Enter");
+
+    await expect.poll(() => editorText(page)).toContain("MY OWN BUILD PART");
+    expect(await editorText(page)).not.toContain("with BuildPart()");
+  });
+
+  test("typing a prefix offers the snippets it starts", async ({ page }) => {
+    await openWithSnippets(page);
+    await caretToEnd(page);
+    await page.keyboard.press("Enter");
+
+    await page.keyboard.type("?b");
+
+    const rows = page.locator(".suggest-widget .monaco-list-row");
+    await expect(rows.first()).toBeVisible();
+    const labels = await rows.allTextContents();
+    expect(labels.join(" ")).toContain("?bdp");
+    expect(labels.join(" ")).toContain("?bds");
+    // The list has narrowed: the > snippet is a different mark.
+    expect(labels.join(" ")).not.toContain(">ext");
+  });
+
+  test("and accepting one replaces the mark rather than inserting beside it", async ({ page }) => {
+    // Without an explicit range the snippet lands after the `?`, leaving
+    // `?with BuildPart() as p:` in the file.
+    await openWithSnippets(page);
+    await caretToEnd(page);
+    await page.keyboard.press("Enter");
+
+    await page.keyboard.type("?bdp");
+    await expect(page.locator(".suggest-widget .monaco-list-row").first()).toBeVisible();
+    await page.keyboard.press("Enter");
+
+    await expect.poll(() => editorText(page)).toContain("with BuildPart() as p:");
+    expect(await editorText(page)).not.toContain("?with");
+  });
+
+  test("and its tab stops are live", async ({ page }) => {
+    await openWithSnippets(page);
+    await caretToEnd(page);
+    await page.keyboard.press("Enter");
+
+    await page.keyboard.type("?bdp");
+    await expect(page.locator(".suggest-widget .monaco-list-row").first()).toBeVisible();
+    await page.keyboard.press("Enter");
+    // $1 sits after "as p", so typing names the part.
+    await page.keyboard.type("art");
+
+    await expect.poll(() => editorText(page)).toContain("with BuildPart() as part:");
+  });
+
+  test("a .code-snippets file works unedited, comments and all", async ({ page }) => {
+    // The reason jsonc-parser is a dependency: the sets people copy are JSONC,
+    // and requiring them to be stripped first makes "copy this in" a step with
+    // an edit in it.
+    await open(page, {
+      files: {
+        ...FILES,
+        "/appdata/build123d-studio/snippets.json": `{
+          // build123d speedmodelling snippets
+          "BuildPart": {
+            "prefix": "?bdp", // the shortcut
+            "body": ["with BuildPart() as p$1:", "    $0",],
+          },
+        }`,
+      },
+      settings: { workspace: WORKSPACE },
+    });
+    await expect(page.locator(".tab-active .tab-label")).toHaveText("part.py");
+
+    await caretToEnd(page);
+    await page.keyboard.press("Enter");
+    await page.keyboard.type("?bdp");
+    await expect(page.locator(".suggest-widget .monaco-list-row").first()).toBeVisible();
+    await page.keyboard.press("Enter");
+
+    await expect.poll(() => editorText(page)).toContain("with BuildPart() as p:");
+  });
+
+  test("a file that cannot be read costs the editor nothing", async ({ page }) => {
+    // Comments parse - that is the whole point of the parser - so a genuinely
+    // broken file is a truncated one. It must leave a working editor and a line
+    // in the log, not a broken completion provider.
+    await open(page, {
+      files: {
+        ...FILES,
+        "/appdata/build123d-studio/snippets.json": '{ "A": ',
+      },
+      settings: { workspace: WORKSPACE },
+    });
+    await expect(page.locator(".tab-active .tab-label")).toHaveText("part.py");
+
+    await caretToEnd(page);
+    await page.keyboard.type("\nx = 1");
+
+    await expect.poll(() => editorText(page)).toContain("x = 1");
   });
 });
 

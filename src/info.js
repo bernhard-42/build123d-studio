@@ -4,7 +4,8 @@ import { version as threeCadViewerVersion } from "three-cad-viewer";
 import { appVersion, monacoVersion, xtermVersion } from "./versions.js";
 import { escapeHtml } from "./escape.js";
 import { closeOnBackdropClick } from "./backdrop.js";
-import { resolveEnvRoot } from "./bootstrap/envroot.js";
+import { appDataDir, resolveEnvRoot } from "./bootstrap/envroot.js";
+import { snippetsPath } from "./editor/snippets.js";
 import { ensureUv } from "./bootstrap/uv.js";
 import { run, quote } from "./proc.js";
 import * as ipc from "./ipc.js";
@@ -193,6 +194,16 @@ async function gather() {
   sections.push({
     title: "Log files",
     rows: await logRows(),
+  });
+
+  // Where a user's own snippets go. Named whether or not the file is there:
+  // unlike the logs, this is a path somebody has to be told before they can
+  // write one, so "it does not exist yet" is the case that most needs it.
+  sections.push({
+    title: "Snippets",
+    note: "VS Code's .code-snippets format, comments and all. Read at startup "
+      + "and when Settings is applied.",
+    rows: [row("File", snippetsPath(await appDataDir()))],
   });
 
   return sections;

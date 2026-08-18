@@ -45,6 +45,7 @@ import {
   discardRecovery,
   offerRecovery,
   claimJournal,
+  reloadUserSnippets,
   closeFolder,
   closeTab,
   currentFolder,
@@ -615,6 +616,9 @@ async function main() {
   // Said as early as there is a directory to say it in, so a window that
   // crashes during its own startup still leaves a beat behind.
   claimJournal().catch((error) => log.warn("Could not claim the recovery journal:", error));
+  // The user's own snippets, if they have written any. Not awaited: the editor
+  // works without them and a file read must not stand in front of the window.
+  reloadUserSnippets().catch((error) => log.warn("Could not read the snippets file:", error));
 
   // A restored folder enables Close Folder and Toggle Sidebar, and the menu was
   // built before the workspace was read.

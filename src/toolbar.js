@@ -290,8 +290,9 @@ export function initToolbar() {
     "btn-new": () => withErrorReporting("New", async () => {
       if (await newFile()) {
         await updateTitle();
-        // An empty buffer with no caret in it is not obviously ready to type in.
-        focusAt(null);
+        // The caret is newFile's to place, and placing one here would take it
+        // away: the template is a snippet, and moving the selection outside its
+        // stops is what tells Monaco the session is over. See insertSnippet.
       }
     }),
     "btn-open": () => withErrorReporting("Open", async () => {

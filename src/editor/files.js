@@ -41,12 +41,15 @@ import {
   bufferContents,
   bufferExists,
   bufferStamp,
+  focusAt,
+  insertSnippet,
   bufferNeedsSaving,
   markMissingFiles,
   markSaved,
   onContentChange,
   reloadBufferText,
   setBufferStamp,
+  setUserSnippets,
   openBuffer,
   setCurrentFile,
   showBuffer,
@@ -76,6 +79,11 @@ import {
 import { appDataDir } from "../bootstrap/envroot.js";
 import { askThreeWay, askTwoWay, notifyFailure, notifyRefusal } from "../confirm.js";
 import { writeFileSafely } from "./safewrite.js";
+// The shipped set, bundled at build time rather than read from disk: it is
+// part of the application, and a file beside the binary is one more thing a
+// packaging step can leave out.
+import shippedSnippets from "./default-snippets.code-snippets?raw";
+import { loadSnippets } from "./snippets.js";
 import { getSetting, setSetting } from "../store.js";
 import { chooseSaveName } from "../savedialog.js";
 import { liveWindows } from "../liveness.js";
@@ -553,7 +561,27 @@ export async function newFile() {
   // No longer asks about the current buffer, because it no longer replaces it.
   // New opens a tab beside what is already there, so there is nothing to
   // discard and nothing to confirm.
-  showInTab({ text: newFileTemplate() });
+  //
+  // The buffer is opened empty and the template *inserted*, rather than being
+  // the text the buffer starts with, because the template is a snippet: `$1`
+  // and `${1:like this}` are stops to tab between, and they only exist while a
+  // snippet session is running. See insertSnippet.
+  const key = showInTab({ text: "" });
+  // Focuses the editor and leaves the caret at the template's first stop, or at
+  // line 1 where it declares none. Nothing after this may move the caret: a
+  // selection outside the stops is how Monaco is told the snippet is over.
+  const versionId = insertSnippet(newFileTemplate());
+  if (versionId === null) {
+    // No editor to insert into, so nothing placed the caret either.
+    focusAt(null);
+  }
+  if (versionId !== null) {
+    // Still clean. Inserting is an edit, so without this a new file would open
+    // already modified and a quit would ask about a buffer nobody had typed
+    // into. The first keystroke into a tab stop makes it dirty, which is when
+    // there is something to lose.
+    markSaved(key, versionId);
+  }
   syncKernelDirectory();
   await saveWorkspace();
   log.info("New file");
@@ -991,6 +1019,17 @@ export function pendingRecoveryWrites() {
 
 
 // --- recovering what a crash left behind -----------------------------------
+
+/**
+ * Read the user's snippet file into the editor.
+ *
+ * Called at startup and again when the settings dialog is applied, which is the
+ * moment somebody who has just edited the file is most likely to want it read.
+ * A missing file is the ordinary case and says nothing.
+ */
+export async function reloadUserSnippets() {
+  setUserSnippets(await loadSnippets({ filesystem, log }, await appDataDir(), shippedSnippets));
+}
 
 /**
  * Record which process owns this window's journal.

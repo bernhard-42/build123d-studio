@@ -37,7 +37,7 @@ import {
   setStatus,
   showSplash,
 } from "./bootstrap/splash.js";
-import { NEW_FILE_TEMPLATE_KEY, newFileTemplate } from "./editor/files.js";
+import { NEW_FILE_TEMPLATE_KEY, newFileTemplate, reloadUserSnippets } from "./editor/files.js";
 import { lineLengthProblem, usableLineLength } from "./editor/format.js";
 import {
   FORMAT_ON_SAVE_KEY,
@@ -427,6 +427,15 @@ export async function showSettings({ tab = null } = {}) {
           <p class="info-note">
             What a new file starts with. Cleared, New File opens an empty buffer;
             Restore default puts the shipped template back.
+          </p>
+          <p class="info-note">
+            It is a <strong>snippet</strong>, in the same syntax VS Code uses:
+            <code>$1</code> and <code>\${1:like this}</code> are stops to tab
+            between, <code>\${1|Box,Cylinder,Sphere|}</code> offers a choice,
+            <code>$0</code> is where the caret ends, and
+            <code>$CURRENT_YEAR</code>, <code>$RANDOM</code> and
+            <code>$CLIPBOARD</code> are filled in. A literal dollar is
+            <code>\$</code>.
           </p>
           <textarea class="settings-template" id="settings-new-template" rows="12"
                     spellcheck="false"
@@ -948,6 +957,10 @@ ${VIEWER_GROUPS.map(
   // saved-but-not-installed change simply lands at the next start.
   document.getElementById("settings-apply").addEventListener("click", async () => {
     if (await saveEverything()) {
+      // The snippets file is edited outside this dialog, and Apply is the
+      // moment somebody who has just changed it is most likely to want it read.
+      await reloadUserSnippets().catch(
+        (error) => log.warn("Could not read the snippets file:", error));
       close();
     }
   });

@@ -108,6 +108,7 @@ import EditorWorker from "monaco-editor/editor/editor.worker.js?worker";
 
 import { cellAt, findCells, nextCell } from "./cells.js";
 import { completionItems, completionQuery, isIncomplete } from "./completion.js";
+import { snippetCompletions } from "./snippets.js";
 import { markersFor } from "./diagnostics.js";
 import { formatEdits } from "./format.js";
 import { showConsolePanel } from "../debug/console.js";
@@ -606,6 +607,54 @@ export function bufferForPath(path) {
  * Keyed, and given the version, because the buffer being saved is not reliably
  * the one on screen by the time a save finishes - see saveFile.
  */
+/**
+ * Put a snippet into the buffer on screen, with its tab stops live.
+ *
+ * The template a new file starts from is VS Code's snippet syntax: `$1` and
+ * `${1:like this}` are stops the user tabs between, `${1|a,b|}` offers a choice,
+ * `$0` is where the caret ends, and the `CURRENT_*`, `RANDOM` and `CLIPBOARD`
+ * variables are resolved as they are there. A literal dollar is `\$`.
+ *
+ * SnippetController2 is a contribution rather than public API - it is not in
+ * monaco's .d.ts - which is the same footing as the fifteen other contributions
+ * this file imports by path. It is already imported for the suggestion widget's
+ * own snippet completions.
+ *
+ * The editor is focused first, and that is load-bearing rather than tidiness:
+ * the stops are a live selection, and a snippet inserted into an editor that
+ * does not have the keyboard leaves them nowhere to be typed into.
+ *
+ * @returns {number|null} the version the model is on afterwards, or null if
+ *   there was nothing to insert into.
+ */
+export function insertSnippet(text) {
+  const model = currentModel();
+  if (editor === null || model === null) {
+    return null;
+  }
+  editor.focus();
+  const controller = editor.getContribution("snippetController2");
+  if (controller === null || controller === undefined) {
+    // No contribution: put the text in as text rather than losing it.
+    model.setValue(text);
+    return model.getAlternativeVersionId();
+  }
+  controller.insert(text);
+
+  // A template that declares no stops opens at the top, as it did when it was
+  // simply the buffer's text. Inserting leaves the caret after what was
+  // inserted, which for a twelve-line template scrolls the first line out of
+  // sight - so the file appears to start in the middle of its own comment.
+  //
+  // A template that does declare one has said where the caret goes, and that
+  // answer wins.
+  if (!/\$\d|\$\{\d/.test(text)) {
+    editor.setPosition({ lineNumber: 1, column: 1 });
+    editor.revealLine(1);
+  }
+  return model.getAlternativeVersionId();
+}
+
 export function markSaved(key, versionId) {
   buffers.markSaved(key, versionId);
   notifyDirtyChanged();
@@ -949,6 +998,17 @@ const LANGUAGE_TIMEOUT = 6000;
 // about how long formatting ought to take.
 const FORMAT_TIMEOUT = 30000;
 
+// The user's snippets, read once at startup and whenever they say they have
+// changed the file. Held here rather than read per keystroke: the provider is
+// asked on every character typed, and a file read per character would put the
+// filesystem in front of the suggestion list.
+let userSnippets = [];
+
+/** Replace what the snippet provider offers. */
+export function setUserSnippets(snippets) {
+  userSnippets = snippets;
+}
+
 /** What to ask about, for a position in whichever buffer is on screen. */
 function queryFor(model, position) {
   const key = buffers.activeKeyOf();
@@ -998,6 +1058,33 @@ function registerLanguageFeatures() {
         incomplete: isIncomplete(reply),
       };
     },
+  });
+
+  // The user's own snippets, as a provider of their own rather than folded into
+  // the one above. Two reasons: it answers from memory while that one waits on
+  // the sidecar, so a snippet appears whether or not the language server is up;
+  // and a fault in one cannot take the other down with it.
+  //
+  // The marks are declared as trigger characters because Monaco asks on word
+  // characters by itself and neither `?` nor `>` is one - without this the list
+  // opens only once a letter follows, which is a beat late for a prefix whose
+  // whole point is the mark.
+  monaco.languages.registerCompletionItemProvider("python", {
+    triggerCharacters: ["?", ">"],
+    provideCompletionItems: (model, position) => ({
+      suggestions: snippetCompletions(
+        userSnippets,
+        model.getValueInRange({
+          startLineNumber: position.lineNumber,
+          startColumn: 1,
+          endLineNumber: position.lineNumber,
+          endColumn: position.column,
+        }),
+        position,
+        monaco.languages.CompletionItemKind,
+        monaco.languages.CompletionItemInsertTextRule,
+      ),
+    }),
   });
 
   monaco.languages.registerSignatureHelpProvider("python", {

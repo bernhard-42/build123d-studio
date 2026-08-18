@@ -41,6 +41,17 @@ const EXTRAS = [
     url: "https://raw.githubusercontent.com/neutralinojs/neutralinojs/main/LICENSE",
   },
   {
+    name: "build123d-OCP snippets",
+    holder: "the build123d-portable authors",
+    what:
+      "src/editor/default-snippets.code-snippets, the snippet set this " +
+      "application ships as its defaults, from build123d-portable's " +
+      "scripts/build123d-OCP.code-snippets. One line differs: the viewer is " +
+      "imported from build123d_studio rather than from ocp_vscode.",
+    licence: "Apache-2.0",
+    url: "https://raw.githubusercontent.com/build123d/build123d-portable/main/LICENSE",
+  },
+  {
     name: "Material Symbols",
     holder: "Google LLC",
     what:
