@@ -1093,6 +1093,29 @@ async function clearDeadJournals(dead) {
  * deleted recovers as a dirty buffer that saving recreates, which is what
  * somebody who lost work in a crash is asking for.
  */
+/**
+ * The untitled tabs that hold nothing, which a recovered untitled buffer can
+ * take over instead of opening beside.
+ *
+ * A start with nothing to reopen puts up an empty scratch tab - the workspace
+ * remembers paths and never contents, so an untitled buffer is not among the
+ * tabs that come back - and recovery would then open its own next to it,
+ * leaving two Untitled tabs, one empty and one holding the work. Taking the
+ * empty one over loses nothing by definition.
+ *
+ * Clean as well as empty, so a buffer somebody has emptied on purpose and not
+ * yet saved is left alone.
+ */
+function emptyUntitledTabs() {
+  return bufferKeys().filter((key) => {
+    if (bufferPath(key) !== null) {
+      return false;
+    }
+    const contents = bufferContents(key);
+    return contents !== null && contents.text === "" && !bufferNeedsSaving(key);
+  });
+}
+
 export async function offerRecovery() {
   const dataDir = await appDataDir();
   const mine = journalRoot(dataDir, log.instanceId);
@@ -1204,9 +1227,16 @@ export async function offerRecovery() {
     (entry) => entry.path === null || newest.get(entry.path) === entry,
   );
 
+  // Taken before anything is opened, so a recovered untitled buffer joins the
+  // empty tab rather than arriving beside it. One each: two untitled buffers
+  // recovered together are two tabs.
+  const spare = emptyUntitledTabs();
+
   const recoveredKeys = [];
   for (const entry of chosen) {
-    const held = entry.path === null ? null : bufferForPath(entry.path);
+    const held = entry.path === null
+      ? (spare.length > 0 ? spare.shift() : null)
+      : bufferForPath(entry.path);
     if (held === null) {
       recoveredKeys.push(openBuffer({ path: entry.path, text: entry.text, matchesDisk: false }));
     } else {

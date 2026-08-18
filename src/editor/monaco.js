@@ -602,12 +602,6 @@ export function bufferForPath(path) {
 }
 
 /**
- * Record a buffer as matching disk, at the version that was written.
- *
- * Keyed, and given the version, because the buffer being saved is not reliably
- * the one on screen by the time a save finishes - see saveFile.
- */
-/**
  * Put a snippet into the buffer on screen, with its tab stops live.
  *
  * The template a new file starts from is VS Code's snippet syntax: `$1` and
@@ -655,6 +649,12 @@ export function insertSnippet(text) {
   return model.getAlternativeVersionId();
 }
 
+/**
+ * Record a buffer as matching disk, at the version that was written.
+ *
+ * Keyed, and given the version, because the buffer being saved is not reliably
+ * the one on screen by the time a save finishes - see saveFile.
+ */
 export function markSaved(key, versionId) {
   buffers.markSaved(key, versionId);
   notifyDirtyChanged();

@@ -398,7 +398,9 @@ The eight-second deadline exists for precisely this and could not fire either, b
 1. Make a project whose full file path is within about twenty characters of 260.
 2. Open a file in it, edit, and save.
 
-**Pass:** it saves. It is allowed to fall back to a direct write - that is the designed behaviour when the temporary cannot be created - so what must **not** happen is a failed save or an emptied file. Check the log for "Could not save through a temporary file".
+**Pass:** it saves, or it refuses and says so - what must **not** happen is an emptied or half-written file. It is allowed to fall back to a direct write, which is the designed behaviour when the temporary cannot be created; check the log for "Could not save through a temporary file".
+
+**Settled 2026-08-18, measured on dev167.** Past 260 characters the save fails with "Unable to write file on save"; one directory shorter it succeeds. That is where it stays: supporting longer paths needs a `longPathAware` manifest in the packaged executable *and* the machine-wide registry setting, so it would still fail on a default Windows - and the refusal already protects the work, which is what this test is for. A project that deep belongs in another folder.
 
 ### M25 — Save As takes the name as typed
 
@@ -542,38 +544,46 @@ One row per platform per run. Record the build, not just the date.
 
 | | macOS | Windows | Linux |
 |---|---|---|---|
-| Build | | | |
-| M1 ordinary quit | | | |
-| M2 quit during install | | | |
-| M3 quit before usable | | | |
-| M4 wedged language server | | | |
-| M5 long computation | | | |
-| M6 run in flight | | | |
-| M7 at a breakpoint | | | |
-| M8 killed outright | | | |
-| M9 two instances | | | |
-| M10 tabs during save | | | |
-| M11 typing during save | | | |
-| M12 new file collision | | | |
-| M13 Save As collision | | | |
-| M14 full disk | | | |
-| M15 changed on disk | | | |
-| M16 crash recovery | | | |
-| M17 not UTF-8 | record | record | record |
-| M18 file identity | record | record | record |
-| M19 Windows tree | n/a | | n/a |
-| M20 read-only install | | | |
-| M21 studio command | | | |
-| M22 quit during restart | | | |
-| M23 uv's children (Windows) | n/a | | n/a |
-| M24 deep path (Windows) | n/a | | n/a |
-| M25 Save As name as typed | | | |
-| M26 stat carries mtime | record | record | record |
-| M27 wedged kernel (Windows) | n/a | record | n/a |
-| M28 process listing | | record | |
-| M29 Save All unnamed | | | |
-| M30 tree rename/delete | | | |
-| M31 interrupt cannot land | | | |
-| M32 user snippets | | | |
-| M33 menu bar in window | n/a | | |
-| M34 keyboard after Open Folder | | | |
+| Build | 0.3.0.dev167 | 0.3.0.dev167 | |
+| M1 ordinary quit | ok | ok |  |
+| M2 quit during install | ok | ok |  |
+| M3 quit before usable | ok | ok |  |
+| M4 wedged language server | ok | ok |  |
+| M5 long computation | ok | ok |  |
+| M6 run in flight | ok | ok |  |
+| M7 at a breakpoint | ok | ok |  |
+| M8 killed outright | ok | ok |  |
+| M9 two instances | ok | ok |  |
+| M10 tabs during save | ok | ok |  |
+| M11 typing during save | ok | ok |  |
+| M12 new file collision | ok | ok |  |
+| M13 Save As collision | ok | ok |  |
+| M14 full disk | open | open |  |
+| M15 changed on disk | ok | ok |  |
+| M16 crash recovery | ok | fixed (dev168) |  |
+| M17 not UTF-8 | ok | ok |  |
+| M18 file identity | ok | n/a |  |
+| M19 Windows tree | n/a | ok | n/a |
+| M20 read-only install | ok | ok |  |
+| M21 studio command | ok | warn |  |
+| M22 quit during restart | ok | ok |  |
+| M23 uv's children (Windows) | n/a | open | n/a |
+| M24 deep path (Windows) | n/a | won't fix | n/a |
+| M25 Save As name as typed | ok | ok |  |
+| M26 stat carries mtime | ok | ok |  |
+| M27 wedged kernel (Windows) | n/a | ok | n/a |
+| M28 process listing | ok | ok |  |
+| M29 Save All unnamed | ok | ok |  |
+| M30 tree rename/delete | ok | ok |  |
+| M31 interrupt cannot land | ok | ok |  |
+| M32 user snippets | ok | ok |  |
+| M33 menu bar in window | n/a | ok |  |
+| M34 keyboard after Open Folder | ok | ok |  |
+
+**The run of 2026-08-18, macOS and Windows, 0.3.0.dev167.** The first full pass; Linux has still never been run. What it left:
+
+- **M16 failed, and it was the untitled buffer rather than the platform.** Ctrl-N, type, kill, restart: two Untitled tabs, one empty and one holding the work. The workspace remembers paths and never contents, so an untitled buffer is not among the tabs that reopen; with nothing else open the start puts up an empty scratch tab, and recovery opened its own beside it. macOS passed only because that session had named files. Fixed by taking the empty tab over, covered by `tests/frontend/recovery.spec.mjs`.
+- **M21 warned on Windows** with `NE_RS_UNBLDRE: Unable to load application resource file /resources/favicon.ico` on every launch from a console. The page names an icon now, so nothing asks for the one we do not ship.
+- **M26 answers an open design question**: the "It changed on disk" dialog appeared on both, so `stat` carries mtime on Windows and the check runs at full strength rather than falling back to size alone.
+- **M28 confirms what pid ownership needs**: `tasklist` matched exactly one row per window - the sidecars carry other names - which is what makes `liveWindows()` a list of windows rather than of processes.
+- **M14 is the only row never attempted**, and M23 waits on ocp-tessellate and ocp-viewer-core reaching PyPI.

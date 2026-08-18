@@ -44,6 +44,10 @@
     />
     <title>build123d Studio</title>
     <!-- Injected by the Neutralino server; defines NL_PORT, NL_TOKEN, NL_PATH, ... -->
+    <!-- Named, because a page that names none is asked for /favicon.ico - and
+         Neutralino answers a resource it does not have with NE_RS_UNBLDRE on
+         stderr, which is a line of error text on every launch from a console. -->
+    <link rel="icon" href="/icons/appIcon.ico" />
     <script src="/__neutralino_globals.js"></script>
   </head>
   <body>

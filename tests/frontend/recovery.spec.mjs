@@ -93,6 +93,26 @@ test.describe("a session that ended without being asked", () => {
     await expect(page.locator(".tab-close.tab-dirty")).toHaveCount(1);
   });
 
+  test("and joins the empty tab a start with nothing to reopen leaves", async ({ page }) => {
+    // The workspace remembers paths and never contents, so an untitled buffer
+    // is not among the tabs that reopen. When it was the only one, the start
+    // has nothing to restore and puts up an empty scratch tab - and recovery
+    // used to open its own beside it, leaving two untitled tabs, one empty and
+    // one holding the work. Reported on Windows against 0.3.0.dev167.
+    await open(page, {
+      files: { ...FILES, ...crashed(DEAD, { 3: { path: null, text: "SCRATCH = 1\n" } }) },
+      settings: { sampleShown: true },
+    });
+
+    await expect(page.locator(".confirm-overlay")).toBeVisible();
+    await page.locator('.confirm-overlay [data-answer="save"]').click();
+
+    await expect.poll(() => tabLabels(page)).toHaveLength(1);
+    await expect.poll(() => editorText(page)).toContain("SCRATCH = 1");
+    // And it is dirty: the text has never been anywhere but memory.
+    await expect(page.locator(".tab-close.tab-dirty")).toHaveCount(1);
+  });
+
   test("two dead sessions are offered together, in one prompt", async ({ page }) => {
     await openApp(page, {
       ...crashed(DEAD, { 7: { path: `${PROJECT}/one.py`, text: "ONE\n" } }),
