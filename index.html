@@ -47,6 +47,14 @@
     <script src="/__neutralino_globals.js"></script>
   </head>
   <body>
+    <!-- The menu bar, on the platforms that do not have a system one. The
+         window keeps its own frame - so its buttons, its dragging and its title
+         are the system's - and this strip carries only the icon and the menus.
+         On macOS the menu belongs to the system and this stays hidden. -->
+    <div id="titlebar" class="titlebar" hidden>
+      <div class="titlebar-menus" id="titlebar-menus"></div>
+      <div class="titlebar-dropdown" id="titlebar-dropdown" hidden></div>
+    </div>
     <div id="splash" class="splash">
       <h1 class="splash-title">build123d Studio</h1>
       <p class="splash-status" id="splash-status">Starting…</p>
@@ -83,7 +91,11 @@
           <!-- Why a name was refused, under the header and above the row it is
                about. Silence would look like Enter not working. -->
           <p class="tree-problem" id="tree-problem" hidden></p>
-          <div class="tree-body" id="tree-body"></div>
+          <!-- Focusable, so there is somewhere for the keyboard to be when no
+               file is open: an editor with no model cannot take focus, and a
+               window with nothing focused hands its keys to the host - which on
+               Windows beeps at every Alt. -->
+          <div class="tree-body" id="tree-body" tabindex="0"></div>
         </aside>
         <div class="splitter splitter-v" id="splitter-tree" hidden></div>
       <!-- Two independent rows rather than one 2x2 grid: a grid shares its

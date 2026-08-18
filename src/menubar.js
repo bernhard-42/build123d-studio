@@ -34,6 +34,7 @@ import { events, window as neuWindow } from "@neutralinojs/lib";
 import { COMMANDS, describeChord, parseChord } from "./keys.js";
 import { MENU, buildMenu } from "./menu.js";
 import { chordsFor } from "./keybindings.js";
+import { initTitleBar, setMenus, usesOwnTitleBar } from "./titlebar/titlebar.js";
 import * as log from "./log.js";
 
 // Items that need something open to act on. This was a fixed set of things
@@ -173,7 +174,23 @@ export async function initMenu(commands) {
   }
 
   events.on("mainMenuItemClicked", onMenuItemClicked);
+
+  // The in-window bar reports a pick as an id, which is the same thing the
+  // native event carries - so both ends of the menu run the same handlers.
+  await initTitleBar({ platform: NL_OS, onPick: runMenuItem });
   await refreshMenu();
+}
+
+/** Run what a menu item asks for, whichever menu it came from. */
+function runMenuItem(id) {
+  const handler = handlers[id];
+  if (handler === undefined) {
+    log.info(`Menu item ${id} has no handler here`);
+    return;
+  }
+  Promise.resolve()
+    .then(handler)
+    .catch((error) => log.error(`Menu item ${id} failed:`, error));
 }
 
 /**
@@ -202,6 +219,14 @@ export async function refreshMenu() {
     nativeClipboard: clipboardIsNative,
     runCommands: COMMANDS,
   });
+
+  // Where the menu goes depends on who draws the window's frame. macOS keeps
+  // its system menu; everywhere else the frame is ours and so is the bar, and
+  // both are built from this same structure so they cannot drift.
+  if (usesOwnTitleBar(NL_OS)) {
+    setMenus(menu);
+    return;
+  }
 
   try {
     await neuWindow.setMainMenu(menu);

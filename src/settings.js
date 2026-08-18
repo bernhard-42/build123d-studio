@@ -60,6 +60,7 @@ import * as ipc from "./ipc.js";
 import * as log from "./log.js";
 import { consoleLevel, consolePath, setConsoleLevel } from "./log.js";
 import { escapeHtml } from "./escape.js";
+import { afterNativeDialog, bounceActivation } from "./nativedialog.js";
 import { closeOnBackdropClick } from "./backdrop.js";
 import { refreshToolbarTitles } from "./toolbar.js";
 import { resolvedTheme, setThemePreference } from "./theme.js";
@@ -612,6 +613,12 @@ ${VIEWER_GROUPS.map(
       const chosen = await os.showFolderDialog(`Where is your ${p.name} checkout?`, {
         defaultPath: document.getElementById(`local-${p.name}`).value || undefined,
       });
+      afterNativeDialog();
+      if (NL_OS === "Windows") {
+        // The same chooser openFolder uses, and it leaves the keyboard at the
+        // frame in the same way. See bounceActivation.
+        await bounceActivation();
+      }
       // Cancel is undocumented; anything that is not a non-empty string is one.
       if (typeof chosen !== "string" || chosen === "") {
         return;

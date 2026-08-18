@@ -509,6 +509,33 @@ tasklist /NH /FO CSV | Select-String build123d
 
 **Pass:** the suggestion list opens showing every snippet with that mark, and narrows as more is typed. Accepting one **replaces the mark** - no stray `?` is left in front of the inserted text - and its tab stops are live, so Tab walks them. An entry of yours with a prefix the shipped set also uses replaces it.
 
+### M33 — The menu bar inside the window
+
+**Windows and Linux.** The window keeps its system frame - so its rounding, its shadow, its dragging, its resizing and its buttons are the window manager's - and a strip below it carries the icon and the menus. macOS keeps its system menu and must be checked for *no* change.
+
+Drawing the bar and its keyboard are covered by `tests/frontend/titlebar.spec.mjs` and `tests/unit/titlebar`; what needs a person is that it looks right beneath a real frame and that the keyboard route works against a real window manager.
+
+1. **One frame, one strip.** The system title bar, and below it the menu strip - not two title bars, and no system menu bar as well as ours.
+2. **The window behaves as any other.** Rounded corners, a drop shadow, drag by the title bar, resize by every edge and corner, snap to the sides, double-click to maximise. All of this is the window manager's, so a failure here is a Neutralino question rather than ours.
+3. **The keyboard.** `Alt` alone underlines a letter in each menu. `Alt-F` opens File from anywhere, including with the caret in the editor. Arrows walk the bar and its items, Enter chooses, Escape closes. Typing in the editor is untouched.
+4. **The mouse.** Clicking a menu opens it and clicking it again closes it; with one open, moving across the bar follows; clicking anywhere else closes it.
+5. **No inspector window.** `enableInspector` is off, so nothing opens beside the application. `yarn start` still has it for development.
+
+**macOS:** no strip at the top of the window, the system menu is still there, Cut/Copy/Paste still work, and `Alt-F` still reaches the editor.
+
+### M34 — The keyboard after Open Folder, on Windows
+
+**Windows only.** The folder chooser is `SHBrowseForFolderW`, which is modal on the application's own thread: the window stays the active one throughout, so no `WM_ACTIVATE` is sent, so Neutralino never calls `MoveFocus` and the keyboard is left with the frame rather than the WebView. The repair is a second, one-pixel, off-screen window that takes the foreground and exits, which makes the activation happen. Neutralino's own fix for the general case is #1491/#1564 and is in the version we ship.
+
+1. **Open a folder and type.** File > Open Folder, choose a folder, and without clicking anything press `Alt`. The menu underlines appear - no Windows beep. `Alt-F` opens File.
+2. **The same after cancelling.** Open the chooser, cancel it, and press `Alt`. The keyboard is back either way.
+3. **Nothing flashes.** No window appears anywhere on screen, on any monitor, and the application does not blink or drop to the taskbar.
+4. **Nothing is left running.** Afterwards the process tree has exactly one `build123d-studio.exe` per window, and no extra one loitering. The throwaway exits on `ready` and has a four-second timer behind that.
+5. **No ring around the tree.** With no file open the caret goes to the tree; the pane must not be outlined.
+6. **Open File is unaffected.** `GetOpenFileNameW` restores the focus itself, and no second window is created for it.
+
+**macOS and Linux:** opening a folder creates no second window - the platforms restore the focus themselves. Worth one check that opening a folder there still leaves the keyboard where it should be.
+
 ## Results
 
 One row per platform per run. Record the build, not just the date.
@@ -548,3 +575,5 @@ One row per platform per run. Record the build, not just the date.
 | M30 tree rename/delete | | | |
 | M31 interrupt cannot land | | | |
 | M32 user snippets | | | |
+| M33 menu bar in window | n/a | | |
+| M34 keyboard after Open Folder | | | |

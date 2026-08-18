@@ -59,7 +59,7 @@ import { DEFAULT_NEW_FILE_TEMPLATE, SAMPLE_SOURCE } from "./starters.js";
 import { refreshTabs } from "./tabstrip.js";
 import { chooseActive, readWorkspace } from "./workspace.js";
 import { unsavedPrompt } from "./unsaved.js";
-import { hideFolder, revealInTree, showFolder } from "./sidebar.js";
+import { focusTree, hideFolder, revealInTree, showFolder } from "./sidebar.js";
 import { describeSize, isLarge, looksBinary, SNIFF_BYTES } from "./filetype.js";
 import { formatOnSave } from "./formatting.js";
 import { changedSince, hasTimestamp, stampOf } from "./ondisk.js";
@@ -86,6 +86,7 @@ import shippedSnippets from "./default-snippets.code-snippets?raw";
 import { loadSnippets } from "./snippets.js";
 import { getSetting, setSetting } from "../store.js";
 import { chooseSaveName } from "../savedialog.js";
+import { afterNativeDialog, bounceActivation } from "../nativedialog.js";
 import { liveWindows } from "../liveness.js";
 import { baseName } from "./tree.js";
 import * as ipc from "../ipc.js";
@@ -183,6 +184,12 @@ export async function openFolder() {
   const chosen = await os.showFolderDialog("Open a project folder", {
     defaultPath: folder ?? (await startingFolder()),
   });
+  afterNativeDialog();
+  if (NL_OS === "Windows") {
+    // The one chooser that leaves the keyboard at the frame, cancelled or not.
+    // See bounceActivation for why it is this dialog and not the others.
+    await bounceActivation();
+  }
   if (typeof chosen !== "string" || chosen === "") {
     return false;
   }
@@ -194,6 +201,14 @@ export async function openFolder() {
     return false;
   }
   await showFolderAt(chosen);
+  // Somewhere for the keyboard to be. Opening a folder closes every tab, and an
+  // editor with no model cannot take focus - so without this the window has
+  // nothing focused at all, and hands its keys to the host.
+  if (bufferKeys().length === 0) {
+    focusTree();
+  } else {
+    focusAt(null);
+  }
   return true;
 }
 
@@ -698,6 +713,7 @@ export async function openFile() {
     filters: FILTERS,
     multiSelections: false,
   });
+  afterNativeDialog();
   if (entries.length !== 1) {
     return null;
   }
@@ -1340,6 +1356,7 @@ async function saveBuffer(key, saveAs) {
       name: startName,
       filters: FILTERS,
     });
+    afterNativeDialog();
     if (chosen === "" || chosen === undefined) {
       return null;
     }

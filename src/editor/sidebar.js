@@ -166,6 +166,22 @@ export async function revealInTree(path) {
 }
 
 /**
+ * Put the keyboard in the tree.
+ *
+ * Somewhere for it to be when no file is open. Monaco cannot take focus without
+ * a model, so after a folder is opened - which closes every tab - nothing in the
+ * page is focusable by the ordinary route, and a window with nothing focused
+ * hands its keys to the host: on Windows that is a beep for every Alt, and the
+ * menu bar appears to have stopped working.
+ */
+export function focusTree() {
+  // Without preventScroll, focusing scrolls the nearest scrollable ancestor to
+  // reveal the element - which is a second way to push the window's own chrome
+  // out of view, and one that survives the layout being correct.
+  document.getElementById("tree-body")?.focus({ preventScroll: true });
+}
+
+/**
  * Re-read every directory that is currently open.
  *
  * Only the expanded ones, because those are the only listings on screen - and

@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <!--
+      A window whose whole life is to take the keyboard focus away and give it
+      back. See bounceActivation in src/nativedialog.js for why that is a thing
+      an application needs to do.
+
+      One pixel, off-screen, and gone before it can be seen. It runs no part of
+      the application: it loads the Neutralino client and exits.
+    -->
+    <meta http-equiv="Content-Security-Policy"
+          content="default-src 'none'; script-src 'self'; connect-src ws://127.0.0.1:*" />
+    <title>build123d Studio</title>
+    <script src="/js/neutralino.js"></script>
+    <script src="/reactivate.js"></script>
+  </head>
+  <body></body>
+</html>

@@ -158,6 +158,16 @@ body {
   width: 100vw;
 }
 
+/* The menu bar is *above* the shell, so on the platforms that have one the
+   shell cannot also be a whole viewport tall - the document would be thirty
+   pixels too long, and `overflow: hidden` hides that rather than preventing it.
+   What it costs is invisible until something scrolls: focusing an element
+   inside the overflow scrolls the bar off the top, and the menu appears to have
+   been removed. */
+.has-titlebar .shell {
+  height: calc(100vh - 30px);
+}
+
 /* The toolbar lives inside the editor pane rather than spanning the window.
    A full-width bar takes its height from every pane; here only the editor pays
    for it, so the viewer, console and variables keep the vertical space. It also
@@ -508,6 +518,16 @@ html body {
   padding: 4px 0;
   overflow: auto;
   scrollbar-width: thin;
+}
+
+/* The pane takes the keyboard whether or not anything in it is being used:
+   opening a folder closes every tab, and the caret has to go somewhere. The
+   user agent draws a thick black ring around the whole pane for that, which
+   reads as an error rather than as a place. VS Code marks no pane at all, and
+   the selected row is the mark that a file has. */
+.tree-body:focus,
+.tree-body:focus-visible {
+  outline: none;
 }
 
 .tree-row {
@@ -1959,4 +1979,93 @@ html body {
 
 .settings-record {
   min-width: 108px;
+}
+
+
+/* --- the menu bar ---------------------------------------------------------
+   Only on the platforms that have no system menu; macOS keeps its own and the
+   element stays hidden there. The window's frame is the system's, so its
+   buttons, its title, its rounding and its shadow are not drawn here - this is
+   the strip below it that carries the menus. */
+
+/* The attribute has to win over the display below, or macOS - where this bar
+   must not exist at all - shows an empty strip above the toolbar. */
+.titlebar[hidden] {
+  display: none;
+}
+
+.titlebar {
+  display: flex;
+  align-items: stretch;
+  height: 30px;
+  flex: 0 0 30px;
+  /* Windows' own light chrome, which is what VS Code uses there, so the strip
+     continues the frame above it rather than starting the editor early. Fixed
+     rather than themed, and its ink with it: the editor's foreground is
+     unreadable on this. */
+  background: #dddddd;
+  color: #1f1f1f;
+  border-bottom: 1px solid #c8c8c8;
+  font-size: 12px;
+  user-select: none;
+  position: relative;
+  z-index: 40;
+}
+
+.titlebar-menus {
+  display: flex;
+  align-items: stretch;
+  /* Where the icon used to sit. The window's frame carries it, so the strip
+     starts with the menus and only needs the frame's own left inset. */
+  padding-left: 4px;
+}
+
+.titlebar-menu {
+  padding: 0 8px;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: default;
+}
+
+.titlebar-menu:hover,
+.titlebar-menu.open {
+  background: rgba(0, 0, 0, 0.08);
+}
+
+/* Shown only while Alt is doing the asking, as it is on Windows: an underline
+   that is always there is noise, and one that never appears leaves the keyboard
+   route undiscoverable. */
+.titlebar-mnemonic {
+  text-decoration: underline;
+}
+
+/* The open menu, positioned under its own button. The list inside carries the
+   context menu's classes, so the two look alike without this file saying how a
+   menu looks twice. */
+.titlebar-dropdown {
+  position: absolute;
+  top: 30px;
+  z-index: 41;
+}
+
+.titlebar-dropdown .context-menu {
+  position: static;
+  min-width: 220px;
+}
+
+/* Menus from this bar have separators; the panes' context menus do not, so the
+   rule lives here rather than beside them. */
+.titlebar-dropdown .context-menu-separator {
+  height: 1px;
+  margin: 4px 8px;
+  background: var(--border);
+}
+
+/* Keyboard highlight. The mouse gets :hover from the context menu's own rules;
+   this is what the arrows move. */
+.titlebar-dropdown .context-menu-item.highlighted:not(:disabled) {
+  background: var(--menu-hover-background, var(--accent));
+  color: var(--menu-hover-foreground, var(--accent-fg));
 }

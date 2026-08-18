@@ -587,10 +587,48 @@ export const window = {
   async show() {
     record("show", []);
   },
+
+  // Which window the operating system has in front. Recorded rather than
+  // simulated - there is no window here - but recorded is what answers the
+  // question that matters: whether the keyboard was asked for back after a
+  // native dialog took it.
+  async focus() {
+    record("focus", []);
+  },
+  async hide() {
+    record("hide", []);
+  },
+
+  // A second window, which the application uses for one thing only: taking the
+  // foreground away from itself and giving it back. Recorded, because what
+  // matters is that it was asked for and that the window asked for is one the
+  // operating system would actually activate.
+  async create(url, options) {
+    record("create", [url, options]);
+    return { pid: 4242 };
+  },
   // The menu is a pure function of state and menu.js already tests what it
   // builds; what matters here is that it was set, and with what.
   async setMainMenu(menu) {
     record("setMainMenu", [menu]);
+  },
+
+  // What the in-window title bar needs. Recorded rather than simulated - there
+  // is no frame in a browser to remove and no window to drag - but recorded is
+  // enough to answer the questions that matter: whether the frame was given up
+  // on the platforms that draw their own bar, and never on macOS.
+  async setBorderless(on) {
+    record("setBorderless", [on]);
+  },
+  async setDraggableRegion(target) {
+    record("setDraggableRegion", [typeof target === "string" ? target : "(element)"]);
+  },
+  async unmaximize() {
+    record("unmaximize", []);
+    geometry.maximized = false;
+  },
+  async minimize() {
+    record("minimize", []);
   },
 };
 

@@ -66,6 +66,8 @@ import {
 } from "./editor/files.js";
 import { initTabStrip } from "./editor/tabstrip.js";
 import { initSidebar, toggleSidebar } from "./editor/sidebar.js";
+import { handleKey } from "./titlebar/titlebar.js";
+import { followWindowFocus } from "./nativedialog.js";
 import { initViewer, showLogo } from "./viewer/viewer.js";
 import { initVariables } from "./vars/explorer.js";
 import { awaitKernelRestart, showSettings } from "./settings.js";
@@ -193,6 +195,22 @@ window.addEventListener("keydown", (event) => {
     shutdown();
   }
 });
+
+// The in-window menu bar's keyboard: Alt shows the underlines, Alt-F opens File,
+// the arrows walk it. Capture, so a menu that is open answers before the editor
+// does - and only what the bar says it consumed is stopped, because a bar that
+// swallowed keys it had no use for would be a bar that broke typing.
+//
+// keyup as well as keydown, because Alt on its own is a gesture only when it is
+// released without another key: Alt-F is one thing, Alt alone is another.
+for (const type of ["keydown", "keyup"]) {
+  window.addEventListener(type, (event) => {
+    if (handleKey(event)) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+  }, { capture: true });
+}
 
 // Reload keys, which this application has no use for and a great deal to lose
 // to: a reload throws away the editor buffer and everything unsaved in it. See
@@ -619,6 +637,11 @@ async function main() {
   // The user's own snippets, if they have written any. Not awaited: the editor
   // works without them and a file read must not stand in front of the window.
   reloadUserSnippets().catch((error) => log.warn("Could not read the snippets file:", error));
+
+  // The window being activated is the one moment we are told about rather than
+  // having to guess at: a dialog has closed, the operating system has brought
+  // the window back, and nothing inside it holds the caret.
+  followWindowFocus();
 
   // A restored folder enables Close Folder and Toggle Sidebar, and the menu was
   // built before the workspace was read.
