@@ -1499,6 +1499,27 @@ class Sidecar:
         os._exit(0)
 
 
+# The signals worth answering, in the order they matter.
+#
+# Named rather than referenced, and looked up one at a time, because a platform
+# that does not have one does not define it: `signal.SIGHUP` is an AttributeError
+# on Windows, and naming it inside a tuple raises while the tuple is being built
+# - before any try around the loop can help. That is a startup this process does
+# not survive, and it takes the kernel, the console and the measurement backend
+# with it.
+WANTED_SIGNALS = ("SIGTERM", "SIGHUP")
+
+
+def signals_to_take(module=signal):
+    """The wanted signals that exist here.
+
+    The module is a parameter so the absence of one can be tested on a platform
+    that has it - which is the only way this is testable at all, since the fault
+    only appears where the signal is missing.
+    """
+    return [getattr(module, name) for name in WANTED_SIGNALS if hasattr(module, name)]
+
+
 def take_signals(sidecar):
     """Make a signal run the teardown rather than skip it.
 
@@ -1534,12 +1555,12 @@ def take_signals(sidecar):
             # shutdown.
             os._exit(0)
 
-    for received in (signal.SIGTERM, signal.SIGHUP):
+    for received in signals_to_take():
         try:
             signal.signal(received, leave)
-        except (OSError, ValueError, AttributeError):
-            # SIGHUP does not exist on Windows, and a handler cannot be set from
-            # a thread. Neither is worth failing a startup over.
+        except (OSError, ValueError):
+            # A handler cannot be set from a thread, and a platform may refuse
+            # one it nevertheless names. Neither is worth failing a startup over.
             pass
 
 

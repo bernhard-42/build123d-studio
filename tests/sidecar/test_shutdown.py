@@ -581,6 +581,29 @@ class StdinDuringStartupTest(unittest.TestCase):
 
         self.assertEqual(code, 0, "the handler did not finish; something else ended the process")
 
+    def test_a_signal_this_platform_does_not_have_is_skipped(self):
+        """Windows has no SIGHUP, and naming one that is absent is fatal.
+
+        `signal.SIGHUP` is an AttributeError there, and naming it inside a tuple
+        raises while the tuple is being built - before any try around the loop
+        can catch it. The sidecar then dies in take_signals during startup,
+        taking the kernel, the console and the measurement backend with it, and
+        the application reports "the Python backend stopped" with a traceback in
+        the log. Observed on Windows, 0.3.0.dev152.
+
+        Tested by asking with a module that does not have it, which is the only
+        way to reach the case from a platform that does.
+        """
+        class NoHangup:
+            SIGTERM = signal.SIGTERM
+            SIGINT = signal.SIGINT
+
+        taken = main.signals_to_take(NoHangup)
+
+        self.assertEqual(taken, [signal.SIGTERM])
+        # And the one it does have is still taken, on a platform that has both.
+        self.assertIn(signal.SIGTERM, main.signals_to_take())
+
     def _reap(self, process):
         if process.poll() is None:
             process.kill()
