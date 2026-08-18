@@ -1117,31 +1117,53 @@ class Kernel:
         if generation is not None:
             generation.shell.forget(request)
 
-    def set_working_dir(self, path):
-        """Point the kernel at a directory, now and across future restarts.
+    def record_working_dir(self, path):
+        """Where relative paths resolve, for the kernel and for anything beside it.
 
-        The running kernel is moved with a silent chdir rather than by being
-        restarted - opening a file must not throw away the namespace the user
-        has built up. store_history=False and the internal-request record keep
-        it out of the console transcript, out of In[n], and from looking like
-        user activity to the variable explorer.
+        Two halves, and they are split because they cost different amounts.
+        Recording is a field assignment and must happen the moment the request
+        arrives: a run and a debug session read this directory, and they are
+        answered on a lane of their own, so anything that made recording wait
+        would let a run start in the directory the user just left. Moving the
+        running kernel is an execute, and executes are slow.
 
-        __import__ rather than a plain import, so "os" is not bound into the
-        user's namespace where the variable explorer would list it.
+        @returns True when there is something to move to.
         """
         if path is None or path == "":
             path = os.path.expanduser("~")
         if not os.path.isdir(path):
-            return
+            return False
         self.working_dir = path
+        return True
+
+    def move_to_working_dir(self):
+        """Move the running kernel to the recorded directory.
+
+        A silent chdir rather than a restart - opening a file must not throw
+        away the namespace the user has built up. store_history=False and the
+        internal-request record keep it out of the console transcript, out of
+        In[n], and from looking like user activity to the variable explorer.
+
+        __import__ rather than a plain import, so "os" is not bound into the
+        user's namespace where the variable explorer would list it.
+        """
         if self.client is None:
             return
         self._send_execute(
-            f"__import__('os').chdir({path!r})",
+            f"__import__('os').chdir({self.working_dir!r})",
             internal=True,
             silent=True,
             store_history=False,
         )
+
+    def set_working_dir(self, path):
+        """Record a directory and move the kernel to it, in one call.
+
+        For callers with no lane to worry about. The sidecar splits the two -
+        see on_cwd.
+        """
+        if self.record_working_dir(path):
+            self.move_to_working_dir()
 
     def interrupt(self):
         if self.manager is not None:

@@ -74,6 +74,45 @@ class HandlersExistTest(unittest.TestCase):
         ]
         self.assertEqual(missing, [], f"registered but not defined: {'; '.join(missing)}")
 
+    def test_the_working_directory_is_recorded_before_anything_can_run(self):
+        """kernel.cwd must not be answered on a lane a run can overtake.
+
+        A run and a debug session are answered on the debug lane and read the
+        directory the kernel recorded. While kernel.cwd was answered on the
+        execute lane, a cell still running held it up and a run started in the
+        directory the user had just left - relative writes landed in the home
+        directory, which is the fallback the kernel starts with. Intermittent,
+        and it took a loaded machine to see it.
+
+        Inline is the only registration with no queue in front of it. Read
+        statically because that is where the mistake lives: the behaviour is
+        covered by tests/integration.py, which holds the execute lane busy and
+        then runs a file.
+        """
+        lanes = {}
+        for node in ast.walk(self.sidecar):
+            registers_a_handler = (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "on"
+                and len(node.args) > 0
+                and isinstance(node.args[0], ast.Constant)
+            )
+            if not registers_a_handler:
+                continue
+            lane = next((kw for kw in node.keywords if kw.arg == "lane"), None)
+            lanes[node.args[0].value] = None if lane is None else ast.unparse(lane.value)
+
+        self.assertIn("kernel.cwd", lanes, "the scan found no kernel.cwd registration")
+        self.assertIsNone(
+            lanes["kernel.cwd"],
+            f"kernel.cwd is answered on the {lanes['kernel.cwd']} lane, where a run can overtake it",
+        )
+        # And the two that read the directory are not inline, or the point of
+        # the contrast is lost: they are slow, they belong on a lane.
+        self.assertEqual(lanes.get("run.start"), "DEBUG")
+        self.assertEqual(lanes.get("debug.start"), "DEBUG")
+
     def test_the_scan_finds_the_registrations_it_is_meant_to(self):
         """A test that finds nothing passes for the wrong reason.
 

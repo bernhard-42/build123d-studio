@@ -280,7 +280,13 @@ class Sidecar:
         # that overtook its own chdir would resolve relative paths against the
         # previous file's directory.
         self.channel.on("kernel.execute", self.on_execute, lane=EXECUTE)
-        self.channel.on("kernel.cwd", self.on_cwd, lane=EXECUTE)
+        # Inline, and that is load-bearing rather than an optimisation: a run
+        # and a debug session read the working directory and are answered on a
+        # lane of their own, so a kernel.cwd waiting behind a busy execute lane
+        # would let a run start in the directory the user just left. Recording
+        # it is a field assignment; the kernel's own chdir is an execute, and
+        # on_cwd puts that on the execute lane where it belongs.
+        self.channel.on("kernel.cwd", self.on_cwd)
 
         # Slow, and none of it is worth a dropped keystroke: an inspection waits
         # on the kernel for up to fifteen seconds, activating a measure tool
@@ -1295,8 +1301,16 @@ class Sidecar:
         self.channel.send("editor.signature", id=message.get("id"), signature=signature)
 
     def on_cwd(self, message):
-        """Follow the editor: run the kernel in the open file's directory."""
-        self.kernel.set_working_dir(message.get("path"))
+        """Follow the editor: run the kernel in the open file's directory.
+
+        Recorded here, on the receive thread, so nothing can overtake it. The
+        chdir that moves the running kernel goes to the execute lane, where it
+        stays in order with the user's own cells - a chdir that jumped the queue
+        would move a cell that is already running, and os.chdir is process-wide.
+        """
+        if not self.kernel.record_working_dir(message.get("path")):
+            return
+        self.channel.submit(EXECUTE, self.kernel.move_to_working_dir)
 
     def on_restart(self, _message):
         """Restart the kernel, and the console with it.

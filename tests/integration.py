@@ -830,6 +830,15 @@ def main():
     # sets from the open folder. Pointed at the scratch directory so that a
     # relative path in the script has somewhere of its own to land - which is
     # the promise `export_step(part, "bracket.step")` makes.
+    #
+    # Sent with the execute lane deliberately busy, because that is the state
+    # this used to get wrong and the state a user is most often in: a cell still
+    # running when they switch file and press Ctrl-F5. kernel.cwd used to be
+    # answered on the execute lane and a run on its own, so the run overtook the
+    # directory it was supposed to inherit and a relative write landed in the
+    # home directory. Observed once here as an intermittent failure, at 0.3.0
+    # .dev169, before it was widened into this.
+    side.send("kernel.execute", code="import time; time.sleep(4)\n")
     side.send("kernel.cwd", path=scratch)
 
     run_script = os.path.join(scratch, "run-check.py")
