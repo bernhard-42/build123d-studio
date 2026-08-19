@@ -44,10 +44,15 @@ class StudioComms(Comms[None]):
         produce one from a list of floats - a header describing shapes with no
         buffers behind them - and three-cad-viewer does not come back from it;
         the application had to be force-quit. Refusing here covers every caller.
+
+        Not every frame is a model, though: `show_clear()` sends a bare
+        `{"type": "clear"}` down this same channel, deliberately - it must stay
+        ordered against the models it clears. It carries no geometry by nature,
+        so the refusal applies only to frames that claim to be models.
         """
         payload_free, payload = split_buffers(data.get("data"))
 
-        if len(payload) == 0:
+        if data.get("type", "data") == "data" and len(payload) == 0:
             raise ValueError(
                 "nothing to show: the objects given have no geometry the viewer can draw"
             )

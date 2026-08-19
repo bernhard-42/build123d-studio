@@ -175,6 +175,14 @@ export function initViewer() {
 
   ipc.onBinary(ipc.KIND_MODEL, (payload, header, buffer, payloadOffset) => {
     const started = performance.now();
+    // `show_clear()` arrives on the model channel so it stays ordered against
+    // the models it clears. It is the page's own message, not a model, so it
+    // goes to the dispatch before the no-geometry guard below can mistake it
+    // for one.
+    if (header.type === "clear") {
+      page.handleMessage({ type: "clear" });
+      return;
+    }
     // A model with no geometry is refused rather than drawn.
     //
     // three-cad-viewer does not come back from one: given a header describing
