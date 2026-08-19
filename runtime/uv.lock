@@ -614,16 +614,16 @@ wheels = [
 
 [[package]]
 name = "ocp-viewer-core"
-version = "1.0.0"
+version = "1.0.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "ocp-tessellate" },
     { name = "orjson" },
     { name = "threejs-materials" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/13/ba/df2c210b6be19644d9f514a0890eae1e0cd84b95464ec2b2e7eed002adde/ocp_viewer_core-1.0.0.tar.gz", hash = "sha256:249a4a527700577739c4a719136adb91ec791ca39f3328e97bfde90d0d950ec2", size = 103633, upload-time = "2026-08-19T13:50:51.219Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/f1/eb/cd3f293bca345f277c2bdb554f6c85ef0cc1727a66ecbc24e19d25469561/ocp_viewer_core-1.0.1.tar.gz", hash = "sha256:3f64542bede79f48518439c03a1ff18df371b8ed334ebb827c64901e09f06b61", size = 99122, upload-time = "2026-08-19T16:43:02.513Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/90/c4/658b1c434b4c7ab0a282b22a0cdc7a506f9039ca06e74f5bc31c54d18972/ocp_viewer_core-1.0.0-py3-none-any.whl", hash = "sha256:a2781ff3d98ef5906b777dfadb80f4240c57136b22600648d3ab098046f0c43d", size = 105553, upload-time = "2026-08-19T13:50:49.718Z" },
+    { url = "https://files.pythonhosted.org/packages/76/55/a5b9c07d8bfdb7cc914d734832433303034a00a55ce249f76d4c22069d09/ocp_viewer_core-1.0.1-py3-none-any.whl", hash = "sha256:3edfbe71d39298e5153e61e099502de6e9c6b3eb311256cf4ac5e3e33bc71938", size = 101627, upload-time = "2026-08-19T16:43:00.709Z" },
 ]
 
 [[package]]
