@@ -27,3 +27,8 @@ export const devBuild = __DEV_BUILD__;
 export const appVersion = devBuild === 0 ? version : `${version}.dev${devBuild}`;
 export const monacoVersion = dependencies["monaco-editor"];
 export const xtermVersion = dependencies["@xterm/xterm"];
+// From the manifest rather than from the package: unlike three-cad-viewer, the
+// core exports no version of its own. This is the JavaScript half of it - the
+// page and the renderer - and the Python half is reported separately in Key
+// packages, because they are two distributions and can be at two versions.
+export const coreVersion = dependencies["ocp-viewer-core"];

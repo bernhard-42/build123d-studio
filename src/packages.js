@@ -41,12 +41,10 @@ export const PACKAGES = [
     branch: "dev",
   },
   {
-    // The shared viewer half. Offered here rather than frozen because it is not
-    // on PyPI yet and its repository is private, so there is no version for the
-    // declaration to name: the location comes from this choice instead, and
-    // until it is published "Local" is the answer that works. A uv source wins
-    // over whatever the dependency itself says - measured - so choosing one
-    // here is the whole redirection.
+    // The shared viewer half, on PyPI and pinned like everything else. Offered
+    // here because it is the half most likely to be worked on beside this
+    // application: a uv source wins over whatever the dependency itself says -
+    // measured - so choosing GitHub or a local checkout redirects it entirely.
     name: "ocp-viewer-core",
     repository: "git@github.com:bernhard-42/ocp-viewer-core",
     branch: "main",
@@ -58,9 +56,13 @@ export const PACKAGES = [
 // pyproject.toml: this list is what the *rule* is about, and reading it from a
 // file would make a refusal depend on a parse of TOML we deliberately do not do.
 //
-// ocp_tessellate is deliberately absent. ocp-viewer-core requires
-// `ocp-tessellate>=3.5.0,<3.6.0`, so its range is owned by its parent and
-// re-declaring it here only pinned it harder than its author does.
+// ocp-tessellate is deliberately absent. Nothing here imports it - it arrives
+// under ocp-viewer-core, which owns its range - so constraining it is the
+// user's business, and uv enforces the parent's range on top of whatever they
+// write. Anything that *is* on this list must be refused in the
+// additional-packages field, because uv intersects duplicate declarations
+// rather than letting the later one win: a user asking for an older version
+// would get an unsolvable environment instead of their version.
 export const DECLARED = [
   "ocp-viewer-core",
   "ipykernel",

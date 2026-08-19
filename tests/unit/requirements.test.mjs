@@ -120,10 +120,9 @@ test("the same package given twice is refused, naming the earlier line", () => {
 });
 
 test("a package that is only a transitive dependency is allowed", () => {
-  // ocp_tessellate is no longer declared - ocp_vscode owns its range - so
-  // constraining it here is the user's business, and uv enforces the parent's
-  // range on top of whatever they write.
-  assert.deepEqual(findProblems(parseRequirements("ocp-tessellate>3.4.0,<3.5"), DECLARED), []);
+  // One this application does not declare: constraining it is the user's
+  // business, and uv enforces the parent's range on top of whatever they write.
+  assert.deepEqual(findProblems(parseRequirements("some-transitive>3.4.0,<3.5"), DECLARED), []);
 });
 
 test("nothing wrong means nothing reported", () => {

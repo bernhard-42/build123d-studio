@@ -18,7 +18,12 @@ import sys
 PACKAGES = [
     ("build123d", "build123d"),
     ("OCP (cadquery-ocp-novtk)", "cadquery-ocp-novtk"),
-    ("ocp_vscode", "ocp_vscode"),
+    # The show pipeline this application draws through, and the one shared with
+    # OCP CAD Viewer for VS Code, the standalone viewer and Jupyter CadQuery -
+    # so "which version of the core" is the first question about anything the
+    # viewer got wrong. It replaced `ocp_vscode`, which was listed here while
+    # this application imported a private function out of it.
+    ("ocp_viewer_core", "ocp-viewer-core"),
     ("ocp_tessellate", "ocp_tessellate"),
     ("ocpsvg", "ocpsvg"),
     ("ipykernel", "ipykernel"),

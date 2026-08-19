@@ -1,7 +1,7 @@
 import { clipboard, filesystem } from "@neutralinojs/lib";
 import { version as threeCadViewerVersion } from "three-cad-viewer";
 
-import { appVersion, monacoVersion, xtermVersion } from "./versions.js";
+import { appVersion, coreVersion, monacoVersion, xtermVersion } from "./versions.js";
 import { escapeHtml } from "./escape.js";
 import { closeOnBackdropClick } from "./backdrop.js";
 import { appDataDir, resolveEnvRoot } from "./bootstrap/envroot.js";
@@ -131,6 +131,7 @@ async function gather() {
       ),
       row("Monaco editor", monacoVersion),
       row("three-cad-viewer", threeCadViewerVersion),
+      row("ocp-viewer-core", coreVersion),
       row("xterm.js", xtermVersion),
       row("uv", await uvVersion()),
     ],
