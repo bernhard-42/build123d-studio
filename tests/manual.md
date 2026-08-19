@@ -606,8 +606,8 @@ One row per platform per run. Record the build, not just the date.
 | M32 user snippets | ok | ok |  |
 | M33 menu bar in window | n/a | ok |  |
 | M34 keyboard after Open Folder | ok | ok |  |
-| M35 tree follows the disk | | | |
-| M36 cell buttons, restart chord | | | |
+| M35 tree follows the disk | ok | | |
+| M36 cell buttons, restart chord | ok | | |
 
 **The run of 2026-08-18, macOS and Windows, 0.3.0.dev167.** The first full pass; Linux has still never been run. What it left:
 
@@ -616,3 +616,5 @@ One row per platform per run. Record the build, not just the date.
 - **M26 answers an open design question**: the "It changed on disk" dialog appeared on both, so `stat` carries mtime on Windows and the check runs at full strength rather than falling back to size alone.
 - **M28 confirms what pid ownership needs**: `tasklist` matched exactly one row per window - the sidecars carry other names - which is what makes `liveWindows()` a list of windows rather than of processes.
 - **M14 is the only row never attempted**, and M23 waits on ocp-tessellate and ocp-viewer-core reaching PyPI.
+
+**Since that run**, on macOS: M16's fix was verified at dev168, and **M35 and M36 both passed at dev173** - the folder watcher, the buttons above a cell marker, and `Shift-Alt-Cmd-R`. So the watcher's recursion is confirmed on FSEvents; Windows uses a different implementation and has seen nothing newer than dev167.
