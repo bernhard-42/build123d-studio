@@ -89,7 +89,7 @@ requires-dist = [
     { name = "basedpyright", specifier = "==1.39.9" },
     { name = "build123d", specifier = ">=0.11.1" },
     { name = "jupyter-console", specifier = "==6.6.3" },
-    { name = "ocp-viewer-core", specifier = "==1.0.0" },
+    { name = "ocp-viewer-core", specifier = ">=1.0.0,<1.1.0" },
     { name = "orjson", specifier = "==3.11.9" },
     { name = "pywinpty", marker = "sys_platform == 'win32'", specifier = "==3.0.5" },
     { name = "ruff", specifier = "==0.16.3" },
