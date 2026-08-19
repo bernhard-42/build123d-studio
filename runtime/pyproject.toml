@@ -7,16 +7,11 @@ requires-python = "==3.14.*"
 dependencies = [
     # --- frozen: moves only when the application is rebuilt and retested ---
     #
-    # The shared viewer half: the same show pipeline OCP CAD Viewer for VS Code,
-    # the standalone viewer and Jupyter CadQuery draw through. ocp-tessellate
-    # arrives under it and is deliberately not declared here - nothing in this
-    # application imports it, and uv intersects duplicate declarations.
+    # The shared show pipeline. ocp-tessellate arrives under it.
     "ocp-viewer-core==1.0.0",
-    "ipykernel==7.3.0",
-    "jupyter_client==8.9.1",
+    # Brings ipykernel, jupyter_client, prompt_toolkit, pyzmq and ipython -
+    # bumping this one moves them all, at versions its author reconciled.
     "jupyter_console==6.6.3",
-    "prompt_toolkit==3.0.53",
-    "pyzmq==27.1.0",
     "orjson==3.11.9",
     "websockets==16.1.1",
     "pywinpty==3.0.5; sys_platform == 'win32'",

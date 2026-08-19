@@ -65,11 +65,7 @@ export const PACKAGES = [
 // would get an unsolvable environment instead of their version.
 export const DECLARED = [
   "ocp-viewer-core",
-  "ipykernel",
-  "jupyter_client",
   "jupyter_console",
-  "prompt_toolkit",
-  "pyzmq",
   "orjson",
   "websockets",
   "pywinpty",
