@@ -109,6 +109,10 @@ A listening socket is reachable by any local process, unlike a pipe, which is wh
 
 Control messages are JSON text frames, about forty types, with request/reply exchanges carrying an id. Waits are always raced against sidecar exit and disconnection as well as a timeout, because awaiting only the success frame once hung startup forever.
 
+**A dropped socket is not a dead backend.** A machine waking from sleep resets loopback connections, and the sidecar survives that untouched: it clears its client, goes back to accepting, and keeps its kernel, namespace, console and language server. So the frontend redials the same port and token - eight attempts over about ten seconds - and only calls the backend gone if none of them lands. The sidecar answers the same question from its own side: a window that leaves and does not come back within two minutes ends the process, because nothing else would, and a reload or a webview crash otherwise leaves a full tree of processes nothing can reach.
+
+**The link to Neutralino itself has no such recovery.** Its client builds one socket at startup and offers no way to build another, and when that socket dies every native call is queued and never rejected - so files stop being written, processes stop being spawned, and the window cannot even be closed, with nothing thrown anywhere. It is not always a clean death either: a Windows resume leaves it half-open, so listening for `serverOffline` catches only some of it. The link is therefore *asked* - `app.getConfig()` every fifteen seconds, five seconds to answer, two consecutive silences - and the only cure is a new page, offered as a button that says what it costs. That is the one deliberate reload in an application that otherwise forbids them.
+
 The two hot paths are binary, so they carry no base64 and no JSON-escaped numbers:
 
 ```
@@ -381,6 +385,7 @@ Runs in the webview. Owns every pixel, all UI state, and the environment bootstr
 | `main.js` | Startup order, the single quit path, and the wiring between every pane |
 | `menu.js` | The native menu bar as data — pure, and tested |
 | `menubar.js` | Installs that menu and routes what it sends back |
+| `nativelink.js` | Whether the link to the application is still answering — pure, tested |
 | `merge.js` | What a settings write keeps from the file already on disk |
 | `nativedialog.js` | Getting the keyboard back after a native dialog, and the Windows activation bounce |
 | `packages.js` | Which source each upgradable package comes from, and the generated `pyproject.toml` |

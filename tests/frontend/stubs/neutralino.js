@@ -111,9 +111,16 @@ globalThis.__NEUTRALINO_STUB__ = {
   given: (path, contents) => given(path, contents),
   givenDirectory: (path) => givenDirectory(path),
   wrote: (path) => wrote(path),
+  // Every path written or seeded, for a test that has to wait for a write it
+  // cannot name - the recovery journal's directory carries a random instance
+  // id, and waiting for the wrong thing is how a test comes to pass against
+  // the bug it was written for.
+  paths: () => [...files.keys()],
   answerDialogWith: (value) => answerDialogWith(value),
   exitNextSpawnWith: (code) => exitNextSpawnWith(code),
   emit: (name, detail) => emit(name, detail),
+  // Stop answering, the way a half-open socket does.
+  goSilent: () => goSilent(),
   // Deleting from outside the application, which is what a terminal does and
   // what left the tree remembering folders that were gone.
   removePath: (path) => {
@@ -658,9 +665,34 @@ export const computer = {
   },
 };
 
+// A half-open socket, which is what a Windows resume leaves behind: the page
+// believes it is connected and every call disappears into it, unanswered and
+// unrejected. Nothing else in this stub can express that - a refusal would be
+// an answer - and without it the watch that notices could not be tested at all.
+let silent = false;
+
+export function goSilent() {
+  silent = true;
+}
+
+/** Never settles. What a queued native call does when the link is gone. */
+function swallowed() {
+  return new Promise(() => {});
+}
+
 export const app = {
+  async getConfig() {
+    record("getConfig", []);
+    if (silent) {
+      return swallowed();
+    }
+    return { applicationId: "dev.build123dstudio.app" };
+  },
   async exit(code) {
     record("exit", [code]);
+    if (silent) {
+      return swallowed();
+    }
   },
   async quit() {
     record("quit", []);

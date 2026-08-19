@@ -1,4 +1,4 @@
-// The application must never reload.
+// The application must not reload behind the user's back.
 //
 // It is a webview, so it inherits a browser's reload keys - F5 and Ctrl-R on
 // Windows and Linux, Cmd-R on macOS - and a reload here is not a refresh. It
@@ -11,6 +11,13 @@
 // it is a prerequisite for binding F5 to Run File at all: without it, the
 // shortcut for "run my file" is one keystroke away from throwing that file's
 // unsaved changes away on two of the three platforms.
+//
+// There is one deliberate reload, and it is not this file's business to stop:
+// when the link to Neutralino dies - a machine waking from sleep does it - every
+// native call is queued for ever, so nothing can be saved, spawned or closed,
+// and building a new link means a new page. main.js offers that as a button
+// with the cost stated. What is guarded here is the accidental route: a chord
+// and a context-menu item, neither of which asks.
 //
 // ## preventDefault, never stopPropagation
 //

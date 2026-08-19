@@ -1742,6 +1742,9 @@ html body {
 .backend-banner {
   position: fixed;
   top: 0;
+  /* Below the menu strip on the platforms that have one - it lives at the same
+     `top: 0`, and a banner over it hides the only way to open a file or quit,
+     at the exact moment somebody needs both. See .has-titlebar. */
   right: 0;
   left: 0;
   z-index: 1100;
@@ -1754,6 +1757,10 @@ html body {
   background: var(--error-bg, color-mix(in srgb, var(--error-fg) 18%, var(--bg)));
   color: var(--fg);
   font-size: 12px;
+}
+
+.has-titlebar .backend-banner {
+  top: 30px;
 }
 
 .backend-banner[hidden] {

@@ -71,6 +71,7 @@ import {
 import { initTabStrip } from "./editor/tabstrip.js";
 import { initSidebar, toggleSidebar } from "./editor/sidebar.js";
 import { chordFromEvent, sameChord } from "./keys.js";
+import { watchNativeLink } from "./nativelink.js";
 import { chordsFor } from "./keybindings.js";
 import { handleKey } from "./titlebar/titlebar.js";
 import { followWindowFocus } from "./nativedialog.js";
@@ -357,6 +358,57 @@ function installBackendRecovery(console_) {
     show(`The Python backend stopped (exit code ${frame.code}).`, restartBackend),
   );
   ipc.on("sidecar.disconnected", () => show("The Python backend disconnected.", restartBackend));
+
+  // The socket came back and the sidecar was there all along - a resumed
+  // machine, not a dead backend. Nothing was lost, so nothing needs saying
+  // beyond taking the banner away if the earlier attempts had already raised
+  // one.
+  ipc.on("sidecar.resumed", () => {
+    banner.hidden = true;
+  });
+
+  /**
+   * The link to Neutralino itself, which is not the sidecar's.
+   *
+   * When it goes, every native call is queued and never rejected - no file is
+   * written, no process is spawned, and app.exit() never happens - so the
+   * window cannot be closed and the log stops mid-sentence. Windows waking from
+   * sleep does exactly this. Reloading the page is the only way to build a new
+   * one, and it costs whatever is unsaved: that is a bad trade normally, which
+   * is why reload.js exists, and the right one here, because nothing can be
+   * saved anyway. The recovery journal holds what was typed before the link
+   * died and offers it back at the next start.
+   */
+  const reloadWindow = {
+    label: "Reload window",
+    busy: "Reconnecting to the window server…",
+    run: async () => {
+      location.reload();
+      // The reload takes the page with it; this only keeps the busy overlay up
+      // in the meantime.
+      await new Promise(() => {});
+    },
+  };
+
+  const linkLost = () => {
+    log.error("The link to the application is not answering; offering a reload");
+    show(
+      "This window lost its link to the application. Nothing can be saved or"
+      + " closed until it is reloaded; unsaved work is kept and offered back.",
+      reloadWindow,
+    );
+  };
+
+  // Two ways to find out, because one of them does not always happen.
+  //
+  // The event fires when the socket closes cleanly. What it cannot report is a
+  // half-open socket - which is what a Windows resume leaves behind: the page
+  // sees an open connection and every call vanishes into it. So the link is
+  // also asked, on a timer, whether it is still there.
+  events.on("serverOffline", linkLost)
+    .catch((error) => log.warn("Could not watch for the window server going:", error));
+
+  watchNativeLink({ probe: () => app.getConfig(), onLost: linkLost });
 
   // Deliberately distinct wording. "The backend stopped" over a working console
   // and a working viewer would be a lie, and the user's next question - what
