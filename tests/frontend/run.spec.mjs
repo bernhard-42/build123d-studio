@@ -289,3 +289,179 @@ test.describe("an interrupt that does not land", () => {
     await expect(page.locator(".confirm-overlay")).toHaveCount(0);
   });
 });
+
+test.describe("the buttons above a marker", () => {
+  // A code lens is Monaco's own widget, so what is asserted here is that it is
+  // drawn where a marker is - and that clicking one acts on *that* marker
+  // rather than on wherever the caret happens to be, which is the whole reason
+  // the commands take a line number.
+
+  // Exact, because "Cell" is a prefix of "Cell Above" and a loose match picks
+  // up both - which makes an nth() index mean something different per marker.
+  const lens = (page, title) =>
+    page.locator(".codelens-decoration a")
+      .filter({ hasText: new RegExp(`^\\s*${title}\\s*$`) });
+
+  test("five of them, above each marker and nowhere else", async ({ page }) => {
+    await openWithCells(page);
+
+    // Two markers in the fixture, five buttons each. The text before the first
+    // marker is a cell too, and must not be decorated: nobody wrote a boundary
+    // there.
+    await expect.poll(() => page.locator(".codelens-decoration a").count()).toBe(10);
+    await expect(lens(page, "\u25b6 Cell").first()).toBeVisible();
+    await expect(lens(page, "\u23f9 Interrupt").first()).toBeVisible();
+  });
+
+  test("a plain script with no markers has none", async ({ page }) => {
+    await open(page, {
+      files: { [`${PROJECT}/plain.py`]: "x = 1\ny = 2\n" },
+      settings: {
+        workspace: {
+          folder: PROJECT,
+          tabs: [{ path: `${PROJECT}/plain.py`, caret: null }],
+          active: `${PROJECT}/plain.py`,
+        },
+      },
+    });
+
+    await page.waitForTimeout(300);
+    await expect(page.locator(".codelens-decoration a")).toHaveCount(0);
+  });
+
+  test("Cell runs the cell it sits on, not the one the caret is in", async ({ page }) => {
+    // The caret is left in the first cell and the *second* marker's button is
+    // clicked. A command that read the caret would run "FIRST = 1".
+    const { sidecar } = await openWithCells(page);
+    await putCaretOnLine(page, 1);
+
+    await lens(page, "\u25b6 Cell").nth(1).click();
+    await sidecar.waitFor("kernel.execute");
+
+    expect(executed(sidecar)).toHaveLength(1);
+    expect(executed(sidecar)[0]).toContain("FOURTH");
+    expect(executed(sidecar)[0]).not.toContain("SECOND");
+  });
+
+  test("All Above runs everything before its marker", async ({ page }) => {
+    const { sidecar } = await openWithCells(page);
+
+    await lens(page, "\u25b6 All Above").nth(1).click();
+    await sidecar.waitFor("kernel.execute");
+
+    const code = executed(sidecar)[0];
+    expect(code).toContain("FIRST");
+    expect(code).toContain("SECOND");
+    expect(code).not.toContain("FOURTH");
+  });
+
+  test("All Below runs its marker and everything after", async ({ page }) => {
+    const { sidecar } = await openWithCells(page);
+
+    await lens(page, "\u25b6 All Below").first().click();
+    await sidecar.waitFor("kernel.execute");
+
+    const code = executed(sidecar)[0];
+    expect(code).toContain("SECOND");
+    expect(code).toContain("FOURTH");
+    expect(code).not.toContain("FIRST");
+  });
+
+  test("Cell Above runs the one before it", async ({ page }) => {
+    const { sidecar } = await openWithCells(page);
+
+    await lens(page, "\u25b6 Cell Above").nth(1).click();
+    await sidecar.waitFor("kernel.execute");
+
+    const code = executed(sidecar)[0];
+    expect(code).toContain("SECOND");
+    expect(code).not.toContain("FOURTH");
+  });
+
+  test("Interrupt asks the kernel to stop", async ({ page }) => {
+    const { sidecar } = await openWithCells(page);
+
+    await lens(page, "\u23f9 Interrupt").first().click();
+
+    await expect.poll(() =>
+      sidecar.received.filter((frame) => frame.type === "kernel.interrupt").length,
+    ).toBe(1);
+  });
+
+  test("and the setting takes them away", async ({ page }) => {
+    await open(page, {
+      files: FILES,
+      settings: { workspace: WORKSPACE, cellActions: false },
+    });
+
+    await page.waitForTimeout(300);
+    await expect(page.locator(".codelens-decoration a")).toHaveCount(0);
+  });
+});
+
+test.describe("restarting the kernel from the keyboard", () => {
+  // Not an editor action, unlike every run chord: a restart is what somebody
+  // reaches for when the console is wedged, so it has to arrive whatever has
+  // the caret. macOS makes that the only option anyway - its native menu binds
+  // Command plus one character and nothing more, so the menu cannot carry a
+  // four-key chord and Monaco only hears one while the editor has focus.
+
+  const restarts = (sidecar) =>
+    sidecar.received.filter((frame) => frame.type === "kernel.restart").length;
+
+  test("the chord works with the editor focused", async ({ page }) => {
+    const { sidecar } = await openWithCells(page);
+    await putCaretOnLine(page, 1);
+
+    await page.keyboard.press("Meta+Shift+Alt+KeyR");
+
+    await expect.poll(() => restarts(sidecar)).toBe(1);
+  });
+
+  test("and with the caret somewhere else entirely", async ({ page }) => {
+    // The case the editor action could not cover, and the reason this listener
+    // is on the window.
+    const { sidecar } = await openWithCells(page);
+    await page.locator("#console-tab-backend").click();
+
+    await page.keyboard.press("Meta+Shift+Alt+KeyR");
+
+    await expect.poll(() => restarts(sidecar)).toBe(1);
+  });
+
+  test("once per press, not twice", async ({ page }) => {
+    // A window listener and an editor action would both answer while the
+    // editor has focus, and a kernel restarted twice loses the namespace twice.
+    const { sidecar } = await openWithCells(page);
+    await putCaretOnLine(page, 1);
+
+    await page.keyboard.press("Meta+Shift+Alt+KeyR");
+    await expect.poll(() => restarts(sidecar)).toBe(1);
+
+    await page.waitForTimeout(300);
+    expect(restarts(sidecar)).toBe(1);
+  });
+
+  test("and Ctrl-Shift-Alt-R is the same chord off macOS", async ({ page }) => {
+    // `mod` is Command there and Control here, written once in keys.js. The
+    // platform is the one thing this suite can vary that a person cannot.
+    const { sidecar } = await open(page, {
+      platform: "Windows", files: FILES, settings: { workspace: WORKSPACE },
+    });
+
+    await page.keyboard.press("Control+Shift+Alt+KeyR");
+
+    await expect.poll(() => restarts(sidecar)).toBe(1);
+  });
+
+  test("and a chord that is nearly it does nothing", async ({ page }) => {
+    const { sidecar } = await openWithCells(page);
+    await putCaretOnLine(page, 1);
+
+    await page.keyboard.press("Meta+Shift+KeyR");
+    await page.keyboard.press("Meta+Alt+KeyR");
+    await page.waitForTimeout(300);
+
+    expect(restarts(sidecar)).toBe(0);
+  });
+});

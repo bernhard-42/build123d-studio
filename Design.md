@@ -406,7 +406,8 @@ The application's own model of files, buffers and saving. Monaco is a text widge
 | File | Purpose |
 |---|---|
 | `buffers.js` | Every open buffer as a Map; dirty state, paths, stamps. No Monaco import |
-| `cells.js` | `# %%` cell detection |
+| `cellactions.js` | Whether the buttons above a `# %%` marker are drawn, which is one switch |
+| `cells.js` | `# %%` cell detection, and what the buttons above a marker act on |
 | `completion.js` | Python completion as data — merging, ranking, the replaced span |
 | `diagnostics.js` | Squiggles: LSP ranges converted to Monaco markers |
 | `files.js` | Opening, saving, closing, the workspace, and the recovery journal's wiring |

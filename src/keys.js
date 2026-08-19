@@ -157,6 +157,25 @@ export const COMMANDS = [
     chords: ["alt+enter"],
   },
   {
+    id: "run.cellAbove",
+    label: "Run Cell Above",
+    // No chord by default. These three are what the buttons above a marker do,
+    // and they are about a *marker* rather than about the caret - which is what
+    // makes them worth a click and awkward as a chord. The shortcut editor will
+    // bind them for anybody who disagrees.
+    chords: [],
+  },
+  {
+    id: "run.allAbove",
+    label: "Run All Above",
+    chords: [],
+  },
+  {
+    id: "run.allBelow",
+    label: "Run All Below",
+    chords: [],
+  },
+  {
     id: "run.file",
     label: "Run File",
     // The file on disk, saved first, in a process of its own - the debugger
@@ -164,6 +183,16 @@ export const COMMANDS = [
     // is what VS Code binds Run Without Debugging to including on macOS, where
     // it is Control and not Command.
     chords: ["ctrl+f5"],
+  },
+  {
+    id: "kernel.restart",
+    label: "Restart Kernel",
+    // Shift-Alt-Cmd-R, and Shift-Alt-Ctrl-R off macOS. Four keys because the
+    // three-key space is spoken for and because this throws away every name in
+    // the namespace - a chord somebody can hit by accident is the wrong chord
+    // for that. R is Jupyter's own letter for it. `/` was the other candidate
+    // and is unreachable on a German keyboard, where it is Shift-7.
+    chords: ["shift+alt+mod+r"],
   },
   {
     id: "debug.start",
@@ -497,6 +526,27 @@ export function chordFromEvent(platform, event) {
     key,
   };
   return formatChord(descriptor);
+}
+
+/**
+ * Whether two chord strings mean the same keystroke.
+ *
+ * Written form is not canonical form: this file's own rule is that order does
+ * not matter when parsing, so "shift+alt+mod+r", "mod+shift+alt+r" and whatever
+ * somebody typed into settings.json are one chord written three ways. Anything
+ * comparing a chord from a keystroke against a chord from the keymap has to ask
+ * this rather than compare strings - the strings differ, and the bug that
+ * causes is a shortcut that silently does nothing.
+ *
+ * An unparseable chord matches nothing, including another unparseable one.
+ */
+export function sameChord(one, other) {
+  const first = parseChord(one);
+  const second = parseChord(other);
+  if (first === null || second === null) {
+    return false;
+  }
+  return formatChord(first) === formatChord(second);
 }
 
 /**

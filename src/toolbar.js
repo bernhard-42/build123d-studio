@@ -276,6 +276,25 @@ export function refreshToolbarTitles() {
   }
 }
 
+/**
+ * Interrupt what the kernel is running, and offer a restart if it does not stop.
+ *
+ * Exported because three things do it now: the toolbar button, the button above
+ * a cell marker, and the keymap. The offer is the part worth sharing - an
+ * interrupt that misses is the case people need help with.
+ */
+export function interruptKernel() {
+  return withErrorReporting("Interrupt", async () => {
+    await ipc.send("kernel.interrupt");
+    await offerRestartIfItDidNotStop();
+  });
+}
+
+/** Restart the kernel. The toolbar button and Shift-Alt-Mod-R are the same act. */
+export function restartKernel() {
+  return withErrorReporting("Restart", async () => ipc.send("kernel.restart"));
+}
+
 export function initToolbar() {
   // The title has to follow the buffer, not only the explicit actions below: a
   // keystroke makes it dirty and a successful save makes it clean again, and
@@ -314,12 +333,8 @@ export function initToolbar() {
     "btn-run-sel": () => runSelectionOrLine(),
     // Wrapped like the rest: with the sidecar gone these throw out of a click
     // handler, where only the global rejection logger would ever see it.
-    "btn-interrupt": () =>
-      withErrorReporting("Interrupt", async () => {
-        await ipc.send("kernel.interrupt");
-        await offerRestartIfItDidNotStop();
-      }),
-    "btn-restart": () => withErrorReporting("Restart", async () => ipc.send("kernel.restart")),
+    "btn-interrupt": interruptKernel,
+    "btn-restart": restartKernel,
     "btn-palette": openCommandPalette,
     "btn-info": showInfo,
     "btn-settings": showSettings,

@@ -31,6 +31,7 @@ import {
   monacoBinding,
   monacoBindings,
   parseChord,
+  sameChord,
   titleWithChord,
   usableChords,
 } from "../../src/keys.js";
@@ -428,3 +429,30 @@ test("an Alt letter falls back to the physical key, having produced a symbol", (
     "mod+alt+d",
   );
 });
+
+// --- one chord, written several ways --------------------------------------
+
+test("the same keystroke written in a different order is the same chord", () => {
+  // The rule this file's header states, made enforceable. A shortcut matched by
+  // string equality against a chord somebody typed into settings.json in a
+  // different order silently does nothing, which is exactly what happened to
+  // Shift-Alt-Cmd-R: the keymap said "shift+alt+mod+r" and a keystroke formats
+  // as "mod+shift+alt+r".
+  assert.ok(sameChord("shift+alt+mod+r", "mod+shift+alt+r"));
+  assert.ok(sameChord("mod+shift+alt+r", "alt+mod+shift+r"));
+  assert.ok(sameChord("shift+enter", "shift+enter"));
+});
+
+test("and a different keystroke is not", () => {
+  assert.equal(sameChord("mod+shift+alt+r", "ctrl+shift+alt+r"), false);
+  assert.equal(sameChord("mod+shift+alt+r", "mod+shift+r"), false);
+  assert.equal(sameChord("mod+r", "mod+t"), false);
+});
+
+test("and nothing matches a chord that cannot be parsed", () => {
+  // Including another one that cannot: two unreadable strings are not evidence
+  // of anything, and answering true would bind a typo to a real command.
+  assert.equal(sameChord("mod+nonsense", "mod+nonsense"), false);
+  assert.equal(sameChord("", ""), false);
+});
+

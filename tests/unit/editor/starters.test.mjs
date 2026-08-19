@@ -21,9 +21,15 @@ import { COMMANDS, describeChord } from "../../../src/keys.js";
 import { findCells } from "../../../src/editor/cells.js";
 import { DEFAULT_NEW_FILE_TEMPLATE, SAMPLE_SOURCE } from "../../../src/editor/starters.js";
 
-// Only the run bindings. Group 5 opens this map to editing and may well add
-// commands to it that a starter file has no business explaining.
-const RUN_COMMANDS = COMMANDS.filter((command) => command.id.startsWith("run."));
+// Only the run bindings, and only the ones that ship with a chord. Group 5
+// opens this map to editing and may well add commands to it that a starter file
+// has no business explaining - and a command with no default has no chord to
+// name, so requiring the text to mention one would be requiring it to invent
+// one. The cell-marker commands are that case: they are buttons and menu items,
+// and the Shortcuts tab binds them for anybody who wants a chord.
+const RUN_COMMANDS = COMMANDS.filter(
+  (command) => command.id.startsWith("run.") && command.chords.length > 0,
+);
 
 const TEXTS = [
   ["the New File template", DEFAULT_NEW_FILE_TEMPLATE],

@@ -67,6 +67,10 @@ import "monaco-editor/editor/standalone/browser/quickAccess/standaloneGotoLineQu
 import "monaco-editor/editor/standalone/browser/quickAccess/standaloneHelpQuickAccess.js";
 // Editing text, which is most of what the list above was missing.
 import "monaco-editor/editor/contrib/comment/browser/comment.js";
+// The buttons above each "# %%" marker. Without this the code lens provider
+// registers happily and is never called - the same trap this file's header
+// names, and the reason every contribution here is imported explicitly.
+import "monaco-editor/editor/contrib/codelens/browser/codelensController.js";
 import "monaco-editor/editor/contrib/format/browser/formatActions.js";
 import "monaco-editor/editor/contrib/linesOperations/browser/linesOperations.js";
 import "monaco-editor/editor/contrib/wordOperations/browser/wordOperations.js";
@@ -106,12 +110,21 @@ import "monaco-editor/editor/contrib/tokenization/browser/tokenization.js";
 // esm/vs prefix is added for us and spelling it out resolves to esm/vs/esm/vs.
 import EditorWorker from "monaco-editor/editor/editor.worker.js?worker";
 
-import { cellAt, findCells, nextCell } from "./cells.js";
+import {
+  cellAt,
+  cellStartingAt,
+  codeAbove,
+  codeFrom,
+  findCells,
+  nextCell,
+  previousCell,
+} from "./cells.js";
 import { completionItems, completionQuery, isIncomplete } from "./completion.js";
 import { snippetCompletions } from "./snippets.js";
 import { markersFor } from "./diagnostics.js";
 import { formatEdits } from "./format.js";
 import { showConsolePanel } from "../debug/console.js";
+import { cellActionsShown } from "./cellactions.js";
 import { formatLineLength } from "./formatting.js";
 import { hoverContents } from "./hover.js";
 import { signatureHelp } from "./signature.js";
@@ -210,6 +223,74 @@ export function runAll() {
     return;
   }
   execute(editor.getValue());
+}
+
+/**
+ * The cell a marker-line command is about.
+ *
+ * A line when a button above a marker was clicked, and the caret's cell when
+ * the command came from the menu or a chord. Taking the line rather than always
+ * reading the caret is what makes the buttons correct: clicking "All Above" on
+ * the third marker while typing in the first must act on the third, and by the
+ * time the click arrives the caret has not moved.
+ */
+function cellFor(source, line) {
+  if (typeof line === "number") {
+    return cellStartingAt(source, line);
+  }
+  const position = editor.getPosition();
+  return position === null ? null : cellAt(source, position.lineNumber);
+}
+
+/**
+ * Run the cell above this one, and put the caret in this one.
+ *
+ * The caret moves because the button's whole purpose is "I have just written
+ * this cell, run what it needs first" - leaving the caret behind in the cell
+ * that was run would put the next Shift-Enter in the wrong place.
+ */
+export function runCellAbove(line) {
+  if (currentModel() === null) {
+    return;
+  }
+  const source = editor.getValue();
+  const cell = cellFor(source, line);
+  if (cell === null) {
+    return;
+  }
+  const above = previousCell(source, cell);
+  if (above === null) {
+    return;
+  }
+  execute(above.code);
+  const target = Math.min(cell.startLine + 1, cell.endLine);
+  editor.setPosition({ lineNumber: target, column: 1 });
+}
+
+/** Everything from the top of the file down to this marker, exclusive. */
+export function runAllAbove(line) {
+  if (currentModel() === null) {
+    return;
+  }
+  const source = editor.getValue();
+  const cell = cellFor(source, line);
+  if (cell === null) {
+    return;
+  }
+  execute(codeAbove(source, cell.startLine));
+}
+
+/** This marker and everything after it, to the end of the file. */
+export function runAllBelow(line) {
+  if (currentModel() === null) {
+    return;
+  }
+  const source = editor.getValue();
+  const cell = cellFor(source, line);
+  if (cell === null) {
+    return;
+  }
+  execute(codeFrom(source, cell.startLine));
 }
 
 export function runCell({ advance = true } = {}) {
@@ -941,6 +1022,8 @@ export function initEditor() {
     // looking at is the line ruff will wrap at. The setting feeds both, so the
     // agreement is caused rather than coincidental.
     rulers: [formatLineLength()],
+    // The buttons above each "# %%" marker, which are a code lens.
+    codeLens: cellActionsShown(),
   });
 
   onThemeChange((theme) => monaco.editor.setTheme(theme === "light" ? "vs" : "vs-dark"));
@@ -982,6 +1065,7 @@ export function initEditor() {
 
   runActions = registerRunActions(editor);
   registerLanguageFeatures();
+  registerCellActions();
   return editor;
 }
 
@@ -1032,6 +1116,118 @@ function queryFor(model, position) {
  * this avoids is handing Monaco a list for a cursor position it has already
  * left behind.
  */
+// --- the buttons above a "# %%" marker --------------------------------------
+//
+// Five, in the order somebody reads them: run this cell, run the one before it,
+// then the two that run everything on one side of the marker, then stop. The
+// same set the Jupyter console extension for VS Code draws, because the point
+// is that the reflex carries across.
+//
+// The commands are registered by name and referenced by name, rather than being
+// closures the lens carries: a lens is data that crosses into Monaco's own
+// command service, and a name is what that service understands.
+
+const CELL_LENSES = [
+  { title: "\u25b6 Cell", command: "build123dStudio.runCellHere",
+    tooltip: "Run this cell and move to the next" },
+  { title: "\u25b6 Cell Above", command: "build123dStudio.runCellAbove",
+    tooltip: "Run the cell above and put the caret in this one" },
+  { title: "\u25b6 All Below", command: "build123dStudio.runAllBelow",
+    tooltip: "Run this marker and everything after it" },
+  { title: "\u25b6 All Above", command: "build123dStudio.runAllAbove",
+    tooltip: "Run everything above this marker" },
+  { title: "\u23f9 Interrupt", command: "build123dStudio.interrupt",
+    tooltip: "Interrupt what the kernel is running" },
+];
+
+// What the Interrupt lens does, handed in rather than imported: the toolbar owns
+// interrupting - it is the half that offers a restart when the interrupt does
+// not land - and toolbar.js already imports this file.
+let interrupt = () => {};
+
+/** Told what "interrupt" means, once, at startup. */
+export function setInterrupt(handler) {
+  interrupt = handler;
+}
+
+/**
+ * Run the cell whose marker was clicked, and move on to the next.
+ *
+ * The same thing Shift-Enter does, from a marker rather than from the caret.
+ */
+function runCellHere(line) {
+  if (currentModel() === null) {
+    return;
+  }
+  const source = editor.getValue();
+  const cell = cellFor(source, line);
+  if (cell === null) {
+    return;
+  }
+  execute(cell.code);
+  const next = nextCell(source, cell);
+  if (next !== null) {
+    const target = Math.min(next.startLine + 1, next.endLine);
+    editor.setPosition({ lineNumber: target, column: 1 });
+    editor.revealLineInCenterIfOutsideViewport(target);
+  }
+}
+
+/**
+ * Draw the buttons, and answer what they invoke.
+ *
+ * Only on markers the author wrote: findCells reports the text ahead of the
+ * first "# %%" as a cell of its own, and putting five buttons above line 1 of
+ * every plain script would be the editor inventing a boundary that is not
+ * there.
+ */
+function registerCellActions() {
+  monaco.editor.registerCommand("build123dStudio.runCellHere", (_a, line) => runCellHere(line));
+  monaco.editor.registerCommand("build123dStudio.runCellAbove", (_a, line) => runCellAbove(line));
+  monaco.editor.registerCommand("build123dStudio.runAllBelow", (_a, line) => runAllBelow(line));
+  monaco.editor.registerCommand("build123dStudio.runAllAbove", (_a, line) => runAllAbove(line));
+  monaco.editor.registerCommand("build123dStudio.interrupt", () => interrupt());
+
+  monaco.languages.registerCodeLensProvider("python", {
+    provideCodeLenses: (model) => {
+      const lenses = [];
+      for (const cell of findCells(model.getValue())) {
+        if (!cell.marked) {
+          continue;
+        }
+        const range = {
+          startLineNumber: cell.startLine,
+          startColumn: 1,
+          endLineNumber: cell.startLine,
+          endColumn: 1,
+        };
+        for (const lens of CELL_LENSES) {
+          lenses.push({
+            range,
+            command: {
+              id: lens.command,
+              title: lens.title,
+              tooltip: lens.tooltip,
+              arguments: [cell.startLine],
+            },
+          });
+        }
+      }
+      // Monaco disposes what it is given; there is nothing here to release.
+      return { lenses, dispose: () => {} };
+    },
+    resolveCodeLens: (_model, lens) => lens,
+  });
+}
+
+/** Show or hide them, which is a setting rather than a rebuild. */
+export function applyCellActions() {
+  if (editor === null || editor === undefined) {
+    return;
+  }
+  editor.updateOptions({ codeLens: cellActionsShown() });
+}
+
 function registerLanguageFeatures() {
   monaco.languages.registerCompletionItemProvider("python", {
     // Monaco asks on word characters by itself; the dot is the case that has to
@@ -1266,6 +1462,12 @@ export function registerRunActions(target) {
     { id: "run.cell.stay", run: () => runCell({ advance: false }) },
     { id: "run.selectionOrLine", run: () => runSelectionOrLine() },
     { id: "run.all", run: runAll },
+    // The three the buttons above a marker introduced. No default chord, so
+    // these register nothing until somebody binds one in Settings - but they
+    // have to be here, or a chord bound there would land on nothing.
+    { id: "run.cellAbove", run: () => runCellAbove() },
+    { id: "run.allAbove", run: () => runAllAbove() },
+    { id: "run.allBelow", run: () => runAllBelow() },
     // Not the kernel: the file on disk, in a process of its own. Registered
     // here with the rest because to a user it is the same kind of thing -
     // "make this file happen" - and differs only in where it happens.

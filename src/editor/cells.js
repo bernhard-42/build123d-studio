@@ -68,3 +68,38 @@ export function nextCell(source, cell) {
   }
   return cells[index + 1];
 }
+
+/** The cell whose own "# %%" marker is on this line, or null. */
+export function cellStartingAt(source, line) {
+  const found = findCells(source).find(
+    (cell) => cell.marked && cell.startLine === line,
+  );
+  return found === undefined ? null : found;
+}
+
+/** The cell before the given one, or null at the top of the file. */
+export function previousCell(source, cell) {
+  const cells = findCells(source);
+  const index = cells.findIndex((c) => c.startLine === cell.startLine);
+  if (index <= 0) {
+    return null;
+  }
+  return cells[index - 1];
+}
+
+/**
+ * Everything above a line, and everything from it down.
+ *
+ * A pair, because "all above" and "all below" are one idea cut in two places,
+ * and the cut is the line itself: above stops before it, below starts at it.
+ * The marker line goes with the code below it, where its own cell is - and it
+ * is a comment either way, so including it costs nothing and losing it would
+ * mean the two halves did not add up to the file.
+ */
+export function codeAbove(source, line) {
+  return source.split("\n").slice(0, Math.max(0, line - 1)).join("\n");
+}
+
+export function codeFrom(source, line) {
+  return source.split("\n").slice(Math.max(0, line - 1)).join("\n");
+}

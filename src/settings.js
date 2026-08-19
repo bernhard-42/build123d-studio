@@ -22,7 +22,7 @@ import {
   findChordConflicts,
 } from "./keys.js";
 import { chordsFor, setChordsFor } from "./keybindings.js";
-import { rebindRunActions } from "./editor/monaco.js";
+import { applyCellActions, rebindRunActions } from "./editor/monaco.js";
 import { refreshMenu } from "./menubar.js";
 import {
   applyPackageSources,
@@ -45,6 +45,7 @@ import {
   formatOnSave,
   LINE_LENGTH_KEY,
 } from "./editor/formatting.js";
+import { CELL_ACTIONS_KEY, cellActionsShown } from "./editor/cellactions.js";
 import { DEFAULT_NEW_FILE_TEMPLATE } from "./editor/starters.js";
 import {
   JUST_MY_CODE_KEY,
@@ -469,6 +470,18 @@ export async function showSettings({ tab = null } = {}) {
             <input type="checkbox" id="settings-format-on-save" />
             <span>Format on save</span>
           </label>
+          <p class="settings-group">Cells</p>
+          <p class="info-note">
+            Buttons above every <code># %%</code> marker: run that cell, run the
+            one above it, run everything on either side of it, or interrupt.
+            They are how the three cell commands with no shortcut are found at
+            all - the Run menu lists them too, and the Shortcuts tab will bind
+            them.
+          </p>
+          <label class="settings-check">
+            <input type="checkbox" id="settings-cell-actions" />
+            <span>Show cell actions</span>
+          </label>
           <p class="info-note" id="settings-editor-problems" hidden></p>
 
         </section>
@@ -780,6 +793,7 @@ ${VIEWER_GROUPS.map(
   document.getElementById("settings-dark-mode").checked = resolvedTheme() === "dark";
   document.getElementById("settings-line-length").value = String(formatLineLength());
   document.getElementById("settings-format-on-save").checked = formatOnSave();
+  document.getElementById("settings-cell-actions").checked = cellActionsShown();
   document.getElementById("settings-just-my-code").checked = justMyCode();
   document.getElementById("settings-on-stop").value = onStopExpression();
   document.getElementById("settings-on-stop-breakpoints").checked =
@@ -876,6 +890,14 @@ ${VIEWER_GROUPS.map(
     const onSave = document.getElementById("settings-format-on-save").checked;
     if (onSave !== formatOnSave()) {
       await setSetting(FORMAT_ON_SAVE_KEY, onSave);
+    }
+
+    const cellActions = document.getElementById("settings-cell-actions").checked;
+    if (cellActions !== cellActionsShown()) {
+      await setSetting(CELL_ACTIONS_KEY, cellActions);
+      // The editor is already open behind this dialog, so the switch has to
+      // reach it rather than wait for a restart.
+      applyCellActions();
     }
 
     const template = document.getElementById("settings-new-template").value;

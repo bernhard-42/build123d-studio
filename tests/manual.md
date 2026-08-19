@@ -551,6 +551,20 @@ The project's root is watched, recursively, for as long as it is open. What need
 
 **Windows:** worth one extra pass, because the watcher there is a different implementation to macOS's FSEvents.
 
+### M36 — The buttons above a cell marker, and the restart chord
+
+Five buttons above every `# %%`: run that cell, run the one above it, run everything below the marker, run everything above it, interrupt. Drawing them is Monaco's code lens; what needs a person is that they are legible against both themes, that they act on the marker they sit above, and that the chord reaches the application on a real keyboard.
+
+1. **They are there, and only on markers.** Open a file with two or three `# %%` markers: five buttons above each, none above line 1 of a plain script.
+2. **They act on their own marker.** Put the caret in the first cell and click **All Above** on the *third* marker. What runs is everything above the third marker, not above the caret.
+3. **Interrupt.** Start a long cell, click **⏹ Interrupt** above any marker. It stops, and if it does not, the five-second offer to restart appears - the same one the toolbar button gives.
+4. **The switch.** Settings > Editor > Show cell actions, off: they all go, immediately, with the dialog still open. On: they come back.
+5. **Legibility.** Both themes, and while a line is selected - the lens sits in its own line above the marker and must not be mistaken for code.
+6. **The restart chord.** `Shift-Alt-Cmd-R` on macOS, `Ctrl-Shift-Alt-R` on Windows and Linux, restarts the kernel from anywhere - including with the caret in the console and with the editor empty. It also appears in Settings > Shortcuts and can be rebound there.
+7. **The German keyboard.** The chord is a letter rather than a punctuation key precisely so it survives a layout change; worth one press on the German layout to be sure.
+
+**Windows and Linux:** the Run menu carries Run Cell Above, Run All Above and Run All Below, and Restart Kernel with its chord beside it.
+
 ## Results
 
 One row per platform per run. Record the build, not just the date.
@@ -593,6 +607,7 @@ One row per platform per run. Record the build, not just the date.
 | M33 menu bar in window | n/a | ok |  |
 | M34 keyboard after Open Folder | ok | ok |  |
 | M35 tree follows the disk | | | |
+| M36 cell buttons, restart chord | | | |
 
 **The run of 2026-08-18, macOS and Windows, 0.3.0.dev167.** The first full pass; Linux has still never been run. What it left:
 

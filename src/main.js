@@ -29,7 +29,11 @@ import {
   replaceSelection,
   runCell,
   runAll,
+  runAllAbove,
+  runAllBelow,
+  runCellAbove,
   runSelectionOrLine,
+  setInterrupt,
   selectedText,
   setDebugHandler,
   setRunFileHandler,
@@ -66,13 +70,21 @@ import {
 } from "./editor/files.js";
 import { initTabStrip } from "./editor/tabstrip.js";
 import { initSidebar, toggleSidebar } from "./editor/sidebar.js";
+import { chordFromEvent, sameChord } from "./keys.js";
+import { chordsFor } from "./keybindings.js";
 import { handleKey } from "./titlebar/titlebar.js";
 import { followWindowFocus } from "./nativedialog.js";
 import { initViewer, showLogo } from "./viewer/viewer.js";
 import { initVariables } from "./vars/explorer.js";
 import { awaitKernelRestart, showSettings } from "./settings.js";
 import { showInfo } from "./info.js";
-import { initToolbar, setDebugToggle, updateTitle } from "./toolbar.js";
+import {
+  initToolbar,
+  interruptKernel,
+  restartKernel,
+  setDebugToggle,
+  updateTitle,
+} from "./toolbar.js";
 import { initDebug } from "./debug/session.js";
 import { initDebugUi, stepAction, toggleDebugging } from "./debug/start.js";
 import * as ipc from "./ipc.js";
@@ -194,6 +206,25 @@ window.addEventListener("keydown", (event) => {
     event.preventDefault();
     shutdown();
   }
+});
+
+// The kernel's own chords, delivered whatever has the keyboard.
+//
+// Not editor actions like the run commands, and the difference is the point: a
+// restart is what somebody reaches for while the console is wedged or the
+// variable explorer has the caret, and an editor action only arrives when the
+// editor does. Matched against the keymap rather than against a literal, so
+// rebinding it in Settings moves this with it.
+//
+// macOS cannot help here either - its native menu binds Command plus a single
+// character and nothing more - so this listener is the only delivery there is.
+window.addEventListener("keydown", (event) => {
+  const chord = chordFromEvent(NL_OS, event);
+  if (chord === null || !chordsFor("kernel.restart").some((bound) => sameChord(bound, chord))) {
+    return;
+  }
+  event.preventDefault();
+  void restartKernel();
 });
 
 // The in-window menu bar's keyboard: Alt shows the underlines, Alt-F opens File,
@@ -586,7 +617,11 @@ async function main() {
     "run.cell.stay": () => runCell({ advance: false }),
     "run.selectionOrLine": () => runSelectionOrLine(),
     "run.all": runAll,
+    "run.cellAbove": () => runCellAbove(),
+    "run.allAbove": () => runAllAbove(),
+    "run.allBelow": () => runAllBelow(),
     "run.file": () => void toggleRunFile(),
+    "kernel.restart": () => void restartKernel(),
     "debug.start": () => withMenu(toggleDebugging),
     "debug.restart": () => stepAction("restart"),
     "debug.stop": () => stepAction("stop"),
@@ -636,6 +671,11 @@ async function main() {
   claimJournal().catch((error) => log.warn("Could not claim the recovery journal:", error));
   // The user's own snippets, if they have written any. Not awaited: the editor
   // works without them and a file read must not stand in front of the window.
+  // What the Interrupt button above a cell marker does. Handed to the editor
+  // rather than imported by it: interrupting belongs to the toolbar, which
+  // already imports the editor.
+  setInterrupt(() => void interruptKernel());
+
   reloadUserSnippets().catch((error) => log.warn("Could not read the snippets file:", error));
 
   // The window being activated is the one moment we are told about rather than

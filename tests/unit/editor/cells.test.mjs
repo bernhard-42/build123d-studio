@@ -9,7 +9,15 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
 
-import { cellAt, findCells, nextCell } from "../../../src/editor/cells.js";
+import {
+  cellAt,
+  cellStartingAt,
+  codeAbove,
+  codeFrom,
+  findCells,
+  nextCell,
+  previousCell,
+} from "../../../src/editor/cells.js";
 
 const starts = (source) => findCells(source).map((cell) => cell.startLine);
 const marked = (source) => findCells(source).filter((cell) => cell.marked).map((c) => c.startLine);
@@ -82,4 +90,56 @@ test("the last cell has no next one, which is what stops the caret advancing", (
   const cells = findCells(source);
   assert.equal(nextCell(source, cells[0]).startLine, 3);
   assert.equal(nextCell(source, cells[1]), null);
+});
+
+// --- what the buttons above a marker need ----------------------------------
+//
+// The lenses are drawn on a marker line and act from it, so every one of these
+// takes a line number rather than a caret: "run the cell this button sits on",
+// "run the one before it", "run everything above it". A caret-based answer
+// would be wrong the moment somebody clicks a button belonging to a different
+// cell than the one they are typing in, which is most clicks.
+
+const FILE = "# %%\nfirst = 1\n# %%\nsecond = 2\n# %%\nthird = 3\n";
+
+test("a marker line names its own cell", () => {
+  assert.equal(cellStartingAt(FILE, 3).code, "# %%\nsecond = 2");
+  assert.equal(cellStartingAt(FILE, 1).code, "# %%\nfirst = 1");
+});
+
+test("and a line that is not a marker names none", () => {
+  // The lens is only ever drawn on a marker, so anything else arriving here is
+  // a buffer that changed under the click - answer nothing rather than guess.
+  assert.equal(cellStartingAt(FILE, 2), null);
+  assert.equal(cellStartingAt(FILE, 99), null);
+});
+
+test("the unmarked first cell of a plain script is not one of them", () => {
+  // It has no marker, so it has no lens, so nothing can ask for it by line.
+  assert.equal(cellStartingAt("x = 1\ny = 2\n", 1), null);
+});
+
+test("a cell knows the one before it, and the first has none", () => {
+  const second = cellStartingAt(FILE, 3);
+  assert.equal(previousCell(FILE, second).code, "# %%\nfirst = 1");
+  assert.equal(previousCell(FILE, cellStartingAt(FILE, 1)), null);
+});
+
+test("above stops before the line, and below starts at it", () => {
+  assert.equal(codeAbove(FILE, 3), "# %%\nfirst = 1");
+  assert.equal(codeFrom(FILE, 3), "# %%\nsecond = 2\n# %%\nthird = 3\n");
+});
+
+test("and the two halves add up to the whole file", () => {
+  // The property that makes the pair safe to reason about: nothing is dropped
+  // between them and nothing is run twice.
+  for (const line of [1, 2, 3, 4, 5, 6]) {
+    const above = codeAbove(FILE, line);
+    const below = codeFrom(FILE, line);
+    assert.equal(above === "" ? below : `${above}\n${below}`, FILE, `at line ${line}`);
+  }
+});
+
+test("above the first line is nothing at all", () => {
+  assert.equal(codeAbove(FILE, 1), "");
 });

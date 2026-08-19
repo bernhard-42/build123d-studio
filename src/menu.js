@@ -164,7 +164,9 @@ function item(id, text, { platform, shortcut, enabled = true, role = false }) {
 // belong together, and this one would otherwise be nine flat entries.
 const RUN_GROUPS = [
   ["run.cell", "run.cell.stay", "run.selectionOrLine", "run.all"],
+  ["run.cellAbove", "run.allAbove", "run.allBelow"],
   ["run.file"],
+  ["kernel.restart"],
   ["debug.start", "debug.stepOver", "debug.stepInto", "debug.stepOut", "debug.continue",
    "debug.restart", "debug.stop"],
 ];
