@@ -177,3 +177,47 @@ class SplashUntilSomethingIsDrawnTest(unittest.TestCase):
         self.sidecar.on_model(b'{"type": "clear"}', b"")
 
         self.assertFalse(self.sidecar._splash)
+
+
+class ViewerMessagesArePassedOnWholeTest(unittest.TestCase):
+    """The core builds the page's message; this host only carries it.
+
+    `set_viewer_config` reaches the core, which wraps the settings as
+    `{"type": "ui", "config": {...}}` in its own comms and hands the whole
+    object to this host's send_config. Wrapping it again made the page apply the
+    outer envelope - it logged "ui: no setter for 'type'" and "no setter for
+    'config'", and not one real setting arrived. Reported against 0.3.0.dev187.
+
+    The shared page has one dispatch and every host feeds it the same objects,
+    so a host that rewrites them is a host whose viewer behaves differently from
+    the others - which is the whole thing the core/host split exists to prevent.
+    """
+
+    def setUp(self):
+        root = tempfile.mkdtemp(prefix="studio-viewer-msg-")
+        instance = Instance(root)
+        instance.claim()
+        self.addCleanup(instance.release)
+
+        self.sidecar = Sidecar(env_root=root, app_dir=root, instance=instance)
+        self.channel = FakeChannel()
+        self.sidecar.channel = self.channel
+
+    def sent(self):
+        return [payload["message"] for kind, payload in self.channel.sent if kind == "viewer.message"]
+
+    def test_a_ui_message_arrives_exactly_as_the_core_built_it(self):
+        message = {"type": "ui", "config": {"axes": True, "grid": [True, False, False]}}
+
+        self.sidecar.on_viewer_config(message)
+
+        self.assertEqual(self.sent(), [message])
+
+    def test_and_its_settings_are_not_buried_one_level_deeper(self):
+        # The failure in the form the page saw it: the settings must be the
+        # config, not a message nested inside it.
+        self.sidecar.on_viewer_config({"type": "ui", "config": {"axes": True}})
+
+        config = self.sent()[0]["config"]
+        self.assertEqual(config, {"axes": True})
+        self.assertNotIn("type", config)

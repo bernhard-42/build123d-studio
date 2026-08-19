@@ -737,9 +737,17 @@ class Sidecar:
         """
         self.measurements.load(mapping_bytes)
 
-    def on_viewer_config(self, config):
-        """Apply a config block to the viewer that is already on screen."""
-        self.to_viewer({"type": "ui", "config": config})
+    def on_viewer_config(self, message):
+        """Pass a `ui` message to the viewer that is already on screen.
+
+        Forwarded whole, not wrapped. The core builds the envelope itself -
+        `{"type": "ui", "config": {...}}` in its own comms - and hands it to
+        this host's send_config, so wrapping it again made the page apply the
+        *outer* keys: it reported "no setter for 'type'" and "no setter for
+        'config'" and every real setting went nowhere. Reported against
+        0.3.0.dev187.
+        """
+        self.to_viewer(message)
 
     def on_viewer_command(self, request):
         """Answer the kernel's questions, and pass its two commands on.
