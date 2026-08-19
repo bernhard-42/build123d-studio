@@ -33,6 +33,7 @@ arrived later in `3558032` and `on()` did not take the argument yet.
 
 import json
 import struct
+import threading
 import unittest
 
 from channel import HEADER_SIZE, KIND_CONSOLE
@@ -198,3 +199,49 @@ class ChannelTokenTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WindowGoneTest(unittest.TestCase):
+    """What happens to this process when its window leaves.
+
+    The socket dying is not the window dying. A machine waking from sleep resets
+    loopback connections, and the frontend reconnects onto the same port and
+    token within seconds - so a client going away must be a grace period, not a
+    trigger. Measured against a real socket rather than a fake, because "the
+    client went" is a websockets library event and mocking it would only assert
+    that the mock was called.
+
+    Observed on Windows, 0.3.0.dev173: the machine slept, both of the page's
+    sockets were reset, and this process sat holding a kernel, a console, a
+    language server and a measurement backend that nothing could reach.
+    """
+
+    def setUp(self):
+        self.harness = ChannelHarness().start()
+        self.addCleanup(self.harness.close)
+        self.gone = threading.Event()
+        self.harness.channel.when_client_goes(self.gone.set, 0.2)
+
+    def test_a_client_that_leaves_and_stays_away_ends_it(self):
+        client = self.harness.connect()
+        client.close()
+
+        self.assertTrue(self.gone.wait(SETTLE), "the grace never expired")
+
+    def test_but_one_that_comes_straight_back_does_not(self):
+        # The case this whole mechanism exists to survive: the socket is reset,
+        # the frontend redials, and the session - kernel, namespace, console -
+        # carries on as if nothing happened.
+        client = self.harness.connect()
+        client.close()
+        self.harness.connect()
+
+        self.assertFalse(
+            self.gone.wait(0.5),
+            "reconnecting did not cancel the grace; a live session would have been stopped",
+        )
+
+    def test_and_a_client_that_never_connects_is_not_a_window_that_left(self):
+        # Nothing has ever connected, so there is nothing to have gone. The
+        # startup path has its own timeout for a window that never arrives.
+        self.assertFalse(self.gone.wait(0.5))

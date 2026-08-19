@@ -115,6 +115,20 @@ STARTUP_WATCHDOG = 120
 # kernel, a console and a measurement backend. See stop() for the deadlock.
 SHUTDOWN_DEADLINE = 8
 
+# How long this process waits for its window to come back before stopping.
+#
+# The socket dying is not the window dying: a machine waking from sleep resets
+# loopback connections, and the frontend redials onto the same port and token
+# within about ten seconds - after which the kernel, the console, the language
+# server and the namespace are all exactly where they were. This has to be
+# comfortably longer than that.
+#
+# It matters at all because nothing else ends this process when a window goes
+# without closing its stdin - a page reload does that, and so does killing the
+# webview alone. Before this, one of those left a full tree of processes holding
+# a kernel that nothing could reach.
+ORPHAN_GRACE = 120
+
 
 class Sidecar:
     def __init__(self, env_root, app_dir, instance):
@@ -127,6 +141,9 @@ class Sidecar:
         self.sidecar_dir = os.path.dirname(os.path.abspath(__file__))
 
         self.channel = Channel()
+        # Said here rather than at startup, so a window that connects once and
+        # vanishes is covered as well as one that never comes back.
+        self.channel.when_client_goes(self._window_gone, ORPHAN_GRACE)
         self.kernel = None
         self.console = None
         # A _restarting Event used to live here, described as what stopped a
@@ -1499,6 +1516,19 @@ class Sidecar:
             getattr(owner, method)(**arguments)
         except Exception as exc:  # noqa: BLE001 - one bad step must not strand the rest
             log(f"Stopping {what} failed: {exc}")
+
+    def _window_gone(self):
+        """The window left and did not come back within the grace.
+
+        Stopped in the ordinary way rather than killed: there is a kernel, a
+        console, a language server and a measurement backend under this process,
+        and the teardown is what stops them in an order that does not strand
+        each other. The watchdog behind that teardown still applies.
+        """
+        log(f"No window for {ORPHAN_GRACE}s; stopping")
+        self.stop()
+        flush_logs()
+        os._exit(0)
 
     def _give_up_stopping(self):
         """Leave, whatever is holding the shutdown up.

@@ -68,6 +68,25 @@ let handshakeBuffer = "";
 // then, and re-resolving it would repeat the whole uv sync for a restart that
 // only needs a process.
 let launch = null;
+// The port and token of the sidecar this page is talking to, kept so a dropped
+// socket can be picked up again rather than mourned. See resume().
+let announced = null;
+let resuming = false;
+// Set once, on the way out. A quit closes the socket on purpose, and a chase
+// after it would spend ten seconds redialling a sidecar that is exiting - and
+// then raise the "backend disconnected" banner over an application that is
+// closing.
+let stopping = false;
+
+// How a dropped socket is chased, in milliseconds between attempts.
+//
+// A resumed Windows machine resets loopback connections, and the sidecar
+// survives that: it clears its client and goes back to accepting, its token is
+// a constant rather than single-use, and its kernel, console and namespace are
+// untouched. So the socket dying is not the backend dying - it is worth ten
+// seconds of trying before saying so, and reconnecting costs nobody their
+// variables.
+const RESUME_DELAYS = [100, 250, 500, 1000, 2000, 2000, 2000, 2000];
 
 function dispatch(frame) {
   const listeners = handlers.get(frame.type);
@@ -413,9 +432,56 @@ function connect({ port, token }) {
       }
       log.warn("Sidecar socket closed:", event.code, event.reason);
       socket = null;
-      dispatch({ type: "sidecar.disconnected", code: event.code });
+      void resume(event.code);
     };
   });
+}
+
+/**
+ * Pick the socket up again, and only give up if it will not come.
+ *
+ * The case this exists for is a machine waking from sleep: Windows resets
+ * loopback connections, so the socket dies while the sidecar - and its kernel,
+ * console, language server and namespace - is perfectly alive and back to
+ * accepting a connection. Declaring that a dead backend cost the user
+ * everything in the namespace to fix a link that only had to be redialled.
+ *
+ * Not attempted when the process itself has gone: `sidecar` is cleared when it
+ * exits, and dialling a port nobody is listening on can only waste ten seconds
+ * before saying what is already known.
+ */
+async function resume(code) {
+  if (resuming || stopping) {
+    return;
+  }
+  if (sidecar === null || announced === null) {
+    // The process is gone, or was never announced: there is nothing on that
+    // port to answer, and ten seconds of dialling would only delay the truth.
+    dispatch({ type: "sidecar.disconnected", code });
+    return;
+  }
+  resuming = true;
+  try {
+    for (const delay of RESUME_DELAYS) {
+      await new Promise((settle) => setTimeout(settle, delay));
+      if (sidecar === null) {
+        break;
+      }
+      try {
+        await connect(announced);
+        log.info("Reconnected to the sidecar; nothing was lost");
+        dispatch({ type: "sidecar.resumed" });
+        return;
+      } catch {
+        // Not up yet, or not coming back. The next delay decides.
+        socket = null;
+      }
+    }
+    log.warn("The sidecar did not answer again; treating it as gone");
+    dispatch({ type: "sidecar.disconnected", code });
+  } finally {
+    resuming = false;
+  }
 }
 
 /**
@@ -528,6 +594,7 @@ export async function startSidecar({ python, envRoot, appDir }) {
   });
 
   try {
+    announced = announcement;
     await connect(announcement);
     return await ready.promise;
   } catch (error) {
@@ -616,6 +683,7 @@ export async function restartSidecar() {
 
 /** Ask the sidecar to shut down, then close its stdin as a fallback. */
 export async function stopSidecar() {
+  stopping = true;
   if (sidecar === null) {
     return;
   }

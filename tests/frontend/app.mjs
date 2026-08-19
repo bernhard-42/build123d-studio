@@ -54,6 +54,9 @@ class FakeSidecar {
     // that typing in the console sends nothing.
     this.receivedBinary = [];
     this._route = null;
+    // How many times the page has connected. A reconnection is the whole point
+    // of the resume path, and counting is how a test sees one happen.
+    this.connections = 0;
     this._waiters = [];
     this._answers = new Map();
     // Requests an answer() chose not to reply to yet. See the dispatch below.
@@ -126,7 +129,23 @@ class FakeSidecar {
     });
   }
 
+  /**
+   * Drop the socket without going away, the way a resumed machine does.
+   *
+   * Windows resets loopback connections across sleep: the socket dies and the
+   * sidecar behind it is untouched, still listening, still holding the kernel.
+   * The fake has to be able to express that, or "the backend disconnected" and
+   * "the backend died" are indistinguishable here and the reconnection could
+   * not be tested at all.
+   */
+  drop(code = 1006) {
+    if (this._route !== null) {
+      this._route.close({ code });
+    }
+  }
+
   _attach(route) {
+    this.connections += 1;
     this._route = route;
     this._answerDefaults();
     route.onMessage((message) => {
@@ -253,6 +272,11 @@ export async function open(page, options = {}) {
     // Modification times for seeded files, where a test needs one to mean
     // something.
     times = {},
+    // What the last page left in localStorage, which is where unsaved work is
+    // mirrored when the link to the application has died and no file can be
+    // written. Seeded here rather than by typing, so a test can put a copy
+    // *and* a journal entry in front of the same start.
+    stored = {},
     ready = true,
   } = options;
 
@@ -282,6 +306,12 @@ export async function open(page, options = {}) {
       route.send(JSON.stringify({ type: "ready", connectionFile: "/appdata/kernel.json" }));
     }
   });
+
+  await page.addInitScript((entries) => {
+    for (const [key, value] of Object.entries(entries)) {
+      localStorage.setItem(key, value);
+    }
+  }, stored);
 
   await page.addInitScript(
     ([harness, seed, stored, stamps, processes]) => {

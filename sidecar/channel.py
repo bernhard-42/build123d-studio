@@ -129,6 +129,11 @@ class Channel:
         self._lanes = {}
         self._lanes_lock = threading.Lock()
         self._connection = None
+        # What to do about a window that goes and stays gone. See
+        # when_client_goes, which is how the sidecar sets its policy.
+        self._on_orphaned = None
+        self._orphan_grace = 0
+        self._orphan_timer = None
         self._send_lock = threading.Lock()
         self._connected = threading.Event()
         self._server = None
@@ -363,6 +368,49 @@ class Channel:
             log("Refused an unauthorised connection (further ones not logged)")
         return connection.respond(403, "unauthorised\n")
 
+    def when_client_goes(self, handler, grace):
+        """Say what to do when the webview leaves and does not come back.
+
+        The socket dying is not the window dying: a machine waking from sleep
+        resets loopback connections, and the frontend redials within seconds
+        onto the same port and token. So this is a *grace*, not a trigger -
+        `handler` runs only if nobody has connected again by the time it
+        expires, and a reconnection cancels it.
+
+        Without it a window that really has gone - a reload, a crash, a kill of
+        the webview alone - leaves this process holding a kernel, a console, a
+        language server and a measurement backend that nothing can reach.
+
+        @param handler called from a timer thread when the grace runs out
+        @param grace seconds to wait for the window to come back
+        """
+        self._on_orphaned = handler
+        self._orphan_grace = grace
+
+    def _start_orphan_timer(self):
+        if self._on_orphaned is None:
+            return
+        timer = threading.Timer(self._orphan_grace, self._orphaned)
+        # Daemon, or a deliberate shutdown would wait out the whole grace before
+        # the interpreter could exit.
+        timer.daemon = True
+        self._orphan_timer = timer
+        timer.start()
+
+    def _cancel_orphan_timer(self):
+        timer = self._orphan_timer
+        self._orphan_timer = None
+        if timer is not None:
+            timer.cancel()
+
+    def _orphaned(self):
+        # Asked again here rather than trusting the cancel: a reconnection
+        # racing the timer's own thread would otherwise stop a session somebody
+        # is using.
+        if self._connection is not None:
+            return
+        self._on_orphaned()
+
     def _handle_connection(self, connection):
         # One webview, by design. Accepting a second would replace the live
         # connection and then have the *first* one's cleanup null the second's
@@ -374,6 +422,7 @@ class Channel:
             return
 
         log("Webview connected")
+        self._cancel_orphan_timer()
         self._connection = connection
         self._connected.set()
 
@@ -392,6 +441,7 @@ class Channel:
         finally:
             self._connection = None
             log("Webview disconnected")
+            self._start_orphan_timer()
 
     def _dispatch(self, message):
         if isinstance(message, bytes):
