@@ -69,3 +69,41 @@ export async function append(filesystem, path, text) {
     return false;
   }
 }
+
+/**
+ * A serial writer that cannot be stopped by one write that never answers.
+ *
+ * Appends are serialised so two of them cannot interleave mid-line, and that
+ * serialisation used to be a plain promise chain - which meant a single append
+ * that never settled stopped every later line for the rest of the session.
+ * There is a real way for that to happen: `filesystem.appendFile` is a call to
+ * the application's own server, whose client resolves calls by id, so a reply
+ * lost while the machine was suspended leaves that promise pending for ever.
+ * Observed on Windows waking from sleep, 0.3.0.dev174 - the log stopped
+ * mid-session while the Backend pane, which is told before the write, carried
+ * on.
+ *
+ * So each write gets a deadline. Passing it does not cancel anything - there is
+ * no way to cancel a request already sent - it only stops the *next* line
+ * waiting behind it. An abandoned write may still land later and out of order,
+ * which is a far smaller price than a log that stops.
+ *
+ * @param filesystem the object with appendFile, injected so this is testable
+ * @param deadline milliseconds to wait before giving up on one write
+ * @returns {(path: string, text: string) => Promise<boolean>} whether it landed
+ */
+export function createWriter(filesystem, deadline) {
+  let queue = Promise.resolve();
+
+  return function write(path, text) {
+    queue = queue.then(() =>
+      Promise.race([
+        append(filesystem, path, text),
+        new Promise((settle) => {
+          setTimeout(() => settle(false), deadline);
+        }),
+      ]),
+    );
+    return queue;
+  };
+}

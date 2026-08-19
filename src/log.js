@@ -1,7 +1,7 @@
 import { filesystem } from "@neutralinojs/lib";
 
 import { appDataDir } from "./bootstrap/envroot.js";
-import { append, rotate } from "./logfile.js";
+import { append, createWriter, rotate } from "./logfile.js";
 import { emit, repeater } from "./logrepeat.js";
 
 // The webview has no visible console when the app runs outside a dev browser,
@@ -83,7 +83,10 @@ let backendFilePath = null;
 let backendBuffered = [];
 // Serialised, like the settings store: appends fired in parallel interleave
 // mid-line.
-let pending = Promise.resolve();
+// Every line goes through one writer, so two appends cannot interleave
+// mid-line - and no single write can stop the ones behind it. See createWriter.
+const WRITE_DEADLINE = 5000;
+const writeLine = createWriter(filesystem, WRITE_DEADLINE);
 
 // Whoever wants to show the log as it happens. The Backend tab does: to a user
 // there is no difference between the sidecar, the measurement process and this
@@ -119,15 +122,11 @@ function write(entry) {
       buffered.push(text);
       return;
     }
-    appendToApp(text);
+    // Serialised within this process so two appends cannot interleave mid-line.
+    // Across processes that is the operating system's job, and append is the
+    // only operation for which it does it - see logfile.js.
+    writeLine(path, text);
   });
-}
-
-function appendToApp(text) {
-  // Serialised within this process so two appends cannot interleave mid-line.
-  // Across processes that is the operating system's job, and append is the only
-  // operation for which it does it - see logfile.js.
-  pending = pending.then(() => append(filesystem, path, text));
 }
 
 function format(level, parts) {
@@ -158,7 +157,7 @@ function writeConsole(entry) {
       consoleBuffered.push(text);
       return;
     }
-    pending = pending.then(() => append(filesystem, consoleFilePath, text));
+    writeLine(consoleFilePath, text);
   });
 }
 
@@ -169,7 +168,7 @@ function writeBackend(entry) {
       backendBuffered.push(text);
       return;
     }
-    pending = pending.then(() => append(filesystem, backendFilePath, text));
+    writeLine(backendFilePath, text);
   });
 }
 

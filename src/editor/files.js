@@ -934,7 +934,72 @@ function journalDeps(root) {
  * Called from the editor's content-change event, so it must stay O(1): all it
  * does is replace a timer.
  */
+// --- the copy that needs no filesystem ------------------------------------
+//
+// The recovery journal is written through Neutralino, and when that link dies
+// every write is queued for ever - so the one moment a window most needs its
+// unsaved work recorded is the moment it cannot record any. The only store the
+// page can reach on its own is localStorage, which the webview keeps in its own
+// profile and which survives the reload that a dead link forces.
+//
+// Deliberately a mirror and not a replacement. The journal is per-buffer files
+// with stamps, openable by somebody who does not trust the prompt; this is one
+// key holding the dirty text, small, and thrown away as soon as the real copies
+// have been offered.
+const MIRROR_KEY = "build123d-studio.unsaved";
+
+/** Put every dirty buffer in localStorage, where no native call is needed. */
+function mirrorUnsaved() {
+  try {
+    const entries = [];
+    for (const key of bufferKeys()) {
+      if (!bufferNeedsSaving(key)) {
+        continue;
+      }
+      const contents = bufferContents(key);
+      if (contents === null || !worthRecording(contents.text)) {
+        continue;
+      }
+      entries.push({ path: bufferPath(key), text: contents.text });
+    }
+    if (entries.length === 0) {
+      localStorage.removeItem(MIRROR_KEY);
+      return;
+    }
+    localStorage.setItem(MIRROR_KEY, JSON.stringify({ pid: NL_PID, entries }));
+  } catch (error) {
+    // Full, or unavailable. The journal is the primary copy; this is the one
+    // that survives a dead link, and losing it costs nothing on its own.
+    log.warn("Could not mirror unsaved work:", error);
+  }
+}
+
+/** What the last page left behind, or an empty list. */
+function mirroredUnsaved() {
+  try {
+    const stored = localStorage.getItem(MIRROR_KEY);
+    if (stored === null) {
+      return [];
+    }
+    const parsed = JSON.parse(stored);
+    return Array.isArray(parsed?.entries) ? parsed.entries : [];
+  } catch {
+    return [];
+  }
+}
+
+function forgetMirror() {
+  try {
+    localStorage.removeItem(MIRROR_KEY);
+  } catch {
+    // Nothing to do about it, and nothing depends on it.
+  }
+}
+
 function bufferChanged(key) {
+  // Written on the same beat as the journal, and before it: this one is
+  // synchronous and cannot fail on a dead link.
+  mirrorUnsaved();
   recorder.schedule(key, () => {
     writeRecoveryCopy(key).catch((error) => log.warn("Recovery copy:", error));
   });
@@ -974,6 +1039,10 @@ async function writeRecoveryCopy(key) {
 
 /** Its copy is no longer the only one: it has been saved, or closed. */
 export async function bufferSettled(key) {
+  // A saved or closed buffer is not unsaved work any more, and nothing else
+  // will refresh the mirror: it is written on content changes, and saving is
+  // not one. Without this it would keep offering text that is already on disk.
+  mirrorUnsaved();
   recorder.drop(key);
   if (!recorded.has(key)) {
     return;
@@ -999,6 +1068,7 @@ export async function discardRecovery() {
   recorder.dropAll();
   recorded.clear();
   labelled.clear();
+  forgetMirror();
   const root = await journalPath();
   await clearJournal(journalDeps(root), root);
 }
@@ -1140,9 +1210,21 @@ export async function offerRecovery() {
   const live = await liveWindows({ os, log, platform: NL_OS }, Number(NL_PID));
 
   const dead = [];
+  const ourPid = Number(NL_PID);
   for (const root of sessions) {
     const owner = await ownerOf({ filesystem }, root);
-    if (live !== null && owner !== null && live.has(owner)) {
+    // Our own pid is not a sibling: it is this window, before it reloaded.
+    //
+    // A reload gives the page a new instance and so a new journal, while the
+    // process id stays exactly what it was - so the page's *own* previous
+    // journal looked like a live window's and was left alone out of politeness
+    // to itself. That is not a corner case any more: reloading is what a window
+    // does when its link to the application dies, which is precisely a moment
+    // when there is unsaved work to come back to. Reported on Windows waking
+    // from sleep, 0.3.0.dev176: the reload came back with the file as it was on
+    // disk and no prompt.
+    const ours = owner === ourPid;
+    if (!ours && live !== null && owner !== null && live.has(owner)) {
       // A window somebody is typing in. Its unsaved work is not ours to offer,
       // and taking its copies would leave it with no crash protection at all.
       log.info(`Not offering ${root}: process ${owner} is a running window`);
@@ -1163,7 +1245,7 @@ export async function offerRecovery() {
     });
   }
 
-  if (dead.length === 0) {
+  if (dead.length === 0 && mirroredUnsaved().length === 0) {
     return 0;
   }
 
@@ -1176,41 +1258,37 @@ export async function offerRecovery() {
   for (const session of [...dead].sort((a, b) => a.at - b.at)) {
     entries.push(...(await readJournal({ filesystem, log }, session.root)));
   }
+  // Last, so "newest wins a path" below takes it: the mirror is written on
+  // every change and needs no filesystem, so it is the only copy that can be
+  // newer than the journal - which is exactly the case it exists for, a link
+  // that died while somebody kept typing.
+  //
+  // The stamp comes from the copy it supersedes. The mirror carries none - it
+  // is text and a path - and a recovered buffer with no stamp is one the
+  // changed-on-disk check stays silent about for the rest of the session.
+  for (const entry of mirroredUnsaved()) {
+    const path = entry.path ?? null;
+    const superseding = entries.filter((held) => held.path === path).pop();
+    entries.push({
+      path,
+      text: entry.text,
+      stamp: superseding === undefined ? null : superseding.stamp,
+    });
+  }
   if (entries.length === 0) {
-    await clearDeadJournals(dead);
-    return 0;
-  }
-
-  const names = entries.map((entry) => nameOf(entry.path)).join(", ");
-  // Three answers, not two, because dismissing a dialog must not be a decision
-  // to destroy. Escape maps to cancel, and cancel here used to mean Discard -
-  // so the reflexive keypress, at startup, moments after a crash, deleted the
-  // only copy of the work. Cancel now means "ask me again next time" and leaves
-  // everything where it is; discarding has to be chosen.
-  const answer = await askThreeWay({
-    title: "Recover unsaved changes?",
-    detail: `${entries.length} file(s) from ${dead.length} session(s) that ended`
-      + ` unexpectedly.\n\n${names}`,
-    save: "Recover",
-    discard: "Discard",
-    cancel: "Not now",
-  });
-  if (answer === "cancel") {
-    log.info(`Left ${entries.length} recovery copies for the next start`);
-    return 0;
-  }
-  if (answer !== "save") {
-    log.info(`Discarded ${entries.length} recovery copies at the user's request`);
     await clearDeadJournals(dead);
     return 0;
   }
 
   // Newest wins a path, and the loser is kept rather than deleted.
   //
-  // Grouped before anything is opened, because "apply the newer copy to the
-  // buffer" and "leave the older one alone" cannot both be decided one entry at
-  // a time. Sessions arrive oldest first, so the last copy of a path is the one
-  // somebody was working on most recently.
+  // Grouped before the question is asked, not after: one file held by both a
+  // journal and the mirror is one file to recover, and a prompt built from the
+  // raw list named it twice - "2 file(s) ... untitled1.py, untitled1.py" -
+  // while only ever recovering one. Reported on Windows, 0.3.0.dev177.
+  //
+  // Sessions arrive oldest first and the mirror last, so the final copy of a
+  // path is the one somebody was working on most recently.
   const newest = new Map();
   const superseded = [];
   for (const entry of entries) {
@@ -1226,6 +1304,34 @@ export async function offerRecovery() {
   const chosen = entries.filter(
     (entry) => entry.path === null || newest.get(entry.path) === entry,
   );
+
+  const names = chosen.map((entry) => nameOf(entry.path)).join(", ");
+  // Three answers, not two, because dismissing a dialog must not be a decision
+  // to destroy. Escape maps to cancel, and cancel here used to mean Discard -
+  // so the reflexive keypress, at startup, moments after a crash, deleted the
+  // only copy of the work. Cancel now means "ask me again next time" and leaves
+  // everything where it is; discarding has to be chosen.
+  const answer = await askThreeWay({
+    title: "Recover unsaved changes?",
+    detail: `${chosen.length} file(s) from ${dead.length} session(s) that ended`
+      + ` unexpectedly.\n\n${names}`,
+    save: "Recover",
+    discard: "Discard",
+    cancel: "Not now",
+  });
+  if (answer === "cancel") {
+    log.info(`Left ${chosen.length} recovery copies for the next start`);
+    return 0;
+  }
+  // Answered either way from here, so the mirror has done its job: leaving it
+  // would offer the same text again at the next start, after the journal that
+  // carries it has been cleared.
+  forgetMirror();
+  if (answer !== "save") {
+    log.info(`Discarded ${chosen.length} recovery copies at the user's request`);
+    await clearDeadJournals(dead);
+    return 0;
+  }
 
   // Taken before anything is opened, so a recovered untitled buffer joins the
   // empty tab rather than arriving beside it. One each: two untitled buffers

@@ -547,7 +547,9 @@ The project's root is watched, recursively, for as long as it is open. What need
 3. **A burst is one refresh.** `git checkout` a branch that changes many files, or unpack an archive into the project. The tree ends up correct, and the window stays responsive throughout.
 4. **Deletes and renames.** `rm` a file and `mv` another; both follow. A renamed file that is open in a tab is a different case - see M30.
 5. **Closing the folder stops it.** Close the folder, then write more files into it: nothing happens, and no error appears in the log. Open another folder and the new one is followed instead.
-6. **Nothing is left behind.** After opening and closing several folders, the process count is what it was - the watcher is a thread inside the application, so what this checks is that memory and handles are not climbing.
+7. **What was typed after the link died comes back.** Type into a buffer *while* the banner is up - the journal cannot be written, so this is the case that used to lose work - then Reload window. The recovery prompt must offer that text, not the version on disk. Answer it, save, and restart: nothing should be offered a second time.
+8. **Reloading leaves no orphan journals.** `%APPDATA%\build123d-studio\recovery\` (or `~/Library/Application Support/...`) holds one directory per page load. After a reload and an answered prompt, only the live session's remains - a directory per reload that nobody ever offers is the bug this covers.
+9. **Nothing is left behind.** After opening and closing several folders, the process count is what it was - the watcher is a thread inside the application, so what this checks is that memory and handles are not climbing.
 
 **Windows:** worth one extra pass, because the watcher there is a different implementation to macOS's FSEvents.
 
@@ -564,6 +566,20 @@ Five buttons above every `# %%`: run that cell, run the one above it, run everyt
 7. **The German keyboard.** The chord is a letter rather than a punctuation key precisely so it survives a layout change; worth one press on the German layout to be sure.
 
 **Windows and Linux:** the Run menu carries Run Cell Above, Run All Above and Run All Below, and Restart Kernel with its chord beside it.
+
+### M37 — Waking from sleep
+
+**Every platform, Windows first.** A suspend resets loopback connections, and the window holds two: one to the sidecar, one to the application's own server. They fail differently and only one is recoverable.
+
+1. **Sleep with work open.** Open a project, type into a buffer without saving, run a cell so the kernel holds a name, then sleep the machine. Wake it.
+2. **The session carries on.** Within a few seconds the editor, console and viewer work again with no banner and no restart - the socket was redialled and the kernel, its namespace and the console are the same ones. Check the name from step 1 is still defined.
+3. **The log says which happened.** `Sidecar socket closed:` followed by `Reconnected to the sidecar; nothing was lost`. If instead it says `The sidecar did not answer again`, the sidecar really had gone and the banner is correct.
+4. **The other link.** If the banner says *"This window lost its link to the application"*, that is Neutralino's own socket, and nothing native works: no saving, no closing. **Reload window** is the only way back, and the recovery dialog should offer whatever was unsaved. It should appear **about a second and a half** after the lid opens: the clock jumping is what says the machine slept, and the link is then asked twice in a row with half a second each. Longer than a few seconds is worth reporting.
+5. **The silence is what is watched for, not the close.** The symptom to check for is an application where Save does nothing, the X does nothing and the log has stopped: if that state ever lasts more than a minute *without* the banner, the watch is not doing its job and that is the bug to report.
+6. **The banner does not cover the menus.** On Windows and Linux it must sit *below* the menu strip - File must still be reachable while it is up.
+6. **Nothing is left behind.** After closing the window - or reloading it - no `python.exe` tree survives more than two minutes. That is the sidecar's grace period for a window that might come back.
+
+**Worth doing twice on Windows:** once with a short sleep, once with the machine suspended long enough that the kernel has been idle for many minutes.
 
 ## Results
 
@@ -608,6 +624,7 @@ One row per platform per run. Record the build, not just the date.
 | M34 keyboard after Open Folder | ok | ok |  |
 | M35 tree follows the disk | ok | | |
 | M36 cell buttons, restart chord | ok | | |
+| M37 waking from sleep | | | |
 
 **The run of 2026-08-18, macOS and Windows, 0.3.0.dev167.** The first full pass; Linux has still never been run. What it left:
 

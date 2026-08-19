@@ -277,6 +277,29 @@ test.describe("a session that is still running", () => {
     await expect.poll(() => tabLabels(page)).not.toContain("theirs.py");
   });
 
+  test("but this window's own previous journal is not a sibling", async ({ page }) => {
+    // A reload gives the page a new instance and a new journal while the
+    // process id stays exactly what it was - so the page's *own* last journal
+    // looked like a live window's and was skipped out of politeness to itself.
+    // That is not a corner case: reloading is what a window does when its link
+    // to the application dies, which is precisely when there is unsaved work
+    // waiting on the other side. Reported on Windows, 0.3.0.dev176 - the reload
+    // came back with the file as it was on disk and no prompt at all.
+    const OUR_PID = 4242; // what the harness reports as NL_PID
+    const files = crashed(DEAD, {
+      7: { path: `${PROJECT}/mine.py`, text: "MINE = 1\n" },
+    }, OUR_PID);
+    await open(page, {
+      files: { ...FILES, ...files },
+      settings: { workspace: WORKSPACE },
+      running: [OUR_PID],
+    });
+
+    const prompt = page.locator(".confirm-overlay");
+    await expect(prompt).toBeVisible();
+    expect(await prompt.innerText()).toContain("mine.py");
+  });
+
   test("and Discard, answered for a dead session, does not take its copies too", async ({ page }) => {
     // The half that costs work rather than attention. Two journals are here:
     // one whose window died, one whose window is running. Answering the prompt

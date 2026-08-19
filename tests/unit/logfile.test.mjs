@@ -21,7 +21,7 @@ import { fileURLToPath } from "node:url";
 import * as fs from "node:fs/promises";
 import { test } from "node:test";
 
-import { append, rotate } from "../../src/logfile.js";
+import { append, createWriter, rotate } from "../../src/logfile.js";
 
 // The module under test, resolved from here rather than assumed to be
 // alongside: the child spawned below imports it by absolute path, and that is
@@ -157,4 +157,68 @@ test("two processes appending keep every line", async () => {
     assert.match(line, /^[AB] line \d+$/, `a line was torn: ${JSON.stringify(line)}`);
   }
   rmSync(dir, { recursive: true });
+});
+
+// --- one write that never answers ------------------------------------------
+
+test("a write that never settles does not stop the ones behind it", async () => {
+  // The failure this exists for: filesystem.appendFile is a call to the
+  // application's own server, and a reply lost while the machine was suspended
+  // leaves that promise pending for ever. Chained, that stopped the application
+  // log, the console mirror and the backend log together for the rest of the
+  // session - and the Backend pane kept showing lines, because it is told
+  // before the write, so the two disagreed and only the pane was believed.
+  const landed = [];
+  const filesystem = {
+    appendFile: (path, text) =>
+      text.includes("STUCK") ? new Promise(() => {}) : Promise.resolve(landed.push(text)),
+  };
+  const write = createWriter(filesystem, 20);
+
+  write("/log", "STUCK\n");
+  const after = await write("/log", "AFTER\n");
+
+  assert.equal(after, true, "the line behind the stuck one never landed");
+  assert.deepEqual(landed, ["AFTER\n"]);
+});
+
+test("and the stuck one is reported as not having landed", async () => {
+  const filesystem = { appendFile: () => new Promise(() => {}) };
+  const write = createWriter(filesystem, 20);
+
+  assert.equal(await write("/log", "STUCK\n"), false);
+});
+
+test("writes stay in order while nothing is stuck", async () => {
+  // The reason they are serialised at all: two appends interleaving would cut
+  // a line in half.
+  const landed = [];
+  const filesystem = {
+    appendFile: async (path, text) => {
+      await new Promise((settle) => setTimeout(settle, text.includes("slow") ? 15 : 0));
+      landed.push(text);
+    },
+  };
+  const write = createWriter(filesystem, 500);
+
+  write("/log", "slow first\n");
+  write("/log", "second\n");
+  await write("/log", "third\n");
+
+  assert.deepEqual(landed, ["slow first\n", "second\n", "third\n"]);
+});
+
+test("a write that fails is not a write that hangs", async () => {
+  // append() already swallows a rejection and reports false; what matters is
+  // that the queue carries on, which it always did and must keep doing.
+  const landed = [];
+  const filesystem = {
+    appendFile: (path, text) =>
+      text.includes("BAD") ? Promise.reject(new Error("no")) : Promise.resolve(landed.push(text)),
+  };
+  const write = createWriter(filesystem, 500);
+
+  assert.equal(await write("/log", "BAD\n"), false);
+  assert.equal(await write("/log", "GOOD\n"), true);
+  assert.deepEqual(landed, ["GOOD\n"]);
 });

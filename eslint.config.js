@@ -41,6 +41,9 @@ const browser = {
   console: "readonly",
   navigator: "readonly",
   location: "readonly",
+  // The one store the page can reach with no help from Neutralino, which is why
+  // unsaved work is mirrored there - see files.js.
+  localStorage: "readonly",
   fetch: "readonly",
   WebSocket: "readonly",
   Worker: "readonly",
