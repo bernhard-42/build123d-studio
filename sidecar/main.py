@@ -713,8 +713,18 @@ class Sidecar:
         The header is passed straight through as the bytes the kernel produced -
         no decode/encode round trip - and the payload keeps its raw buffers all
         the way to the webview, where they become typed-array views with no copy.
+
+        A frame with no payload drew nothing, so it cannot retire the splash.
+        `show_clear()` travels this same socket - deliberately, so it stays
+        ordered against the models it clears - and clearing the flag for it left
+        the logo's camera in force for the *next* real show: the core resets the
+        camera while a splash is up and keeps it otherwise, and a cleared pane
+        was being called "otherwise". Asked of the payload rather than of the
+        header, because a model with no geometry is refused before it gets here,
+        so "empty" and "not a model" are the same thing and no decode is needed.
         """
-        self._splash = False
+        if len(payload) > 0:
+            self._splash = False
         log(f"Model received: header {len(header_bytes)} B, payload {len(payload)} B")
         self.channel.send_binary(KIND_MODEL, payload, header_bytes=header_bytes)
 

@@ -31,6 +31,9 @@ class FakeChannel:
     def send(self, message_type, **payload):
         self.sent.append((message_type, payload))
 
+    def send_binary(self, kind, payload, header_bytes=b""):
+        self.sent.append(("binary", {"kind": kind, "payload": payload, "header": header_bytes}))
+
     def error(self, context, exc):
         self.sent.append(("error", {"context": context, "exc": str(exc)}))
 
@@ -132,3 +135,45 @@ class HealthReportTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SplashUntilSomethingIsDrawnTest(unittest.TestCase):
+    """The logo's camera must not survive into the first real model.
+
+    The core resets the camera while a splash is up and keeps it afterwards, and
+    it asks this process which of the two is true - the frontend draws the logo,
+    so no other process can know. The flag therefore retires on the first
+    *model*, and `show_clear()` is not one: it travels the same socket so that it
+    stays ordered against the models it clears, and retiring the splash for it
+    left the logo's position, target and rotation in force for the next show.
+    Reported against 0.3.0.dev186, where the file template's first cell calls
+    show_clear() and the box that followed came up at the logo's camera.
+    """
+
+    def setUp(self):
+        root = tempfile.mkdtemp(prefix="studio-splash-")
+        instance = Instance(root)
+        instance.claim()
+        self.addCleanup(instance.release)
+
+        self.sidecar = Sidecar(env_root=root, app_dir=root, instance=instance)
+        self.sidecar.channel = FakeChannel()
+
+    def test_a_model_retires_the_splash(self):
+        self.sidecar.on_model(b'{"type": "data"}', b"geometry")
+
+        self.assertFalse(self.sidecar._splash)
+
+    def test_but_a_clear_leaves_it_alone(self):
+        self.sidecar.on_model(b'{"type": "clear"}', b"")
+
+        self.assertTrue(self.sidecar._splash, "a clear retired the splash")
+
+    def test_and_a_clear_after_a_real_model_does_not_bring_it_back(self):
+        # The other direction, which is the one that would put a reset back on
+        # a session the user has been posing by hand: clearing an emptied pane
+        # is not the logo coming back.
+        self.sidecar.on_model(b'{"type": "data"}', b"geometry")
+        self.sidecar.on_model(b'{"type": "clear"}', b"")
+
+        self.assertFalse(self.sidecar._splash)
