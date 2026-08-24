@@ -13,11 +13,14 @@ Download the latest release from [the Release page](https://github.com/bernhard-
 and compare it against the values in `SHA256SUMS.txt` on the same Release page.
 
 If the github CLI [gh](https://cli.github.com/) is installed, you can also verify the downloaded files by
-`gh attestation verify build123d-studio-*.dmg --repo bernhard-42/build123d-studio`
+
+```sh
+gh attestation verify build123d-studio-*.dmg --repo bernhard-42/build123d-studio
+```
 
 ## Installation
 
-Install it the ordinary way for your platform: drag the `.app` to Applications under MacOS, unzip the Windows package or or store the Linux AppImage where you like it.
+Install it the ordinary way for your platform: drag the `.app` to Applications under MacOS, unzip the Windows package or store the Linux AppImage where you like it.
 
 ## Running the application
 
@@ -29,9 +32,9 @@ Install it the ordinary way for your platform: drag the `.app` to Applications u
 
 - **Windows**: Windows builds are unsigned, hence SmartScreen warns on first run. Use _More info_ → _Run anyway_.
 
-- ## **Linux**: Neutralino uses the system webview rather than bundling a browser engine. it tries to load `libwebkit2gtk` (version 4.0 or 4.1).
-  - Install WebKitGTK if it is not already there: `sudo apt install libwebkit2gtk-4.1-0` (or libwebkit2gtk-4.0-37 on older releases)
-  - Mark the AppImage executable, or the desktop treats it as a data file and offers to open it with an archive manager: `chmod +x build123d-studio-*.AppImage`
+- **Linux**: Neutralino uses the system webview rather than bundling a browser engine. It tries to load `libwebkit2gtk` (version 4.0 or 4.1).
+  - Install WebKitGTK (`libwebkit2gtk-4.1-0` or `libwebkit2gtk-4.0-37` on older releases) if it is not already there, see [neutralinojs dependencies](https://neutralino.js.org/docs/contributing/framework-developer-guide#installing-compilation-tools-and-dependencies).
+  - Mark the AppImage executable, or the desktop treats it as a data file and offers to open it with an archive manager: `chmod +x build123d-studio-*.AppImage`.
 
 The first start takes a few minutes and shows you what it is doing. A splash overlay reports each step while it downloads [uv](https://docs.astral.sh/uv/), downloads the Python interpreter, and installs the Python packages (several hundred megabytes in total, including the language server and the OpenCascade bindings). Everything is downloaded into your **user data directory**:
 
