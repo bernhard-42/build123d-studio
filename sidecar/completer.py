@@ -160,6 +160,42 @@ def analysis_settings(kernel_dir):
 # five, against a shutdown deadline of eight. This is the step that gives, since
 # a language server holds an analysis it can rebuild and the one ahead of it
 # holds the user's namespace.
+# Killing a process tree, where a signal to the one we started is not enough.
+#
+# basedpyright ships `basedpyright-langserver.exe`, a launcher that runs Python,
+# which runs node: the server this talks to is a *grandchild*. On Windows a
+# terminate reaches the launcher and stops there, and the node process is left
+# holding `site-packages/basedpyright/dist` - measured on 0.4.1, where quitting
+# the application left it running and the runtime directory could not be
+# deleted. POSIX does not need this: the descriptors closing and the pid handed
+# to `initialize` both do reach the grandchild there, which is why the quit path
+# has always been clean on macOS.
+#
+# Done *before* the graceful close rather than after it, and that is the whole
+# subtlety: `/T` kills a tree through its root, so once the launcher has exited
+# the grandchild is orphaned and no longer reachable from that pid. A language
+# server has no state to lose, which is what makes taking the tree outright the
+# right trade here - MeasurementService.stop() answers the same question the
+# same way one file over.
+WINDOWS_KILL_TIMEOUT = 3.0
+
+# A GUI process spawning a console command flashes a window on Windows.
+NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+
+def tree_kill_command(pid, platform=sys.platform):
+    """The command that takes a whole process tree, or None where signals reach it.
+
+    A pure function, because the platform that needs it is not the platform this
+    is written on: what can be checked here is that Windows gets `/T` - the flag
+    that makes it a tree rather than one process - and that nothing else gets a
+    command at all.
+    """
+    if platform != "win32":
+        return None
+    return ["taskkill", "/F", "/T", "/PID", str(pid)]
+
+
 CLOSE_TIMEOUT = 0.5
 EXIT_TIMEOUT = 1.0
 SIGNAL_TIMEOUT = 0.5
@@ -294,18 +330,31 @@ class LanguageServer:
         steps unreached. Worst case now is the constants below: EOF, wait,
         terminate, wait, kill, wait, close.
 
-        What catches the node grandchild if all of that is skipped - a deadline
-        met, or the sidecar killed outright - is not ours: stdio reaching EOF
-        when these descriptors go, and the sidecar's own process id, handed
-        over in the initialize request so pyright watches for our death itself.
-        Both are upstream promises rather than anything this file enforces, and
-        tests/integration.py is what would notice a basedpyright release
-        dropping either.
+        The node grandchild is caught by those two upstream promises on POSIX -
+        stdio reaching EOF when these descriptors go, and the process id handed
+        over in the initialize request, which pyright watches for our death. On
+        Windows neither reaches it: quitting left node holding
+        `site-packages/basedpyright/dist`, so the runtime directory could not be
+        deleted. The tree is therefore taken first there; see tree_kill_command
+        for why the order is not negotiable.
         """
         self._stopping = True
         process, self._process = self._process, None
         if process is None:
             return
+
+        # Windows first, while the launcher is still alive to be a root.
+        tree_kill = tree_kill_command(process.pid)
+        if tree_kill is not None:
+            try:
+                subprocess.run(
+                    tree_kill,
+                    capture_output=True,
+                    timeout=WINDOWS_KILL_TIMEOUT,
+                    creationflags=NO_WINDOW,
+                )
+            except (subprocess.TimeoutExpired, OSError) as exc:
+                log(f"Could not take the language server's tree: {exc}")
 
         _close_within(process.stdin, CLOSE_TIMEOUT)
         try:

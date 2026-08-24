@@ -27,6 +27,8 @@ import threading
 import time
 import unittest
 
+import completer
+
 from completer import Completer, LanguageServer
 
 # The application tree, so the server can resolve build123d_studio the way
@@ -431,3 +433,30 @@ class DeafLanguageServerTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TreeKillCommandTest(unittest.TestCase):
+    """Which platform needs a tree killed, and with what.
+
+    basedpyright's server is a grandchild - a launcher runs Python, which runs
+    node - so on Windows a terminate reaches the launcher and leaves node
+    holding `site-packages/basedpyright/dist`, which is what stopped the runtime
+    directory being deleted after a quit at 0.4.1. Pure, because the platform
+    that needs it is not the one this suite runs on.
+    """
+
+    def test_windows_gets_a_tree_kill(self):
+        command = completer.tree_kill_command(4242, platform="win32")
+
+        self.assertEqual(command, ["taskkill", "/F", "/T", "/PID", "4242"])
+
+    def test_and_the_T_is_the_point(self):
+        # Without it taskkill takes the launcher and leaves the grandchild,
+        # which is the bug rather than the fix.
+        self.assertIn("/T", completer.tree_kill_command(1, platform="win32"))
+
+    def test_the_others_are_left_to_their_signals(self):
+        # Where EOF and the initialize processId do reach the grandchild, a
+        # tree kill would only take away the server's chance to exit cleanly.
+        self.assertIsNone(completer.tree_kill_command(4242, platform="darwin"))
+        self.assertIsNone(completer.tree_kill_command(4242, platform="linux"))
