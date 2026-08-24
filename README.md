@@ -1,32 +1,29 @@
 # build123d Studio
 
-An IDE for [build123d](https://github.com/gumyr/build123d): a Monaco editor, a three-cad-viewer viewport, a real Jupyter console and a variable explorer, in one window, with an encapsulated Python environment it builds for itself on first start.
+An IDE for [build123d](https://github.com/gumyr/build123d): a Monaco editor, a [three-cad-viewer](https://github.com/bernhard-42/three-cad-viewer) viewport, a real [Jupyter console](https://github.com/jupyter/jupyter_console) and a variable explorer, in one window, with an encapsulated Python environment it builds for itself on first start.
 
 ![build123d Studio on macOS: the file tree and tabs, an editor holding a hexapod assembly script, the viewer showing the assembled model with its object tree, the Jupyter console below, and the variable explorer expanded on the assembly's topology](build123d-studio-mac.png)
 
-*The four panes, all describing the same object: the script that built the hexapod, the model it produced, the console it printed to, and the assembly unrolled by its children in the explorer.*
+_The four panes, all describing the same object: the script that built the hexapod, the model it produced, the console it printed to, and the assembly unrolled by its children in the explorer._
 
 ## What it is
 
-A desktop application for writing build123d code and seeing the result. It is one window with four panes — editor, 3D viewer, console, variable explorer — and it brings its own Python.
+A desktop application running on macOS, Windows and Linux, for writing build123d code and seeing the result. It is one window with four panes — editor, 3D viewer, console, variable explorer — and it brings its own Python.
 
-**You do not need a Python environment, and you do not need to know how to make one.** There is nothing to `pip install`, no virtualenv to activate, no interpreter to choose. On first start the application downloads a pinned CPython and a pinned [uv](https://github.com/astral-sh/uv), builds a virtual environment of its own and installs build123d and everything else it needs into it. It never touches a system or user Python, and nothing it does is visible to any other Python on the machine.
+- **You do not need a Python environment, and you do not need to know how to make one.** There is nothing to `pip install`, no virtualenv to activate, no interpreter to choose. On first start the application downloads a pinned CPython and a pinned [uv](https://github.com/astral-sh/uv), builds a virtual environment of its own and installs build123d and everything else it needs into it. It never touches a system or user Python, and nothing it does is visible to any other Python on the machine.
 
-**One release is one environment.** A given build pins one uv and one CPython — 3.14.6 today — so two people running the same release get the same interpreter and the same packages, rather than whatever happened to be current on the day each of them first started it. Both move when the application is rebuilt and retested.
+- **One release is one environment.** A given build pins one uv and one CPython — 3.14.6 today — so two people running the same release get the same interpreter and the same packages, rather than whatever happened to be current on the day each of them first started it. Both move when the application is rebuilt and retested.
 
-Everything it writes lives in one per-user directory — `~/Library/Application Support/build123d-studio` on macOS, `%APPDATA%` on Windows, `~/.local/share` on Linux — which holds the environment, the settings and the log. The application's own directory is never written to, so it can be installed read-only. Uninstalling does not remove the environment; the path is in the About dialog and in the log.
+- **Everything it writes lives in one per-user directory** which holds the environment, the settings and the log:
+  - `~/Library/Application Support/build123d-studio` on macOS
+  - `%APPDATA%` on Windows
+  - `~/.local/share` on Linux
 
-It runs on macOS, Windows and Linux.
+  The application's own directory is never written to, so it can be installed read-only. Uninstalling does not remove the environment; the path is in the About dialog and in the log.
 
-## Installing, and the first start
+## Installation and first run
 
-Install it the ordinary way for your platform: drag the `.app` to Applications, unzip the Windows package where you like it, or make the AppImage executable.
-
-**The first start takes a few minutes and shows you what it is doing.** A splash overlay reports each step while it downloads uv, downloads the interpreter, and installs the packages — several hundred megabytes in total, most of it the language server and the OpenCascade bindings. It needs a network connection exactly once.
-
-**Every start after that goes straight to the window.** The environment already exists, so all that happens is a reconciliation against the locked package list, and the window is up while the kernel warms in the background. The kernel indicator in the toolbar says `starting`, then `idle`, and you can type before it gets there.
-
-If something goes wrong on that first start, the log says so — its path is in the About dialog.
+See [FirstRun.md](./FirstRun.md)
 
 ## Two ways to run your code
 
@@ -101,6 +98,7 @@ The defaults, all editable in Settings.
 | `Shift-F5`                                  | Stop debugging                     |
 | `Ctrl-Shift-F5`                             | Restart debugging                  |
 | `F10` / `F11` / `Shift-F11`                 | Step over / into / out             |
+| `Shift-Alt-Cmd-R` (`Ctrl-Shift-Alt-R`)      | Restart the kernel                 |
 
 The two cell chords are Jupyter's, deliberately. The debug chords are VS Code's.
 
@@ -121,7 +119,8 @@ A small launcher ships beside the application. Copy it somewhere on your `PATH` 
 Reached from the application menu. The tab reads top to bottom as three things you can do, each with the button that does it directly underneath:
 
 ```
-build123d      ( ) PyPI   ( ) GitHub dev branch   ( ) Local checkout [path] [Choose…]
+build123d        ( ) PyPI  ( ) GitHub dev branch  ( ) Local checkout [path] [Choose…]
+ocp-viewer-core  ( ) PyPI  ( ) GitHub main branch  ( ) Local checkout [path] [Choose…]
                [ Re-install build123d ]
 
 Additional packages
@@ -142,7 +141,7 @@ Upgrade        [ Upgrade packages ]
 | **Apply**                | Saves every field and closes. Touches nothing else — no uv, no kernel restart.                                                                                                                                                                                       |
 | **Install packages**     | Saves, then makes the environment match what is declared: `uv lock` then `uv sync`. Adds what is new and leaves every already-locked package where it is.                                                                                                            |
 | **Re-install build123d** | Saves, then `uv sync --reinstall-package build123d`. A local checkout is installed _editable_, so ordinary code edits are already live and this is not needed for them — it is for when the package's own metadata changes, such as a new dependency or entry point. |
-| **Upgrade packages**     | Saves, then `uv lock --upgrade` then `uv sync`. Every package moves as far as its own version range allows. Anything pinned to an exact version cannot move, which is what holds the viewer's packages still.                                                        |
+| **Upgrade packages**     | Saves, then `uv lock --upgrade` then `uv sync`. Every package moves as far as its own version range allows: `build123d` to any newer release, `ocp-viewer-core` within its minor. Everything else is pinned exactly and cannot move at all.                            |
 
 Saving without installing is coherent: the application runs `uv sync` on every launch, so a change that was applied but not installed simply lands at the next start.
 
@@ -163,10 +162,32 @@ The name is taken from the last path segment when it is not given, which is righ
 
 Two rules are enforced here, and only two:
 
-- a package the application already declares — `build123d`, `ocp_vscode` and the rest — cannot be named, because uv _intersects_ duplicate declarations rather than letting the later one win, so such an entry would silently do nothing
+- a package the application already declares — `build123d`, `ocp-viewer-core`, `jupyter_console`, `orjson`, `websockets`, `pywinpty` and `basedpyright` — cannot be named, because uv _intersects_ duplicate declarations rather than letting the later one win, so such an entry would silently do nothing. Anything they bring in is fair game: `ocp-tessellate`, `ipykernel`, `prompt_toolkit` and the rest arrive under a parent that owns their range, and constraining one of those is yours to do
 - the same package cannot be given twice
 
 Everything else — whether a version exists, whether a combination resolves, whether a URL is reachable — is uv's to answer, and it answers better than a rule here would. A line that breaks the environment does not prevent the application from starting: the failed section is dropped for that launch, with the text left in Settings to be corrected.
+
+## Opening projects from a terminal
+
+Each package carries a `studio` launcher beside the application. Copy it somewhere on your PATH — it does not have to stay where it came from, and nothing needs installing with a password:
+
+```
+cp "/Applications/build123d Studio.app/Contents/MacOS/studio" ~/bin/studio   # macOS
+cp /path/to/build123d-studio/studio ~/bin/studio                             # Linux
+copy C:\path\to\build123d-studio\studio.cmd %USERPROFILE%\bin\studio.cmd     # Windows
+```
+
+Then, from any project directory:
+
+```
+studio                  # open this directory as the project
+studio /path/to/folder  # open that folder as the project
+studio main.py          # open main.py, with its folder as the project
+```
+
+Every form starts a new instance, so several projects can be open at once. That matters most on macOS, where double-clicking an already-running application activates the existing window rather than starting a second one — `studio` is the only way to get two there.
+
+Start the application once before using it. The launcher finds the application by reading a location the application records on each start, which is what lets you copy it anywhere.
 
 ## When something goes wrong
 

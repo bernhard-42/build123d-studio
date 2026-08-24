@@ -162,21 +162,6 @@ function assemblePayload(destination) {
     cpSync(join(ROOT, file), join(destination, file));
   }
 
-  // The one thing the application cannot keep out of its own directory.
-  //
-  // Everything we control writes to the per-user app-data directory instead -
-  // the environment, the settings file and the log - but Neutralino saves
-  // .tmp/window_state.config.json beside its binary on every window close. The
-  // path is hardcoded, modes.window.useSavedState governs only *restoring*, and
-  // the save is an uncaught std::filesystem::create_directories: on a read-only
-  // directory the exception propagates out and the process aborts, so closing
-  // the window crashes rather than degrading.
-  //
-  // Shipping the directory already there is what stops that, because
-  // create_directories on an existing path returns without error. The
-  // installation can then be read-only everywhere except this one directory.
-  mkdirSync(join(destination, ".tmp"), { recursive: true });
-
   return binaryName;
 }
 
@@ -203,6 +188,33 @@ function buildIcns(destination) {
   }
   run("iconutil", ["-c", "icns", iconset, "-o", destination]);
   rmSync(iconset, { recursive: true, force: true });
+}
+
+/**
+ * Sign the bundle ad-hoc, so macOS calls it unidentified rather than damaged.
+ *
+ * The Neutralino binary arrives linker-ad-hoc-signed, which declares a bundle
+ * whose resources are sealed - and this script assembles the .app around it, so
+ * no _CodeSignature/CodeResources ever existed. `codesign --verify` said it
+ * outright: "code has no resources but signature indicates they must be
+ * present", and a quarantined copy on another machine fails that hard. The
+ * dialog is "damaged and can't be opened", which reads like a corrupt download
+ * rather than like an unsigned application.
+ *
+ * `--deep` because the payload lives in Contents/MacOS beside the binary: every
+ * file there is treated as nested code, and without it codesign stops at the
+ * first .py. Apple deprecates --deep for distribution signing, where each
+ * nested binary should be signed on its own terms; for an ad-hoc seal over data
+ * files it is the tool that does the job.
+ *
+ * Verified rather than assumed, and fatally: an unverifiable bundle is worse
+ * than an unsigned one, because it is the state that produces the damaged
+ * dialog. Ad-hoc is the ceiling here - it removes "damaged", not the
+ * unidentified-developer gate, which needs a Developer ID and notarisation.
+ */
+function signApp(app) {
+  run("codesign", ["--force", "--deep", "--sign", "-", app]);
+  run("codesign", ["--verify", "--strict", app]);
 }
 
 function packageMac() {
@@ -236,6 +248,8 @@ function packageMac() {
 </dict>
 </plist>
 `);
+
+  signApp(app);
 
   // The conventional drag-to-Applications gesture.
   run("ln", ["-s", "/Applications", join(stage, "Applications")]);
@@ -306,12 +320,13 @@ function packageLinux() {
   const binaries = join(appdir, "usr", "bin");
   const binaryName = assemblePayload(binaries);
 
-  // An AppImage mounts as read-only squashfs, so the pre-created .tmp that
-  // makes a read-only .app work is not enough here - nothing under the mount
-  // can be written at all, and Neutralino's unconditional window-state save on
-  // close would abort the process.
+  // An AppImage mounts as read-only squashfs: nothing under the mount can be
+  // written at all. `dataLocation: "system"` takes Neutralino's own writes out
+  // of the application directory - the window state and its log go to
+  // ~/.local/share/<applicationId> - but the mount stays read-only for anything
+  // else that might want to write beside the binary.
   //
-  // So the application is pointed at a writable directory instead. --path is
+  // So the application is pointed at a writable directory anyway. --path is
   // what `neu run` uses in development, and it sets NL_PATH, which is both where
   // Neutralino looks for resources.neu and how the application resolves its own
   // payload. Populating that directory with symlinks rather than copies keeps it

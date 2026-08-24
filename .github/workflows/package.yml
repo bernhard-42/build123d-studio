@@ -171,6 +171,8 @@ jobs:
       # redirect over whether the sums file lists itself, and would fail loudly
       # if a platform's artifact were ever missing rather than quietly
       # publishing sums for whatever did arrive.
+      # Attached as a file *and* read into the release notes: checking a
+      # download should not begin with downloading a second file.
       - name: Generate SHA256SUMS.txt
         working-directory: artifacts
         run: |
@@ -202,72 +204,16 @@ jobs:
       - uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
           files: artifacts/*
-          draft: true
-          body: |
-            Unsigned builds, so every platform needs one step the first time.
-
-            **macOS** — the first open is blocked as an unidentified developer. Right-click the app and choose *Open*, or run `xattr -dr com.apple.quarantine "/Applications/build123d Studio.app"`.
-
-            **Windows** — SmartScreen warns on first run: *More info* → *Run anyway*.
-
-            **Linux** — two things, both once per machine.
-
-            Mark the AppImage executable, or the desktop treats it as a data file and offers to open it with an archive manager:
-
-            ```
-            chmod +x build123d-studio-*.AppImage
-            ```
-
-            And install WebKitGTK if it is not already there. Neutralino uses the system webview rather than bundling a browser engine, which is why these packages are three megabytes instead of a hundred and fifty; it loads `libwebkit2gtk-4.0.so.37` or `libwebkit2gtk-4.1.so.0` at runtime and exits with a message naming both if neither is present. Ubuntu 22.04 ships the 4.0 build, 24.04 and later ship 4.1:
-
-            ```
-            sudo apt install libwebkit2gtk-4.1-0    # or libwebkit2gtk-4.0-37 on older releases
-            ```
-
-            ### Opening projects from a terminal
-
-            Each package carries a `studio` launcher beside the application. Copy it somewhere on your PATH — it does not have to stay where it came from, and nothing needs installing with a password:
-
-            ```
-            cp "/Applications/build123d Studio.app/Contents/MacOS/studio" ~/bin/studio   # macOS
-            cp /path/to/build123d-studio/studio ~/bin/studio                             # Linux
-            copy C:\path\to\build123d-studio\studio.cmd %USERPROFILE%\bin\studio.cmd     # Windows
-            ```
-
-            Then, from any project directory:
-
-            ```
-            studio                  # open this directory as the project
-            studio /path/to/folder  # open that folder as the project
-            studio main.py          # open main.py, with its folder as the project
-            ```
-
-            Every form starts a new instance, so several projects can be open at once. That matters most on macOS, where double-clicking an already-running application activates the existing window rather than starting a second one — `studio` is the only way to get two there.
-
-            Start the application once before using it. The launcher finds the application by reading a location the application records on each start, which is what lets you copy it anywhere.
-
-            ### Verifying what you downloaded
-
-            ```
-            # Is the download intact?
-            shasum -a 256 -c SHA256SUMS.txt --ignore-missing
-            ```
-            ${{ github.event.repository.private && '
-            This release carries checksums only. They detect a damaged or
-            truncated download; they prove nothing about origin, because anyone
-            able to replace the files could replace SHA256SUMS.txt with them.
-            Build provenance is not attached: GitHub does not issue attestations
-            for private repositories.' || '
-            This release is also attested. That is the meaningful check - it is
-            minted by GitHub against the workflow that produced the file and
-            cannot be forged for an artifact that workflow never built, whereas
-            the checksums only detect a damaged download:
-
-            ```
-            gh attestation verify build123d-studio-*.dmg --repo ${{ github.repository }}
-            ```' }}
-
-            On first start the application downloads its own Python environment
-            (about 500 MB) into your user data directory. On macOS it then loads
-            the OCP libraries once, which takes about a minute while the system
-            verifies them. Neither happens again.
+          # Published, not drafted. A draft's assets are private - the browser
+          # can fetch them because it carries a session, `curl` gets a 404 - and
+          # its URL stays `untagged-<hash>` however real the tag is, so every
+          # link handed to anyone before someone remembers to press Publish is a
+          # link that does not work.
+          draft: false
+          # The notes are FirstRun.md, verbatim. Prose buried in this file is
+          # prose nobody edits - it went a week saying "Unsigned builds" after
+          # macOS builds started being signed - and a file at the top of the
+          # repository is reviewed like anything else. The checksums stay in
+          # SHA256SUMS.txt, which is attached beside the packages and which the
+          # notes tell the reader to compare against.
+          body_path: FirstRun.md
