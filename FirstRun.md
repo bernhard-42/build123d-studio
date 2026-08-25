@@ -26,18 +26,18 @@ Install it the ordinary way for your platform: drag the `.app` to Applications u
 
 **Preparation:**
 
-- **macOS**: MacOS builds are signed ad hoc, with no Developer ID and no notarisation. So, the first open is blocked with
+- **macOS**: MacOS builds are signed ad hoc, with no Developer ID and no notarisation. So, the first run is blocked with
 
   > "build123d Studio" Not Opened
   > Apple could not verify “build123d Studio” is free of malware that may harm your Mac or compromise your privacy.
 
-  Open "Settings/Privacy & Security" and under _Security_ you find
+  Open "System Settings / Privacy & Security" and under _Security_ you find
 
   > "build123d Studio" was blocked to protect your Mac'.
 
   Click on "Open Anyway".
 
-  Or run `xattr -dr com.apple.quarantine "/Applications/build123d Studio.app"` before double clicking the _build123d Studio_ icon.
+  Alternatively, run `xattr -dr com.apple.quarantine "/Applications/build123d Studio.app"` before double clicking the _build123d Studio_ icon.
 
 - **Windows**: Windows builds are unsigned, hence SmartScreen warns on first run. Use _More info_ → _Run anyway_.
 
