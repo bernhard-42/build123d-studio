@@ -70,6 +70,7 @@ Two things it is not. Anchoring on a **pid** instead - `pstree -p $(pgrep …)` 
 2. Run a cell so the kernel is warm.
 3. Quit from the File menu.
 4. Wait five seconds, then run *What is still running*.
+5. **Windows: look for `node.exe` in particular, and then delete the runtime directory.** basedpyright's server is a grandchild - a launcher runs Python, which runs node - so a terminate that reaches only the launcher leaves node holding `site-packages/basedpyright/dist`, and `rm -r` answers *Device or resource busy*. That is the symptom rather than the process list, because an orphan from an earlier killed session looks the same in a listing. Found at 0.4.1, fixed by taking the tree before the graceful close, confirmed on Windows at 0.4.2.
 
 **Pass:** nothing. **Repeat** for each exit route, because they are separate code paths that happen to meet: the window close button, `Cmd`/`Ctrl`-Q, and the menu item.
 
@@ -257,6 +258,8 @@ Three forms were measured before this one was chosen: an untargeted `activate` c
 **Pass:** the save fails with a message, the tab stays modified, and **`part.py` on disk still holds its original content**.
 
 **The failure:** the fallback write truncates the original and then fails too, so the only copy left is the one in the editor.
+
+**Settled 2026-08-25: not tested, and not planned.** A corner case whose setup - a mounted 2 MB volume filled to the byte - costs more than it returns, and somebody whose disk is genuinely full has larger problems than this application. What the test was written to protect is covered where it can be reached: `safewrite.js` never truncates the original until the replacement is complete, and `tests/unit/editor/safewrite.test.mjs` asserts exactly that with every write failing: the original still reads its old content and no temporary is left behind. That is the property this test was written for, checked at the layer that can express it without a mounted volume.
 
 ### M15 — The file changed underneath you
 
@@ -581,6 +584,8 @@ Five buttons above every `# %%`: run that cell, run the one above it, run everyt
 
 **Worth doing twice on Windows:** once with a short sleep, once with the machine suspended long enough that the kernel has been idle for many minutes.
 
+**macOS keeps both sockets across a sleep** - measured at 0.4.2: the window wakes as though nothing happened, and neither the redial nor the link probe ever runs. So a pass here says the application survives a suspend on macOS; it says nothing about the recovery paths, which only Windows exercises. Anything that changes them has to be tested there.
+
 ## Results
 
 One row per platform per run. Record the build, not just the date.
@@ -588,7 +593,7 @@ One row per platform per run. Record the build, not just the date.
 | | macOS | Windows | Linux |
 |---|---|---|---|
 | Build | 0.3.0.dev167 | 0.3.0.dev167 | |
-| M1 ordinary quit | ok | ok |  |
+| M1 ordinary quit | ok | ok (0.4.2) |  |
 | M2 quit during install | ok | ok |  |
 | M3 quit before usable | ok | ok |  |
 | M4 wedged language server | ok | ok |  |
@@ -601,7 +606,7 @@ One row per platform per run. Record the build, not just the date.
 | M11 typing during save | ok | ok |  |
 | M12 new file collision | ok | ok |  |
 | M13 Save As collision | ok | ok |  |
-| M14 full disk | open | open |  |
+| M14 full disk | won't test | won't test | won't test |
 | M15 changed on disk | ok | ok |  |
 | M16 crash recovery | ok | fixed (dev168) |  |
 | M17 not UTF-8 | ok | ok |  |
@@ -624,7 +629,7 @@ One row per platform per run. Record the build, not just the date.
 | M34 keyboard after Open Folder | ok | ok |  |
 | M35 tree follows the disk | ok | | |
 | M36 cell buttons, restart chord | ok | | |
-| M37 waking from sleep | | | |
+| M37 waking from sleep | ok (0.4.2) | ok (0.3.0.dev180) | |
 
 **The run of 2026-08-18, macOS and Windows, 0.3.0.dev167.** The first full pass; Linux has still never been run. What it left:
 
@@ -632,6 +637,6 @@ One row per platform per run. Record the build, not just the date.
 - **M21 warned on Windows** with `NE_RS_UNBLDRE: Unable to load application resource file /resources/favicon.ico` on every launch from a console. The page names an icon now, so nothing asks for the one we do not ship.
 - **M26 answers an open design question**: the "It changed on disk" dialog appeared on both, so `stat` carries mtime on Windows and the check runs at full strength rather than falling back to size alone.
 - **M28 confirms what pid ownership needs**: `tasklist` matched exactly one row per window - the sidecars carry other names - which is what makes `liveWindows()` a list of windows rather than of processes.
-- **M14 is the only row never attempted**, and M23 waits on ocp-tessellate and ocp-viewer-core reaching PyPI.
+- **M14 was never attempted and now will not be** - see its own entry; the property it was written for is covered by `tests/unit/editor/safewrite.test.mjs`. M23 waited on ocp-tessellate and ocp-viewer-core reaching PyPI, which they did on 2026-08-19.
 
 **Since that run**, on macOS: M16's fix was verified at dev168, and **M35 and M36 both passed at dev173** - the folder watcher, the buttons above a cell marker, and `Shift-Alt-Cmd-R`. So the watcher's recursion is confirmed on FSEvents; Windows uses a different implementation and has seen nothing newer than dev167.
