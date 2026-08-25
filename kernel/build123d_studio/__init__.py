@@ -38,6 +38,7 @@ from .comms import StudioComms
 from .transport import NotConnected
 
 __all__ = [
+    "Animation",
     "AnalysisTool",
     "BaseColorMap",
     "Camera",
@@ -110,6 +111,10 @@ get_colormap = viewer.get_colormap
 set_colormap = viewer.set_colormap
 unset_colormap = viewer.unset_colormap
 get_last_paths = viewer.get_last_paths
+
+# The core's Animation, bound like the show family: `Animation()` constructs
+# an animation over this viewer's last show.
+Animation = viewer.animation
 
 set_defaults = config.set_defaults
 get_defaults = config.get_defaults

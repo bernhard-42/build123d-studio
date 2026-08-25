@@ -183,6 +183,17 @@ export function initViewer() {
       page.handleMessage({ type: "clear" });
       return;
     }
+    // Animation tracks ride the model channel too, so they stay ordered
+    // against the model they animate. Like `clear` they carry no geometry, so
+    // they must not reach the no-geometry guard below.
+    if (header.type === "animation") {
+      page.handleMessage({
+        type: "animation",
+        data: header.data,
+        config: header.config ?? {},
+      });
+      return;
+    }
     // A model with no geometry is refused rather than drawn.
     //
     // three-cad-viewer does not come back from one: given a header describing
