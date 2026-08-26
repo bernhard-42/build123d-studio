@@ -23,7 +23,7 @@ A desktop application running on macOS, Windows and Linux, for writing build123d
 
 ## Installation and first run
 
-See [FirstRun.md](./FirstRun.md)
+See [FirstRun.md](./FirstRun.md). The full documentation lives at [bernhard-42.github.io/ocp_viewer_docs](https://bernhard-42.github.io/ocp_viewer_docs/) — the [build123d Studio chapter](https://bernhard-42.github.io/ocp_viewer_docs/viewers/build123d_studio/installation/) covers this viewer's specifics; this README gets you installed and running.
 
 ## Two ways to run your code
 
