@@ -18,7 +18,16 @@ The names below are bound methods off one `Viewer` and one `Config`, never
 working completion in the editor.
 """
 
+from ocp_tessellate.cad_objects import ImageFace
 from ocp_viewer_core.colors import BaseColorMap, ColorMap, web_to_rgb
+from ocp_viewer_core.selectors import (
+    select_edge,
+    select_edges,
+    select_face,
+    select_faces,
+    select_vertex,
+    select_vertices,
+)
 from ocp_viewer_core.comms import Session
 from ocp_viewer_core.config import (
     AnalysisTool,
@@ -40,6 +49,13 @@ from .transport import NotConnected
 __all__ = [
     "Animation",
     "AnalysisTool",
+    "ImageFace",
+    "select_edge",
+    "select_edges",
+    "select_face",
+    "select_faces",
+    "select_vertex",
+    "select_vertices",
     "BaseColorMap",
     "Camera",
     "Collapse",
