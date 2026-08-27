@@ -31,7 +31,7 @@
     "jsonc-parser": "3.3.1",
     "monaco-editor": "0.56.0",
     "ocp-viewer-core": "1.0.2",
-    "three-cad-viewer": "5.0.3"
+    "three-cad-viewer": "5.0.4"
   },
   "devDependencies": {
     "@neutralinojs/neu": "11.7.2",

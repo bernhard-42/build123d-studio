@@ -1276,10 +1276,10 @@ tcp-port-used@^1.0.2:
     debug "4.3.1"
     is2 "2.0.1"
 
-three-cad-viewer@5.0.3:
-  version "5.0.3"
-  resolved "https://registry.yarnpkg.com/three-cad-viewer/-/three-cad-viewer-5.0.3.tgz#645ee04d8d5e72f026a128bc2bd043b469065d60"
-  integrity sha512-aeCc9C7bv6P/VbrqlykhXY6Oht9u7D5YBRiNWRIHmOaMhJQIINNRRUgLyCON9JzvmDDlpH+CSrA22Omx2NtaiQ==
+three-cad-viewer@5.0.4:
+  version "5.0.4"
+  resolved "https://registry.yarnpkg.com/three-cad-viewer/-/three-cad-viewer-5.0.4.tgz#55c7fa4700326ca55b38a13295754ebf792a3c65"
+  integrity sha512-gFW1vePwBMO0wN7wIbx4uAgRyPeDZi4xSb+3jIvYbosLNmFlbJ14zP5WS4JZH0yDKObab+IQAfIa2Y253r63Kw==
   dependencies:
     n8ao "1.10.1"
     postprocessing "6.39.0"
