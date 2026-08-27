@@ -6,11 +6,13 @@ import {
   customPackages,
   isDefaultSelection,
   loadPackageSources,
+  localCheckouts,
   packageSources,
   renderPyproject,
   savePackageSources,
   shippedLockApplies,
 } from "../packages.js";
+import { editableBuildFlags } from "../requirements.js";
 import { run, quote } from "../proc.js";
 import { appendLog, setStatus } from "./splash.js";
 import * as log from "../log.js";
@@ -139,6 +141,20 @@ async function verifyNativeLibraries(python) {
 }
 
 /**
+ * A `uv sync`, carrying what a local checkout needs said about how it is built.
+ *
+ * Every sync goes through here rather than each site remembering the flags,
+ * because forgetting them does not fail: it installs the checkout in the layout
+ * a static analyser cannot read, and what comes back weeks later is "the editor
+ * says my package is not installed" - with the kernel importing it perfectly.
+ * See editableBuildFlags for what the flags are and why they cannot live in the
+ * generated pyproject.toml.
+ */
+function runUvSync(args, envRoot, { onLine }, checkouts) {
+  return runUv([...args, ...editableBuildFlags(checkouts)], envRoot, { onLine });
+}
+
+/**
  * Bring the environment in line with the current package selection.
  *
  * @returns {Promise<number>} exit code of the last uv command
@@ -146,9 +162,11 @@ async function verifyNativeLibraries(python) {
 async function syncSelection(envRoot, selection, onLine, custom = customPackages()) {
   const shippedLockApplies = await stageProjectFiles(envRoot, selection, custom);
 
+  const checkouts = localCheckouts(selection, custom);
+
   if (shippedLockApplies) {
     // Nothing to resolve: install exactly what was tested.
-    return runUv(["sync", "--frozen"], envRoot, { onLine });
+    return runUvSync(["sync", "--frozen"], envRoot, { onLine }, checkouts);
   }
 
   // A GitHub source is in play, so uv has to resolve. Without --upgrade this
@@ -158,7 +176,7 @@ async function syncSelection(envRoot, selection, onLine, custom = customPackages
   if (lockCode !== 0) {
     return lockCode;
   }
-  return runUv(["sync"], envRoot, { onLine });
+  return runUvSync(["sync"], envRoot, { onLine }, checkouts);
 }
 
 /**
@@ -278,7 +296,7 @@ export async function upgradePackages(onLine) {
     throw new Error(`uv lock failed with exit code ${lockCode}`);
   }
 
-  const syncCode = await runUv(["sync"], envRoot, { onLine });
+  const syncCode = await runUvSync(["sync"], envRoot, { onLine }, localCheckouts());
   if (syncCode !== 0) {
     throw new Error(`uv sync failed with exit code ${syncCode}`);
   }
@@ -327,7 +345,7 @@ export async function reinstallPackage(name, onLine) {
   const args = usesShippedLock
     ? ["sync", "--frozen", "--reinstall-package", name]
     : ["sync", "--reinstall-package", name];
-  const code = await runUv(args, envRoot, { onLine });
+  const code = await runUvSync(args, envRoot, { onLine }, localCheckouts());
   if (code !== 0) {
     throw new Error(`uv sync failed with exit code ${code}`);
   }

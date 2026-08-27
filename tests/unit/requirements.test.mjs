@@ -15,6 +15,7 @@ import {
   localSourceProblem,
   normalizeName,
   parseRequirements,
+  editableBuildFlags,
   renderRequirements,
   tomlString,
 } from "../../src/requirements.js";
@@ -295,4 +296,49 @@ test("a relative folder is refused, as it is in the requirements field", () => {
 
 test("the message names the package, because a row is per package", () => {
   assert.match(localSourceProblem("bd_warehouse", ""), /^bd_warehouse:/);
+});
+
+// What the editor can see of a local checkout.
+//
+// setuptools picks its editable layout by project shape: a src-layout checkout
+// gets a .pth holding one directory, a flat-layout one gets an import hook whose
+// module-to-directory mapping exists only while Python is running. basedpyright
+// reads .pth files and executes nothing, so the second kind imports perfectly in
+// the kernel and is underlined as unresolved in the editor - which reads as the
+// editor being broken about correct code.
+//
+// Measured on a flat-layout checkout with uv 0.12.1: without the setting, a
+// `__editable___..._finder.py` and an unresolved import; with it, a .pth holding
+// the repository root. On a src-layout checkout the .pth is identical either
+// way, so the ordinary case pays nothing.
+
+test("a local checkout is installed in the layout an analyser can follow", () => {
+  const { editables } = renderRequirements(parseRequirements("/Users/me/src/mylib"));
+  assert.deepEqual(editables, ["mylib"]);
+  assert.deepEqual(editableBuildFlags(editables), [
+    "--config-settings-package",
+    "mylib:editable_mode=compat",
+  ]);
+});
+
+test("nothing else asks for it", () => {
+  // PyPI and git are not checkouts, so there is nothing for setuptools to lay
+  // out and no reason to send a build backend a setting it did not ask for.
+  const { editables } = renderRequirements(
+    parseRequirements("matplotlib>=3.8\ngit+https://github.com/someone/mylib"),
+  );
+  assert.deepEqual(editables, []);
+  assert.deepEqual(editableBuildFlags(editables), []);
+});
+
+test("each checkout is named on its own, because the setting is per package", () => {
+  // `-C editable_mode=compat` without a package would send a setuptools setting
+  // to every backend in the resolution, including the ones building wheels for
+  // packages nobody here chose.
+  assert.deepEqual(editableBuildFlags(["build123d", "cadquery"]), [
+    "--config-settings-package",
+    "build123d:editable_mode=compat",
+    "--config-settings-package",
+    "cadquery:editable_mode=compat",
+  ]);
 });

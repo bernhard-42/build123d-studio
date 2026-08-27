@@ -297,11 +297,16 @@ export function insertDependencies(base, lines) {
 /**
  * The dependency lines and the [tool.uv.sources] entries a set of entries needs.
  *
- * @returns {{dependencies: string[], sources: string[]}} both already escaped
+ * `editables` names the ones installed from a local checkout, which need one
+ * more thing said about them - see editableBuildFlags.
+ *
+ * @returns {{dependencies: string[], sources: string[], editables: string[]}}
+ *          all already escaped
  */
 export function renderRequirements(entries) {
   const dependencies = [];
   const sources = [];
+  const editables = [];
   for (const entry of entries) {
     if (entry.error !== null) {
       continue;
@@ -309,6 +314,9 @@ export function renderRequirements(entries) {
     dependencies.push(`    ${tomlString(entry.requirement)},`);
     if (entry.source === null) {
       continue;
+    }
+    if (entry.source.editable === true) {
+      editables.push(entry.name);
     }
     const fields = Object.entries(entry.source)
       .map(([key, value]) =>
@@ -319,5 +327,38 @@ export function renderRequirements(entries) {
       .join(", ");
     sources.push(`${entry.name} = { ${fields} }`);
   }
-  return { dependencies, sources };
+  return { dependencies, sources, editables };
+}
+
+/**
+ * Tell uv to install local checkouts the way a static analyser can follow.
+ *
+ * setuptools has two editable layouts and picks between them by project shape.
+ * For a src-layout checkout it writes a .pth holding one directory. For a
+ * flat-layout one - a repository with tests/ and doc/ beside the package - it
+ * refuses to put that root on the path and installs an import hook instead,
+ * whose mapping of module to directory exists only while Python is running.
+ *
+ * basedpyright reads .pth files and executes nothing, so the second kind
+ * imports perfectly in the kernel and is an unresolved import in the editor -
+ * the same checkout, correct at runtime and underlined on screen.
+ *
+ * On the command line rather than in the generated pyproject.toml, where
+ * `[tool.uv.config-settings-package.<name>]` says exactly this and is the
+ * documented place for it. Measured: uv runs here with UV_NO_CONFIG=1, which
+ * keeps the user's own uv configuration out of the application's environment
+ * and, in the same stroke, makes uv ignore that table - it reports "Checked"
+ * and leaves the hook in place. The flag is not configuration, so it survives.
+ *
+ * `compat` is setuptools' name for the older layout, which is always a path.
+ * Per package rather than globally because it is a setuptools setting: a
+ * checkout built by another backend has no use for it, and PEP 517 backends
+ * ignore config settings they do not know. Measured on a src-layout checkout:
+ * the .pth is identical either way, so this costs the ordinary case nothing.
+ *
+ * @param {string[]} names packages installed from a local checkout
+ * @returns {string[]} arguments to append to a `uv sync`
+ */
+export function editableBuildFlags(names) {
+  return names.flatMap((name) => ["--config-settings-package", `${name}:editable_mode=compat`]);
 }

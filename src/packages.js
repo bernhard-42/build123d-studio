@@ -182,6 +182,17 @@ export async function savePackageSources(selection) {
   return packageSources();
 }
 
+/** Whether this package is redirected to a checkout on this machine.
+ *
+ * A local choice with no path chosen yet is not an error worth failing a start
+ * over - it simply has nothing to redirect, so the declared version applies as
+ * it would on PyPI. Both the source entry and the build settings hang off this
+ * one answer, so they cannot disagree about what a local checkout is.
+ */
+function chosenLocally(selection, name) {
+  return selection[name] === LOCAL && localPathFor(name) !== "";
+}
+
 /**
  * The pyproject.toml to stage, given the selection.
  *
@@ -195,24 +206,22 @@ export async function renderPyproject(selection = sources, extras = customPackag
   const entries = parseRequirements(extras);
   const { dependencies, sources: extraSources } = renderRequirements(entries);
 
-  const ourSources = PACKAGES.flatMap((p) => {
+  const ourSources = [];
+  for (const p of PACKAGES) {
     if (selection[p.name] === GITHUB) {
-      return [`${p.name} = { git = ${tomlString(p.repository)}, branch = ${tomlString(p.branch)} }`];
+      ourSources.push(
+        `${p.name} = { git = ${tomlString(p.repository)}, branch = ${tomlString(p.branch)} }`,
+      );
+      continue;
     }
-    if (selection[p.name] === LOCAL) {
-      const path = localPathFor(p.name);
-      // A local choice with no path chosen yet is not an error worth failing a
-      // start over - it simply has nothing to redirect, so the declared version
-      // applies as it would on PyPI.
+    if (chosenLocally(selection, p.name)) {
       // Editable: a local checkout is a working copy, and the whole point of
       // choosing one is that what you edit is what runs. Re-install is still
       // there for the times metadata changes rather than code.
-      return path === ""
-        ? []
-        : [`${p.name} = { path = ${tomlString(path)}, editable = true }`];
+      const path = localPathFor(p.name);
+      ourSources.push(`${p.name} = { path = ${tomlString(path)}, editable = true }`);
     }
-    return [];
-  });
+  }
 
   if (dependencies.length === 0 && ourSources.length === 0 && extraSources.length === 0) {
     // The shipped file verbatim, which is what makes `uv sync --frozen` install
@@ -244,6 +253,21 @@ export async function renderPyproject(selection = sources, extras = customPackag
 [tool.uv.sources]
 ${allSources.join("\n")}
 `;
+}
+
+/**
+ * Every package installed from a local checkout, whichever way it was chosen.
+ *
+ * The source picker and the additional-packages field both produce them, and
+ * both kinds need the same thing said to uv when they are installed - see
+ * editableBuildFlags.
+ *
+ * @returns {string[]} package names, in no particular order
+ */
+export function localCheckouts(selection = sources, extras = customPackages()) {
+  const ours = PACKAGES.filter((p) => chosenLocally(selection, p.name)).map((p) => p.name);
+  const { editables } = renderRequirements(parseRequirements(extras));
+  return [...ours, ...editables];
 }
 
 /** A short string that changes whenever the selection does. */
