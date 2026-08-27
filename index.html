@@ -21,6 +21,29 @@
           ws://127.0.0.1:NL_PORT whenever its globals are injected, which is
           always in a packaged app; the sidecar's own socket is another port on
           the same host, and a different port is a different origin.
+        connect-src dl.polyhaven.org - three-cad-viewer's environment maps come
+          from Poly Haven's CDN (three-cad-viewer.esm.js, PH_BASE), and without
+          this the HDR presets fail with a violation and the viewer falls back
+          to its built-in lighting.
+
+          What this list is for, stated plainly, because it would be easy to
+          read it as containment and it is not: nativeAllowList already grants
+          this page os.*, so any script that achieves execution here can spawn a
+          process and reach the network with it, CSP or no CSP. What connect-src
+          buys is that the hosts this application talks to stay few and
+          enumerable - a dependency that starts phoning home, a component
+          fetching a font or a telemetry endpoint, shows up as a violation in
+          the log rather than as traffic nobody looked for.
+
+          So this entry is a decision rather than an oversight: one CDN, named
+          here, whose bytes are parsed by three.js's RGBELoader in this process.
+          If that CDN is compromised it serves us a file our renderer reads -
+          which is the risk accepted, and the reason the alternative was
+          considered: fetching the maps in the sidecar and handing the page
+          blob: URLs, which keeps the host list empty and caches the maps per
+          machine. That is the better answer the day HDR maps are something
+          people lean on; it is a caching feature rather than a line of policy,
+          and it was not worth building before the feature is used.
         style-src 'unsafe-inline' - three-cad-viewer and xterm style elements as
           they build them. Inline style is not the injection route that matters
           here, and a missing rule breaks layout silently.
@@ -37,7 +60,7 @@
                style-src 'self' 'unsafe-inline';
                img-src 'self' data: blob:;
                font-src 'self';
-               connect-src 'self' ws://127.0.0.1:* http://127.0.0.1:*;
+               connect-src 'self' ws://127.0.0.1:* http://127.0.0.1:* https://dl.polyhaven.org;
                object-src 'none';
                base-uri 'self';
                form-action 'none'"
