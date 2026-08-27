@@ -110,6 +110,41 @@ test.describe("the strip says which file is which", () => {
   });
 });
 
+test.describe("choosing a tab", () => {
+  // Reported from a real session: put the caret somewhere in a file, click into
+  // the viewer, click the file's tab again - and there is no cursor. The caret
+  // was never lost; showBuffer restores the view state. What was missing is
+  // that nothing on the tab path ever focused the editor, so Monaco drew no
+  // cursor and the next keystroke went to the window instead of the file.
+
+  test("puts the keyboard in the editor", async ({ page }) => {
+    await open(page, { files: FILES, settings: { workspace: WORKSPACE } });
+    await focusEditor(page);
+
+    // Away from the editor, the way clicking the viewer does it.
+    await page.locator("#pane-viewer").click();
+    await expect(page.locator(".monaco-editor textarea")).not.toBeFocused();
+
+    await page.locator(".tab", { hasText: "plate.py" }).click();
+
+    await expect(page.locator(".monaco-editor textarea")).toBeFocused();
+  });
+
+  test("so what is typed next lands in the file the tab named", async ({ page }) => {
+    // The consequence a person actually meets. Asserted through the text rather
+    // than through activeElement, because "the editor has focus" is only worth
+    // anything if typing reaches the buffer.
+    await open(page, { files: FILES, settings: { workspace: WORKSPACE } });
+    await page.locator("#pane-viewer").click();
+
+    await page.locator(".tab", { hasText: "plate.py" }).click();
+    await page.keyboard.type("AAA");
+
+    await expect(page.locator(".tab-active .tab-label")).toHaveText("plate.py");
+    expect(await editorText(page), "the keystrokes went somewhere else").toContain("AAA");
+  });
+});
+
 test.describe("the dirty mark", () => {
   test("appears when the buffer differs from disk", async ({ page }) => {
     await open(page, { files: FILES, settings: { workspace: WORKSPACE } });

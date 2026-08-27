@@ -41,6 +41,7 @@ import {
   bufferContents,
   bufferExists,
   bufferStamp,
+  focus as focusEditor,
   focusAt,
   insertSnippet,
   bufferNeedsSaving,
@@ -280,6 +281,12 @@ function showInTab({ path = null, text = "" }) {
  */
 export async function selectTab(key) {
   showBuffer(key);
+  // Choosing a tab means "I want to work in this file", so the keyboard goes
+  // with it. showBuffer has already put the caret back where the buffer left
+  // it, but Monaco draws no cursor while it does not have focus - so clicking
+  // in from the viewer looked like the file had no caret at all, and the first
+  // thing typed went nowhere.
+  focusEditor();
   refreshTabs();
   await revealInTree(getCurrentFile());
   syncKernelDirectory();

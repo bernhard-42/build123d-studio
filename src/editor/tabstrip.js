@@ -122,6 +122,14 @@ function render(tab, isActive) {
       return;
     }
     if (event.button === 0) {
+      // Prevented, and the editor focused by the handler instead. Focus is the
+      // *default action* of mousedown and it runs after this returns, so on a
+      // plain div it lands on nothing and takes the keyboard away from whatever
+      // had it - which is why focusing the editor from here alone did not stick.
+      // Nothing is lost by prevention: the strip is not selectable text, the
+      // tabs are not draggable, and they hold no focusable element but the
+      // close button, which stops this event before it arrives.
+      event.preventDefault();
       select(tab.key);
     }
   });
