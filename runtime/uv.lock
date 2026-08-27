@@ -89,7 +89,7 @@ requires-dist = [
     { name = "basedpyright", specifier = "==1.39.9" },
     { name = "build123d", specifier = ">=0.11.1" },
     { name = "jupyter-console", specifier = "==6.6.3" },
-    { name = "ocp-viewer-core", specifier = ">=1.0.0,<1.1.0" },
+    { name = "ocp-viewer-core", specifier = ">=1.0.2,<1.1.0" },
     { name = "orjson", specifier = "==3.11.9" },
     { name = "pywinpty", marker = "sys_platform == 'win32'", specifier = "==3.0.5" },
     { name = "ruff", specifier = "==0.16.3" },
@@ -614,16 +614,17 @@ wheels = [
 
 [[package]]
 name = "ocp-viewer-core"
-version = "1.0.1"
+version = "1.0.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "ocp-tessellate" },
     { name = "orjson" },
+    { name = "pillow" },
     { name = "threejs-materials" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/f1/eb/cd3f293bca345f277c2bdb554f6c85ef0cc1727a66ecbc24e19d25469561/ocp_viewer_core-1.0.1.tar.gz", hash = "sha256:3f64542bede79f48518439c03a1ff18df371b8ed334ebb827c64901e09f06b61", size = 99122, upload-time = "2026-08-19T16:43:02.513Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/36/32/5f4430236c0d230a292e3fd8386d0c0c10db9789551b1cb9e5cc6bcda609/ocp_viewer_core-1.0.2.tar.gz", hash = "sha256:a66f379e1e7fae11f7cd8b108d3bfec9a127f90e85d98dd24415d08042dc4bbd", size = 105888, upload-time = "2026-08-27T14:03:12.875Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/76/55/a5b9c07d8bfdb7cc914d734832433303034a00a55ce249f76d4c22069d09/ocp_viewer_core-1.0.1-py3-none-any.whl", hash = "sha256:3edfbe71d39298e5153e61e099502de6e9c6b3eb311256cf4ac5e3e33bc71938", size = 101627, upload-time = "2026-08-19T16:43:00.709Z" },
+    { url = "https://files.pythonhosted.org/packages/e9/27/0688d5c4880ebe25c8a2c00830797e72196f37e30a10f55cbb90a103d855/ocp_viewer_core-1.0.2-py3-none-any.whl", hash = "sha256:042764b0ea6074199d0982af6120ac4248d85e7c22200ed7e740d4377df66f82", size = 109714, upload-time = "2026-08-27T14:03:11.585Z" },
 ]
 
 [[package]]

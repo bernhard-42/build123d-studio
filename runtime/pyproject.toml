@@ -21,7 +21,10 @@ dependencies = [
     # The shared show pipeline. ocp-tessellate arrives under it. A range rather
     # than a pin while it settles: its patches reach users through the button
     # rather than through a release of this application.
-    "ocp-viewer-core>=1.0.0,<1.1.0",
+    # The floor moves with what this application imports: 1.0.2 is where
+    # ocp_viewer_core.selectors arrives, and the kernel package fails at import
+    # without it - a missing module rather than a missing feature.
+    "ocp-viewer-core>=1.0.2,<1.1.0",
     "build123d>=0.11.1",
 ]
 

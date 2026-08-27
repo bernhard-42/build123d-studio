@@ -30,7 +30,7 @@
     "@xterm/xterm": "6.0.0",
     "jsonc-parser": "3.3.1",
     "monaco-editor": "0.56.0",
-    "ocp-viewer-core": "1.0.1",
+    "ocp-viewer-core": "1.0.2",
     "three-cad-viewer": "5.0.3"
   },
   "devDependencies": {
