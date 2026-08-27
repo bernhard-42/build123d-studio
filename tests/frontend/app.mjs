@@ -72,11 +72,19 @@ class FakeSidecar {
    * `source: null` is what the real sidecar sends for a buffer ruff would not
    * change, which is the common case and produces no edit at all.
    *
-   * A test that cares about formatting overrides it with answer().
+   * Every environment action waits on the language server restart the same way,
+   * and the real sidecar answers it whether the server came back or not - so a
+   * test about which uv command a button ran does not have to know that the
+   * language server exists.
+   *
+   * A test that cares about either overrides it with answer().
    */
   _answerDefaults() {
     if (!this._answers.has("editor.format")) {
       this._answers.set("editor.format", () => ({ source: null }));
+    }
+    if (!this._answers.has("editor.restartLanguageServer")) {
+      this._answers.set("editor.restartLanguageServer", () => ({ detail: "restarted" }));
     }
   }
 

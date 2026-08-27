@@ -61,6 +61,10 @@ async function environmentCalls(page) {
  * A test that clicks the button and immediately asks whether the dialog is
  * still there answers "no" and blames the application. All four steps have to
  * be played through.
+ *
+ * The language server restart that precedes the kernel's is not among them: the
+ * harness answers it the way a real sidecar always does, so a test about which
+ * uv command a button ran does not have to play it.
  */
 async function finishEnvironmentAction(page, sidecar, what) {
   // The restart first and the acknowledgement second, in that order. The OK
@@ -390,7 +394,6 @@ test.describe("what a package change tells the language server", () => {
 
   test("installing packages restarts it", async ({ page }) => {
     const { sidecar } = await open(page, { files: FILES, settings: { workspace: WORKSPACE } });
-    sidecar.answer("editor.restartLanguageServer", () => ({ detail: "restarted" }));
 
     await page.evaluate(() =>
       globalThis.__NEUTRALINO_STUB__.emit("mainMenuItemClicked", { id: "app.settings" }),
