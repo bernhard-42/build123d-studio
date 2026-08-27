@@ -378,3 +378,39 @@ test.describe("the package source picker", () => {
     await expect(page.locator("#settings-apply")).toBeHidden();
   });
 });
+
+test.describe("what a package change tells the language server", () => {
+  // basedpyright reads site-packages when it starts and does not watch it, so
+  // after an install its index describes an environment that no longer exists:
+  // the package just added is missing from completion and - the half that looks
+  // like a broken editor - underlined as unresolved in code that is correct.
+
+  const asked = (sidecar, type) =>
+    sidecar.received.filter((frame) => frame.type === type).length;
+
+  test("installing packages restarts it", async ({ page }) => {
+    const { sidecar } = await open(page, { files: FILES, settings: { workspace: WORKSPACE } });
+    sidecar.answer("editor.restartLanguageServer", () => ({ detail: "restarted" }));
+
+    await page.evaluate(() =>
+      globalThis.__NEUTRALINO_STUB__.emit("mainMenuItemClicked", { id: "app.settings" }),
+    );
+    await page.locator('.settings-tab[data-tab="packages"]').click();
+    await page.locator("#settings-install").click();
+
+    await expect.poll(() => asked(sidecar, "editor.restartLanguageServer")).toBe(1);
+  });
+
+  test("but restarting the kernel does not", async ({ page }) => {
+    // "Restart Kernel" means "clear my namespace". Rebuilding the language
+    // server's index every time somebody presses it would spend seconds on a
+    // question they did not ask.
+    const { sidecar } = await open(page, { files: FILES, settings: { workspace: WORKSPACE } });
+
+    await page.locator("#btn-restart").click();
+
+    await sidecar.waitFor("kernel.restart");
+    await page.waitForTimeout(300);
+    expect(asked(sidecar, "editor.restartLanguageServer")).toBe(0);
+  });
+});

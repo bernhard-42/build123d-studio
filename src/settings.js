@@ -278,6 +278,27 @@ async function runEnvironmentAction({ status, done, work }) {
 
   try {
     await work();
+
+    // basedpyright reads site-packages when it starts and does not watch it, so
+    // after this its index describes an environment that no longer exists: a
+    // package just installed would be missing from completion and, worse,
+    // underlined as unresolved in code that is correct.
+    //
+    // Only here. A kernel restart means "clear my namespace", and rebuilding
+    // this index every time somebody presses that would spend seconds on a
+    // question they did not ask.
+    //
+    // Reported rather than fatal: the packages have already changed by now, and
+    // a language server that will not come back costs completions - not the
+    // operation the user was performing.
+    setStatus("Restarting the language server…");
+    try {
+      await ipc.request("editor.restartLanguageServer", {}, { timeout: 30000 });
+    } catch (error) {
+      log.warn("The language server did not restart:", error);
+      appendLog("The language server did not restart; completions may be stale.");
+    }
+
     // The running kernel has already imported whatever was replaced.
     setStatus("Restarting the kernel…");
     await awaitKernelRestart();

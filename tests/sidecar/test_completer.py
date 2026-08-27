@@ -460,3 +460,57 @@ class TreeKillCommandTest(unittest.TestCase):
         # tree kill would only take away the server's chance to exit cleanly.
         self.assertIsNone(completer.tree_kill_command(4242, platform="darwin"))
         self.assertIsNone(completer.tree_kill_command(4242, platform="linux"))
+
+
+class RestartTest(unittest.TestCase):
+    """A fresh index after the environment changes, and no stale bookkeeping.
+
+    basedpyright reads site-packages when it starts and does not watch it, so
+    after a package is installed its index describes an environment that no
+    longer exists - a missing completion at best, and at worst a diagnostic that
+    is wrong about correct code.
+
+    The documents are the half that is easy to get wrong. LSP is stateful and
+    the Completer keeps the reconciliation, so a new process inheriting the old
+    bookkeeping would be sent a didChange for a document it has never seen, and
+    would answer nothing for the buffer somebody is typing in.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.completer = Completer("/tmp", REPO)
+        cls.completer.warm()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.completer.stop()
+
+    def offers(self, name):
+        """Whether `name` is among the completions for a half-typed Box."""
+        source = SOURCE + "b = Bo"
+        entries = self.completer.complete(source, len(source.splitlines()), len("b = Bo"))
+        return any(entry["text"] == name for entry in entries)
+
+    def test_it_answers_again_afterwards(self):
+        self.assertTrue(self.offers("Box"), "Box was not offered before the restart")
+
+        self.completer.restart()
+
+        self.assertTrue(
+            self.offers("Box"),
+            "the server came back but answered nothing - the documents it was told about"
+            " belong to the process that is gone",
+        )
+
+    def test_and_forgets_what_the_old_process_was_told(self):
+        # The bookkeeping is what makes the answer above possible: left behind,
+        # the next request would be a didChange against a document the new
+        # server has never opened.
+        self.completer.complete(SOURCE + "b = Bo", len((SOURCE + "b = Bo").splitlines()), 6)
+        self.assertNotEqual(self.completer._versions, {})
+
+        self.completer.restart()
+
+        self.assertEqual(self.completer._versions, {})
+        self.assertEqual(self.completer._sources, {})
+        self.assertEqual(self.completer._owners, {})

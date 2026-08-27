@@ -349,6 +349,10 @@ class Sidecar:
         self.channel.on("editor.sync", self.on_sync, lane=COMPLETE)
         self.channel.on("editor.close", self.on_close, lane=COMPLETE)
         self.channel.on("editor.format", self.on_format, lane=FORMAT)
+        # On the completion lane, so it is ordered against the requests it
+        # invalidates rather than racing them.
+        self.channel.on("editor.restartLanguageServer", self.on_restart_completion,
+                        lane=COMPLETE)
 
         # Starting and stopping block; relaying does not. A DAP message is a
         # socket write, and the frontend sends one per step - so it goes inline,
@@ -1304,6 +1308,30 @@ class Sidecar:
                 message.get("key"),
             ),
         )
+
+    def on_restart_completion(self, message):
+        """Give the language server a fresh view of the environment.
+
+        Asked for after a package is installed, upgraded or reinstalled, and
+        only then. basedpyright reads site-packages once and does not watch it,
+        so its index describes the environment as it was - and a diagnostic that
+        is wrong about correct code is worse than a missing completion.
+
+        Not on a kernel restart. That means "clear my namespace", and rebuilding
+        this index every time somebody presses it would spend seconds on a
+        question they did not ask.
+
+        Answered either way. A language server that will not come back costs
+        completions; failing the package operation that asked for it would cost
+        the operation, which has already happened.
+        """
+        try:
+            self.completer.restart()
+            detail = "restarted"
+        except Exception as exc:  # noqa: BLE001 - reported, never fatal
+            log(f"Language server restart failed: {exc}")
+            detail = f"failed: {exc}"
+        self.channel.send("editor.restartLanguageServer", id=message.get("id"), detail=detail)
 
     def on_format(self, message):
         """Format the whole buffer, or answer with nothing to do.

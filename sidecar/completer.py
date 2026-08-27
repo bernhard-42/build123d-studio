@@ -260,6 +260,21 @@ class LanguageServer:
 
     # --- lifecycle ---
 
+    def restart(self):
+        """Stop and start, for an environment that changed underneath the server.
+
+        `stop()` means "the sidecar is going" - it latches _stopping so that a
+        request arriving during shutdown cannot bring the server back. A restart
+        is the other thing entirely: this process stays, and what has to go is
+        the server's view of site-packages. Clearing the latch is therefore part
+        of restarting rather than a way around the guard.
+
+        @returns whether the replacement is usable
+        """
+        self.stop()
+        self._stopping = False
+        return self.start()
+
     def start(self):
         """Launch the server and complete the handshake. True if it is usable."""
         if self.alive():
@@ -567,6 +582,32 @@ class Completer:
 
     def stop(self):
         self._server.stop()
+
+    def restart(self):
+        """Take the server down and bring it back, with a fresh view of the environment.
+
+        basedpyright reads site-packages when it starts and does not watch it,
+        so after a package is installed, upgraded or reinstalled its index
+        describes an environment that no longer exists. The mild half of that is
+        a missing completion; the sharp half is a diagnostic that is wrong about
+        correct code - `import numpy_stl` underlined as unresolved for the rest
+        of the session, which reads as the editor being broken.
+
+        The documents go with it. LSP is stateful and this class keeps the
+        reconciliation - what the server has been told is open, and at which
+        version - so a fresh process with the old bookkeeping would be sent a
+        didChange for a document it has never seen. Cleared here, and the next
+        request opens them again from the buffer the frontend sends with it.
+
+        Warming afterwards rather than leaving the first keystroke to pay: the
+        same argument the startup warm-up makes.
+        """
+        self._server.restart()
+        with self._lock:
+            self._versions.clear()
+            self._sources.clear()
+            self._owners.clear()
+        self.warm()
 
     def complete(self, source, line, column, path=None, key=None):
         """Completions at a position, as entries the sidecar can merge.
