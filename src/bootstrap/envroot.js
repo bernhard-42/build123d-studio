@@ -1,6 +1,13 @@
 import { filesystem, os } from "@neutralinojs/lib";
 
 import pins from "./pins.json";
+import {
+  ENV_ROOT_VARIABLE,
+  chooseEnvRoot,
+  envRootProblem,
+  parentOf,
+  strandedEnvRoot,
+} from "./envpath.js";
 
 // resolve_env_root() lives here, in the frontend, on purpose.
 //
@@ -51,7 +58,8 @@ export async function appDir() {
 }
 
 /**
- * Per-user directory for everything the application writes.
+ * Per-user directory for the settings, the snippets, the log and the recovery
+ * copies.
  *
  * ~/Library/Application Support/build123d-studio on macOS, %APPDATA% on Windows
  * - Roaming, not Local - and ~/.local/share on Linux. os.getPath("data")
@@ -59,10 +67,14 @@ export async function appDir() {
  * LOCALAPPDATA here and is not, as the shipped application's own logs say:
  * C:\Users\<user>\AppData\Roaming\build123d-studio.
  *
+ * Roaming is right for what is left here. A preference, a snippet file and an
+ * unsaved buffer are the user's, and following them to another machine is what
+ * that half of AppData is for. The environment is a different matter and no
+ * longer lives here on Windows - see resolveEnvRoot.
+ *
  * The application writes nothing into its own directory, so an installation can
  * be read-only: a .app dragged to /Applications, an AppImage's read-only mount,
- * an install under Program Files. The environment, the settings file and the log
- * all hang off here.
+ * an install under Program Files.
  */
 export async function appDataDir() {
   if (appDataCache === null) {
@@ -100,26 +112,73 @@ export async function recordAppLocation() {
 /**
  * Directory holding the interpreter, venv, uv cache and the uv project files.
  *
- * Under the app-data directory above, so ~/Library/Application
- * Support/build123d-studio/runtime on macOS and the equivalent elsewhere.
- * Resolved once per session.
+ * Three places it can be, in order of precedence - the rules are in envpath.js,
+ * which explains why each exists:
  *
- * It survives replacing the application, which is what makes an app update
- * cheap: uv.lock ships with the app and is staged here on every start, so
- * `uv sync --frozen` reconciles whatever is here to whatever the running
- * version expects.
+ * 1. BUILD123D_STUDIO_ENV_ROOT, for a machine that will not execute binaries
+ *    out of the default location
+ * 2. %LOCALAPPDATA%\build123d-studio\runtime on Windows
+ * 3. <app-data>/runtime everywhere else
  *
- * @returns {Promise<{path: string}>}
+ * Resolved once per session. It survives replacing the application, which is
+ * what makes an app update cheap: uv.lock ships with the app and is staged here
+ * on every start, so `uv sync --frozen` reconciles whatever is here to whatever
+ * the running version expects. An empty directory is not a special case either
+ * - ensureEnvironment derives firstRun from the interpreter being absent, so a
+ * root that has just moved builds itself exactly as a first start does.
+ *
+ * A bad override throws rather than falling back. Somebody who set that
+ * variable did so because the default location does not work on their machine,
+ * and quietly rebuilding several gigabytes there would be the one answer that
+ * cannot help them.
+ *
+ * @returns {Promise<{path: string, source: string, stranded: string|null}>}
  */
 export async function resolveEnvRoot() {
   if (envRootCache !== null) {
     return envRootCache;
   }
 
-  const root = `${await appDataDir()}/runtime`;
-  await ensureDirectory(root);
+  // getEnv answers "" for a variable that is not set, so absence and emptiness
+  // arrive here as the same thing - and are the same thing: an override nobody
+  // set and one set to nothing both mean "decide it yourself".
+  const raw = await os.getEnv(ENV_ROOT_VARIABLE);
+  const override = typeof raw === "string" && raw.trim() !== "" ? raw : null;
+  if (override !== null) {
+    const problem = envRootProblem(override);
+    if (problem !== null) {
+      throw new Error(problem);
+    }
+  }
 
-  envRootCache = { path: root };
+  const dataDir = await appDataDir();
+  const chosen = chooseEnvRoot({
+    override,
+    dataDir,
+    localAppData: NL_OS === "Windows" ? await os.getEnv("LOCALAPPDATA") : null,
+    platform: NL_OS,
+    appName: APP_DIR_NAME,
+  });
+
+  try {
+    await ensureDirectoryChain(chosen.path);
+  } catch (error) {
+    if (chosen.source === "override") {
+      // Named, because the variable is the reason this path was tried at all
+      // and "permission denied" on its own does not say where to look.
+      throw new Error(
+        `${ENV_ROOT_VARIABLE} names ${chosen.path}, which could not be created: ` +
+          `${error?.message ?? error}`,
+      );
+    }
+    throw error;
+  }
+
+  envRootCache = {
+    path: chosen.path,
+    source: chosen.source,
+    stranded: strandedEnvRoot({ source: chosen.source, dataDir }),
+  };
   return envRootCache;
 }
 
@@ -144,6 +203,35 @@ export async function ensureDirectory(path) {
       // Fall through: it is not there, so the original failure was real.
     }
     throw error;
+  }
+}
+
+/**
+ * Create a directory and whatever is missing above it.
+ *
+ * Both new roots need this and neither used to. `%LOCALAPPDATA%` exists but
+ * `%LOCALAPPDATA%\build123d-studio` does not on a machine that has only ever
+ * had the Roaming one, and an override may name anything at all - somebody
+ * pointing at `D:\studio\env` should not have to make `D:\studio` by hand
+ * first. The old root never needed it because appDataDir had already made its
+ * parent on the way past.
+ *
+ * Upwards rather than downwards: the failure is asked for, not predicted, so
+ * there is no second implementation of "which prefixes of this path exist".
+ * parentOf stops at a root, which is what terminates it.
+ */
+async function ensureDirectoryChain(path) {
+  try {
+    await ensureDirectory(path);
+    return;
+  } catch (error) {
+    const above = parentOf(path);
+    if (above === null) {
+      throw error;
+    }
+    await ensureDirectoryChain(above);
+    // If this fails now, it is not a missing parent, so it is the answer.
+    await ensureDirectory(path);
   }
 }
 

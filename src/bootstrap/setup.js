@@ -185,9 +185,18 @@ async function syncSelection(envRoot, selection, onLine, custom = customPackages
  * @returns {Promise<{envRoot: string, python: string, firstRun: boolean}>}
  */
 export async function ensureEnvironment() {
-  const { path: envRoot } = await resolveEnvRoot();
-  log.info("Environment root:", envRoot);
+  const { path: envRoot, source, stranded } = await resolveEnvRoot();
+  log.info(`Environment root (${source}):`, envRoot);
   appendLog(`Environment: ${envRoot}`);
+
+  // Said once, in the log, where a Windows install that predates the move to
+  // %LOCALAPPDATA% can be recognised. Nothing is moved - a virtualenv holds
+  // absolute paths - so the old tree is simply left, and several gigabytes
+  // sitting in a roaming profile is worth naming rather than leaving to be
+  // discovered.
+  if (stranded !== null && (await exists(stranded))) {
+    log.warn(`An older environment is still in ${stranded}; it is safe to delete`);
+  }
 
   // Before anything else needs it: uv is what builds the environment.
   await ensureUv(envRoot);

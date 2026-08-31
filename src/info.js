@@ -5,6 +5,7 @@ import { appVersion, coreVersion, monacoVersion, xtermVersion } from "./versions
 import { escapeHtml } from "./escape.js";
 import { closeOnBackdropClick } from "./backdrop.js";
 import { appDataDir, resolveEnvRoot } from "./bootstrap/envroot.js";
+import { ENV_ROOT_VARIABLE } from "./bootstrap/envpath.js";
 import { snippetsPath } from "./editor/snippets.js";
 import { ensureUv } from "./bootstrap/uv.js";
 import { run, quote } from "./proc.js";
@@ -137,7 +138,7 @@ async function gather() {
     ],
   });
 
-  const { path: envRoot } = await resolveEnvRoot();
+  const { path: envRoot, source: envRootSource } = await resolveEnvRoot();
 
   // The sidecar may still be starting; the dialog does not hang on it, and the
   // rows below say "starting…" when it did not answer.
@@ -150,6 +151,12 @@ async function gather() {
       "It is not removed when the application is deleted.",
     rows: [
       row("Location", envRoot),
+      // Only when something redirected it. A report that says the environment
+      // is somewhere unexpected is otherwise a question nobody can settle:
+      // this is the difference between a machine policy and a typo.
+      ...(envRootSource === "override"
+        ? [row("Location set by", ENV_ROOT_VARIABLE)]
+        : []),
       row(
         "Python",
         info?.info
@@ -187,9 +194,11 @@ async function gather() {
   // Last, because it is what a bug report is told to fetch rather than
   // something anybody reads while looking at versions.
   //
-  // The files live beside the environment rather than inside it, so they
-  // survive the clean rebuild the note above describes - the log of the run
-  // that went wrong is exactly what is wanted after deleting the environment.
+  // The files live outside the environment rather than inside it - beside it on
+  // macOS and Linux, and in the roaming half of AppData on Windows, where the
+  // environment is local - so they survive the clean rebuild the note above
+  // describes. The log of the run that went wrong is exactly what is wanted
+  // after deleting the environment.
   // The sidecar and the kernel have no logs of their own: their stderr is
   // timestamped into this same file, so nobody goes looking for a third one.
   sections.push({
