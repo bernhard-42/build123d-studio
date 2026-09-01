@@ -113,7 +113,18 @@ async function claimKeyboard() {
  * Call it after every one of them - the caller does not have to know which
  * platform loses focus, because the answer differs and the cost of asking is a
  * focus call nobody notices.
+ *
+ * **This moves the caret, and it does so asynchronously.** `neuWindow.focus()`
+ * is a native call taking milliseconds, so `focusAt(null)` lands some way into
+ * whatever the caller went on to do - and so does the `windowFocus` the
+ * operating system sends when it activates the window again, which arrives
+ * whenever it arrives. Anything that cannot survive the caret moving under it
+ * must not depend on this having finished; awaiting the promise below is not
+ * enough, because the event is not ours. See formatBuffer's `cancellable`.
+ *
+ * The promise is returned rather than swallowed so a caller *can* wait, which
+ * some have reason to. Most have nothing after this and are right not to.
  */
 export function afterNativeDialog() {
-  claimKeyboard().catch((error) => log.warn("Could not take the keyboard back:", error));
+  return claimKeyboard().catch((error) => log.warn("Could not take the keyboard back:", error));
 }

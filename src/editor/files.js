@@ -1544,7 +1544,9 @@ async function saveBuffer(key, saveAs) {
   if (formatOnSave() && ipc.isConnected()) {
     if (activeBufferKey() === key) {
       try {
-        await formatBuffer();
+        // Not cancellable: this application moves the caret itself around a
+        // save, and a cancelled format here is a file written unformatted.
+        await formatBuffer({ cancellable: false });
       } catch (error) {
         log.warn("Not formatted before saving:", error);
       }

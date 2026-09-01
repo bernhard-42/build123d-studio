@@ -1517,11 +1517,31 @@ export function registerRunActions(target) {
  * that the keystroke and Format on Save are the same code path - including the
  * progress indication and the single undo stop the action wraps the edit in.
  * Two routes to one behaviour is how they come to differ.
+ *
+ * **The action is not used when the caller cannot afford to lose the result.**
+ * It carries a cancellation token tied to the editor's position and value, so
+ * anything that moves the caret while ruff is answering throws the formatting
+ * away - silently, because a cancelled format is a normal outcome and there is
+ * nothing to report. That is right for a keystroke: somebody who starts typing
+ * has said what they want. It is wrong for a save, where a caret moved by the
+ * application itself - the focus put back after the native chooser, or the
+ * windowFocus the operating system sends when it activates the window again -
+ * meant the first save of every new file wrote its text unformatted.
+ *
+ * @param {{cancellable?: boolean}} how `false` to format regardless of what the
+ *   caret does meanwhile, which is what a save needs
  */
-export async function formatBuffer() {
-  if (editor === null || editor === undefined || currentModel() === null) {
+export async function formatBuffer({ cancellable = true } = {}) {
+  const model = currentModel();
+  if (editor === null || editor === undefined || model === null) {
     return;
   }
+
+  if (!cancellable) {
+    await formatModelDirectly(model);
+    return;
+  }
+
   const action = editor.getAction("editor.action.formatDocument");
   if (action === null || action === undefined) {
     // The contribution is imported, so this cannot happen - and if an upgrade
@@ -1530,6 +1550,33 @@ export async function formatBuffer() {
     return;
   }
   await action.run();
+}
+
+/**
+ * Ask ruff and apply what comes back, with no token in the way.
+ *
+ * The same request the provider makes and the same edit it would return - see
+ * the formatting provider above - applied through pushEditOperations rather
+ * than through the action, so nothing between here and the model can decide the
+ * answer is no longer wanted.
+ *
+ * Undo stops around it, because the action's are what make a format one step
+ * rather than an edit welded to whatever was typed before it.
+ */
+async function formatModelDirectly(model) {
+  const source = model.getValue();
+  const reply = await ipc.request(
+    "editor.format",
+    { source, lineLength: formatLineLength() },
+    { timeout: FORMAT_TIMEOUT },
+  );
+  const edits = formatEdits(source, reply?.source, model.getFullModelRange());
+  if (edits.length === 0) {
+    return;
+  }
+  editor.pushUndoStop();
+  model.pushEditOperations([], edits, () => null);
+  editor.pushUndoStop();
 }
 
 /**

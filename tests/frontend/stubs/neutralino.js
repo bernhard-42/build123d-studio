@@ -34,6 +34,9 @@ const dirs = new Set(["/"]);
 /** Where the harness is told to answer a dialog from, one answer per call. */
 const dialogAnswers = [];
 
+// How long a native focus call takes; see window.focus below.
+let focusDelayMs = 0;
+
 // What this window's own process looks like to `ps`, and which other pids a
 // test says are windows of this application too. Recovery asks the operating
 // system which pids are live rather than reading a clock, so this is where a
@@ -95,6 +98,10 @@ export function wrote(path) {
 }
 
 /** Answer the next dialog with this, rather than with a cancel. */
+export function focusDelay(ms) {
+  focusDelayMs = ms;
+}
+
 export function answerDialogWith(value) {
   dialogAnswers.push(value);
 }
@@ -117,6 +124,7 @@ globalThis.__NEUTRALINO_STUB__ = {
   // the bug it was written for.
   paths: () => [...files.keys()],
   answerDialogWith: (value) => answerDialogWith(value),
+  focusDelay: (ms) => focusDelay(ms),
   exitNextSpawnWith: (code) => exitNextSpawnWith(code),
   emit: (name, detail) => emit(name, detail),
   // Stop answering, the way a half-open socket does.
@@ -186,6 +194,7 @@ export function reset() {
   dirs.clear();
   dirs.add("/");
   dialogAnswers.length = 0;
+  focusDelayMs = 0;
   alsoRunning.clear();
   processListingWorks = true;
   trashBroken = false;
@@ -617,6 +626,15 @@ export const window = {
   // native dialog took it.
   async focus() {
     record("focus", []);
+    // A real one is a call into the native side and takes milliseconds. Here it
+    // resolved in the same microtask, which hid a bug: afterNativeDialog is
+    // fire-and-forget, so what follows it - moving the caret back into the
+    // editor - lands *during* whatever the caller went on to do. With an
+    // instant focus it landed before instead, and a save that formats was
+    // never raced the way the real one is. See focusDelay().
+    if (focusDelayMs > 0) {
+      await new Promise((done) => setTimeout(done, focusDelayMs));
+    }
   },
   async hide() {
     record("hide", []);

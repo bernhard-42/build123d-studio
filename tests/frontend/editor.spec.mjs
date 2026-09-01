@@ -965,6 +965,83 @@ test.describe("formatting", () => {
     await expect.poll(() => editorText(page)).toContain("SAVED_FORMATTED = 1");
   });
 
+  test("a new file is formatted on its first save, not the second", async ({ page }) => {
+    // The save that opens a chooser, and the bug it hid. Reported from a real
+    // run: the file landed on disk exactly as typed, and pressing Cmd-S again
+    // formatted it - so ruff had run, the sidecar's log said so, and the write
+    // did not carry what it produced.
+    //
+    // The delay is the whole test. afterNativeDialog puts the caret back in the
+    // editor *after* awaiting a native focus call, and Monaco's format action
+    // cancels when the position moves while its provider is working. On a real
+    // machine that focus takes milliseconds and the caret lands mid-format; in
+    // this harness it used to resolve in the same microtask, so the caret moved
+    // before the format began and nothing ever raced. Written without the delay
+    // first, where it passed against the broken code.
+    const { sidecar } = await openApp(page, { formatOnSave: true });
+    sidecar.answer("editor.format", () => ({ source: "b = Box(1, 2, 3)\n" }));
+    await page.evaluate(() => globalThis.__NEUTRALINO_STUB__.focusDelay(30));
+
+    await page.locator("#btn-new").click();
+    await focusEditor(page);
+    await page.keyboard.type("b = Box(1,2,3)");
+
+    await page.evaluate(
+      (target) => globalThis.__NEUTRALINO_STUB__.answerDialogWith(target),
+      `${PROJECT}/fresh.py`,
+    );
+    await page.keyboard.press("Meta+s");
+
+    await expect
+      .poll(() =>
+        page.evaluate(
+          (p) => String(globalThis.__NEUTRALINO_STUB__.wrote(p) ?? ""),
+          `${PROJECT}/fresh.py`,
+        ),
+      )
+      .toContain("Box(1, 2, 3)");
+  });
+
+  test("the caret moving while ruff answers does not lose the formatting", async ({ page }) => {
+    // The property behind a reported bug: the first save of a new file wrote
+    // the text unformatted, and a second Cmd-S formatted it. ruff had run - the
+    // sidecar logged it - and the edits never reached the buffer.
+    //
+    // Monaco's format action carries a cancellation token tied to the editor's
+    // position and value, and the save path went through that action. Anything
+    // that moves the caret while the provider is working therefore throws the
+    // formatting away silently, and a save has several candidates: the caret
+    // being put back after the native chooser, or the windowFocus the operating
+    // system sends when it activates the window again.
+    //
+    // Held and released so the move happens *during* the request, which is the
+    // whole of the race and cannot be reached by timing alone.
+    const { sidecar } = await openApp(page, { formatOnSave: true });
+    sidecar.answer("editor.format", () => undefined);
+
+    await caretToEnd(page);
+    await page.keyboard.type("x = 1");
+    await page.keyboard.press("Meta+s");
+    await expect
+      .poll(() => sidecar.held.filter((frame) => frame.type === "editor.format").length)
+      .toBe(1);
+
+    // What the focus restoration does: move the caret. An arrow key is the
+    // smallest way to say it and needs nothing the harness does not have.
+    await page.keyboard.press("ArrowLeft");
+
+    sidecar.release("editor.format", { source: "FORMATTED_BY_RUFF = 1\n" });
+
+    await expect
+      .poll(() =>
+        page.evaluate(
+          (p) => String(globalThis.__NEUTRALINO_STUB__.wrote(p) ?? ""),
+          `${PROJECT}/part.py`,
+        ),
+      )
+      .toContain("FORMATTED_BY_RUFF = 1");
+  });
+
   test("and with it off, saving asks ruff nothing", async ({ page }) => {
     const { sidecar } = await openApp(page, { formatOnSave: false });
 
