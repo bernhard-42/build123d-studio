@@ -1,3 +1,7 @@
+import { clipboard } from "@neutralinojs/lib";
+
+import * as log from "../log.js";
+
 // The splash overlay is the only UI during first-run environment setup, which
 // downloads roughly 500 MB and can take a couple of minutes. It shows uv's own
 // output rather than a spinner, so a slow network looks like progress instead
@@ -10,6 +14,32 @@ const statusEl = () => document.getElementById("splash-status");
 const logEl = () => document.getElementById("splash-log");
 
 let lines = [];
+
+// Copying out of the splash, which the native menu cannot do for us.
+//
+// On macOS the Edit menu's `copy:` role is what delivers Cmd-C to a web view,
+// and the menu is installed after the environment is ready - so during the one
+// screen where something has gone wrong and the text on it is the whole of the
+// evidence, Cmd-C did nothing. Selecting worked; copying did not.
+//
+// Handled here rather than by installing a menu earlier, because the menu's
+// items act on an editor that does not exist yet at this point in startup.
+// Only while the splash is up, and only when something is selected, so it
+// cannot take the keystroke from anything else later.
+window.addEventListener("keydown", (event) => {
+  if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "c") {
+    return;
+  }
+  if (!splashVisible()) {
+    return;
+  }
+  const selected = String(window.getSelection() ?? "");
+  if (selected === "") {
+    return;
+  }
+  event.preventDefault();
+  clipboard.writeText(selected).catch((error) => log.warn("Could not copy:", error));
+});
 
 export function setStatus(text) {
   statusEl().textContent = text;
