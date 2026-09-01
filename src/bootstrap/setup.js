@@ -24,7 +24,7 @@ import {
   spliceRelease,
 } from "../pyproject.js";
 import { run, quote } from "../proc.js";
-import { appendLog, setStatus } from "./splash.js";
+import { acknowledge, appendLog, setStatus } from "./splash.js";
 import * as log from "../log.js";
 
 // Environment bootstrap.
@@ -217,7 +217,7 @@ async function runUv(args, envRoot, { onLine }) {
  * the sidecar exists, and the point is to have the verification finished and
  * cached by the time anything else asks for OCP.
  */
-async function verifyNativeLibraries(python) {
+async function verifyNativeLibraries(python, { changed = false } = {}) {
   setStatus(
     NL_OS === "Darwin"
       ? "macOS is verifying the OCP libraries — this happens once, and takes a minute…"
@@ -235,9 +235,29 @@ async function verifyNativeLibraries(python) {
   const seconds = ((Date.now() - started) / 1000).toFixed(1);
 
   if (code !== 0) {
-    // Not fatal: the import will simply be paid later, in the kernel.
-    log.warn(`Pre-loading OCP failed with exit code ${code}`);
-    appendLog(`Pre-loading OCP failed (exit ${code}); continuing anyway.`);
+    // Not fatal, and not silent either. It used to warn into the log and carry
+    // on, which was right when this only ever ran on a first start: a slow
+    // import would be paid later and nothing was wrong. It is the wrong answer
+    // after a package change, because the reason the import fails is usually
+    // that the change removed something - `uv sync` is exact, so pointing
+    // build123d at a checkout that does not declare cadquery-ocp uninstalls
+    // OCP - and what the user then sees is a kernel that says `dead`, with the
+    // traceback in a log file they have no reason to open.
+    //
+    // Still not fatal, because throwing here stops startup at the splash and
+    // Settings is where this gets fixed. Said plainly instead, and the splash
+    // waits to be dismissed so it cannot be missed.
+    log.error(`The environment cannot import what the application needs (exit ${code})`);
+    appendLog("");
+    appendLog("This environment cannot import OCP or build123d.");
+    appendLog("The Python backend will not start until that is fixed.");
+    if (changed) {
+      appendLog("");
+      appendLog("A package change removed something the application needs.");
+      appendLog("Settings -> Packages -> Restore puts the environment back.");
+    }
+    setStatus("The environment is incomplete - see above.");
+    await acknowledge();
     return;
   }
   log.info(`OCP verified in ${seconds}s`);
@@ -273,8 +293,25 @@ function runUvSync(args, envRoot, { onLine }, checkouts) {
  *
  * @returns {Promise<number>} exit code
  */
+/**
+ * @returns {Promise<{code: number, changed: boolean}>} whether uv moved anything
+ */
 async function syncSelection(envRoot, onLine) {
-  return runUvSync(["sync"], envRoot, { onLine }, await checkouts(envRoot));
+  // uv says so itself: "Installed 3 packages", "Uninstalled 1 package",
+  // "Prepared 2 packages" - against "Checked 77 packages", which is the
+  // no-op. Read from the output rather than diffed out of the lock, because
+  // what matters is whether the *installed* set moved, and a sync that only
+  // reconciles a venv to an unchanged lock still moves it.
+  let changed = false;
+  const code = await runUvSync(["sync"], envRoot, {
+    onLine: (line) => {
+      if (/^(Installed|Uninstalled|Prepared) /.test(line)) {
+        changed = true;
+      }
+      onLine(line);
+    },
+  }, await checkouts(envRoot));
+  return { code, changed };
 }
 
 /**
@@ -339,7 +376,7 @@ export async function ensureEnvironment() {
       : "Checking the Python environment…",
   );
 
-  let code = await syncSelection(envRoot, appendLog);
+  let { code, changed } = await syncSelection(envRoot, appendLog);
 
   // A line somebody added must not lock them out of the dialog that would fix
   // it. This runs before the window is usable, so one typo - or a git URL that
@@ -351,18 +388,18 @@ export async function ensureEnvironment() {
   // the text is still in Settings, and the emptied region is written back the
   // moment they press Apply.
   if (code !== 0) {
-    code = await retryWithout(envRoot, "user", {
+    ({ code, changed } = await retryWithout(envRoot, "user", {
       failed: "Could not build the environment with the additional packages.",
       dropped: "Starting without them - they are still in Settings, uncorrected.",
       status: "Retrying without the additional packages…",
-    });
+    }));
   }
   if (code !== 0) {
-    code = await retryWithout(envRoot, "sources", {
+    ({ code, changed } = await retryWithout(envRoot, "sources", {
       failed: "Could not build the environment with the selected package sources.",
       dropped: "Reverting to PyPI for all packages.",
       status: "Reverting to the default package sources…",
-    });
+    }));
   }
 
   if (code !== 0) {
@@ -372,11 +409,13 @@ export async function ensureEnvironment() {
     throw new Error(`uv sync reported success but ${python} is missing`);
   }
 
-  // Only when the environment was just built - which also covers the user
-  // deleting it, since firstRun is derived from the interpreter being absent
-  // rather than from any stored flag.
-  if (firstRun) {
-    await verifyNativeLibraries(python);
+  // On a first start, and after any sync that moved a package. It used to be
+  // the first start alone, on the grounds that this only pre-pays a slow
+  // import - but it is also the only thing that asks whether the environment
+  // can still run the application, and a package change is exactly when that
+  // stops being true. An ordinary start where uv changed nothing skips it.
+  if (firstRun || changed) {
+    await verifyNativeLibraries(python, { changed: changed && !firstRun });
   }
 
   return { envRoot, python, firstRun };
@@ -398,7 +437,7 @@ async function retryWithout(envRoot, region, { failed, dropped, status }) {
     ? (groupEntries(text, "user")?.length ? replaceGroup(text, "user", []) : null)
     : (Object.keys(sourceEntries(text)).length > 0 ? replaceSources(text, {}) : null);
   if (relaxed === null) {
-    return 1;
+    return { code: 1, changed: false };
   }
 
   log.warn(`Sync failed; retrying with the ${region} region emptied`);
@@ -514,7 +553,7 @@ export async function reinstallPackage(name, onLine) {
 export async function applyPackageSources(selection, onLine) {
   const { path: envRoot } = await resolveEnvRoot();
   await stageProjectFiles(envRoot);
-  const code = await syncSelection(envRoot, onLine);
+  const { code } = await syncSelection(envRoot, onLine);
   if (code !== 0) {
     throw new Error(`uv failed with exit code ${code}`);
   }
