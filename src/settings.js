@@ -10,9 +10,15 @@ import {
   packageSources,
   saveCustomPackages,
   saveLocalPaths,
+  selectionFromSources,
   savePackageSources,
 } from "./packages.js";
-import { findProblems, localSourceProblem, parseRequirements } from "./requirements.js";
+import {
+  findProblems,
+  localSourceProblem,
+  parseRequirements,
+  requirementLines,
+} from "./requirements.js";
 import {
   COMMANDS,
   chordFromEvent,
@@ -26,7 +32,10 @@ import { applyCellActions, rebindRunActions } from "./editor/monaco.js";
 import { refreshMenu } from "./menubar.js";
 import {
   applyPackageSources,
+  applyProjectSettings,
+  readProjectFile,
   reinstallPackage,
+  restoreEnvironment,
   upgradePackages,
 } from "./bootstrap/setup.js";
 import {
@@ -60,6 +69,7 @@ import { os } from "@neutralinojs/lib";
 import * as ipc from "./ipc.js";
 import * as log from "./log.js";
 import { consoleLevel, consolePath, setConsoleLevel } from "./log.js";
+import { askTwoWay } from "./confirm.js";
 import { escapeHtml } from "./escape.js";
 import { afterNativeDialog, bounceActivation } from "./nativedialog.js";
 import { closeOnBackdropClick } from "./backdrop.js";
@@ -385,7 +395,20 @@ function readViewerControls() {
 export async function showSettings({ tab = null } = {}) {
   close();
 
-  const selection = packageSources();
+  // The environment's pyproject.toml is the truth, so the dialog is filled from
+  // it rather than from settings.json - which is now a mirror, written on Apply
+  // and read only to seed an environment that does not exist yet.
+  const project = await readProjectFile();
+  const fromFile = project === null ? null : selectionFromSources(project.sources);
+  const selection = fromFile === null ? packageSources() : fromFile.selection;
+  const pathOf = (name) =>
+    fromFile === null ? localPathFor(name) : (fromFile.localPaths[name] ?? "");
+  // Put each line back together from the group and its source, or a path the
+  // user typed comes back as the bare package name it was stored under.
+  const extras = project?.user === null || project === null
+    ? customPackages()
+    : requirementLines(project.user, project.sources).join("\n");
+  const unreadable = project !== null && project.user === null;
   const gitPresent = await hasGit();
   // The stored values over the schema's defaults, so a control that has never
   // been touched shows what the viewer will actually do rather than an empty
@@ -413,10 +436,26 @@ export async function showSettings({ tab = null } = {}) {
       <div class="info-body">
         <section class="settings-panel" data-panel="packages">
           <p class="info-note">
-            Where build123d comes from. Everything else the application declares is
-            fixed to the versions this release was built and tested against.
+            Where build123d and the viewer come from. These write
+            <code>[tool.uv.sources]</code> in the environment's
+            <code>pyproject.toml</code>, which is yours to edit — see Restore at the
+            foot of this tab.
           </p>
-          ${PACKAGES.map((p) => packageRow(p, selection, gitPresent, localPathFor(p.name))).join("")}
+          ${PACKAGES.map((p) => packageRow(p, selection, gitPresent, pathOf(p.name))).join("")}
+
+          <p class="info-note settings-problem" id="settings-unreadable" ${""}hidden>
+            The environment's <code>pyproject.toml</code> has been edited in a way this
+            dialog cannot read, so what it shows may not be what uv sees. Edit that file
+            directly, or press Restore below.
+          </p>
+
+          <h2 class="info-heading">What this release declares</h2>
+          <p class="info-note">
+            The <code>app</code> and <code>core_cad</code> groups, as the environment
+            has them. Installing a new build123d Studio replaces both; nothing else in
+            that file is touched.
+          </p>
+          <pre class="settings-declared" id="settings-declared"></pre>
 
           <h2 class="info-heading">Additional packages</h2>
           <p class="info-note">
@@ -426,9 +465,14 @@ export async function showSettings({ tab = null } = {}) {
             folder or repository. Nothing here is checked for you beyond the two
             rules below; uv reports anything else, and reports it better.
           </p>
+          <p class="info-note">
+            They become the <code>user</code> group in the environment's
+            <code>pyproject.toml</code>, and are written when you press Apply — not at
+            the next start, so an edit you make to that file by hand is kept.
+          </p>
           <textarea class="settings-template" id="settings-custom" rows="6" spellcheck="false"
-                    placeholder="ocp-widgets&#10;/Users/me/src/mylib&#10;git+https://github.com/someone/other@main"
-          >${escapeHtml(customPackages())}</textarea>
+                    placeholder="mylib&#10;/Users/me/src/mylib&#10;git+https://github.com/someone/other@main"
+          >${escapeHtml(extras)}</textarea>
           <p class="info-note" id="settings-custom-problems" hidden></p>
           <button class="settings-btn settings-action" id="settings-install">
             Install packages
@@ -436,14 +480,24 @@ export async function showSettings({ tab = null } = {}) {
 
           <h2 class="info-heading">Upgrade</h2>
           <p class="info-note">
-            Move every package as far as its own version range allows, then
-            install the result. build123d can move, and so can anything above
-            with a range of its own; whatever is pinned to an exact version
-            cannot, which is what keeps the viewer's packages where they are.
-            The kernel restarts afterwards, because the running one has already
-            imported the versions being replaced.
+            Move every package this application declares with a range, plus
+            anything you added above, as far as that range allows. The editor
+            and console libraries move within their patch level, build123d to
+            any newer release, the viewer packages within their minor. What
+            build123d brings in with it is not touched. The kernel restarts
+            afterwards, because the running one has already imported the
+            versions being replaced.
           </p>
           <button class="settings-btn" id="settings-upgrade">Upgrade packages</button>
+
+          <h2 class="info-heading">Restore</h2>
+          <p class="info-note">
+            Put the environment's <code>pyproject.toml</code> and <code>uv.lock</code> back
+            to what this release ships, and install exactly that — build123d and
+            ocp-viewer-core from PyPI, the additional packages cleared, and any edits you
+            made to those files gone. The same environment a first start builds.
+          </p>
+          <button class="settings-btn" id="settings-restore">Restore factory settings</button>
         </section>
 
         <section class="settings-panel" data-panel="newfile" hidden>
@@ -638,6 +692,18 @@ ${VIEWER_GROUPS.map(
     document.getElementById(`tab-${tab.id}`).addEventListener("click", () => showTab(tab.id));
   }
   showTab(tab === null ? rememberedTab() : tab);
+
+  if (unreadable) {
+    document.getElementById("settings-unreadable").hidden = false;
+  }
+
+  // Read-only, and built from nodes: these strings come out of a file the user
+  // can put anything in, and this pane is not worth an escaping mistake.
+  const declared = document.getElementById("settings-declared");
+  const shown = [...(project?.app ?? []), ...(project?.coreCad ?? [])];
+  declared.textContent = shown.length === 0
+    ? "Not readable from the environment's pyproject.toml."
+    : shown.join("\n");
 
   // The folder picker for a local checkout. Choosing one also selects the Local
   // radio, because picking a folder and then finding it had no effect is the
@@ -974,6 +1040,15 @@ ${VIEWER_GROUPS.map(
     await saveLocalPaths(paths);
     await saveCustomPackages(custom);
 
+    // And into the environment, which is where uv reads them. settings.json is
+    // the mirror; pyproject.toml is the file. Writing here rather than at the
+    // next start is what lets somebody edit that file and keep the edit.
+    try {
+      await applyProjectSettings(chosen, custom);
+    } catch (error) {
+      log.warn("Could not write the environment's pyproject.toml:", error);
+    }
+
     // A command back on its shipped chords is stored as *absent* rather than as
     // a copy of the defaults, so a later release that moves a default moves it
     // for everyone who never changed it.
@@ -1035,5 +1110,27 @@ ${VIEWER_GROUPS.map(
     if (await saveEverything()) {
       await upgradeAndResync();
     }
+  });
+
+  document.getElementById("settings-restore").addEventListener("click", async () => {
+    // Asked about, because it discards work: an edited pyproject.toml, a local
+    // checkout somebody selected, the packages they added. Everything else in
+    // this dialog is recoverable by doing it again; this one is not.
+    const sure = await askTwoWay({
+      title: "Restore factory settings?",
+      detail:
+        "The environment's pyproject.toml and uv.lock go back to what this release "
+        + "ships. Your additional packages are cleared, build123d and ocp-viewer-core "
+        + "go back to PyPI, and any edits to those two files are lost.",
+      confirm: "Restore",
+    });
+    if (!sure) {
+      return;
+    }
+    await runEnvironmentAction({
+      status: "Restoring the environment…",
+      done: "Environment restored.",
+      work: () => restoreEnvironment(appendLog),
+    });
   });
 }

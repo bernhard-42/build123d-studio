@@ -19,7 +19,12 @@ import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
-const FILES = ["package.json", "neutralino.config.json"];
+// The version lives in three files that must agree. package.json is what the
+// About dialog reads, neutralino.config.json is what the CLI stamps into the
+// packaged binary's metadata, and runtime/pyproject.toml carries it so the
+// application can tell that an environment was built by an earlier release -
+// see spliceRelease. The third is TOML, so the needle differs; see write().
+const FILES = ["package.json", "neutralino.config.json", "runtime/pyproject.toml"];
 const SEMVER = /^\d+\.\d+\.\d+$/;
 
 /** The next version, given the current one and which part to move. */
@@ -47,16 +52,24 @@ function currentVersion() {
   return manifest.version;
 }
 
-/** Replace the one `"version": "x.y.z"` line, and refuse if it is not there. */
+/**
+ * Replace the one version line, and refuse if it is not there.
+ *
+ * JSON writes `"version": "x"`, TOML writes `version = "x"`. Refusing unless
+ * there is exactly one match is what makes the difference safe to encode as a
+ * suffix check: a needle that matched nothing would leave that file behind at
+ * the old version, silently, which is the whole failure this guards against.
+ */
 function write(file, from, to) {
   const path = join(ROOT, file);
   const text = readFileSync(path, "utf8");
-  const needle = `"version": "${from}"`;
+  const toml = file.endsWith(".toml");
+  const needle = toml ? `version = "${from}"` : `"version": "${from}"`;
   const found = text.split(needle).length - 1;
   if (found !== 1) {
     throw new Error(`${file}: expected one ${needle}, found ${found}`);
   }
-  writeFileSync(path, text.replace(needle, `"version": "${to}"`));
+  writeFileSync(path, text.replace(needle, toml ? `version = "${to}"` : `"version": "${to}"`));
 }
 
 /** Run only when invoked, so importing this for its arithmetic costs nothing. */

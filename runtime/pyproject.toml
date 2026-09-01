@@ -1,33 +1,68 @@
+# Written by build123d Studio, and yours to edit - with two exceptions.
+#
+# Settings -> Packages rewrites [tool.uv.sources] and the "user" group when you
+# press Apply. Installing a new build123d Studio replaces the "app" and
+# "core_cad" groups. Everything else here is kept, including anything you add.
+#
+# To add a package by hand:  uv add --group user <package>
+#
+# Settings -> Packages -> Restore puts this file, and uv.lock beside it, back to
+# what this release ships.
+
 [project]
 name = "build123d-studio-runtime"
-version = "0.1.0"
+# The build123d Studio release this file came from. A different one is how the
+# application notices that the groups below are out of date.
+version = "0.5.1"
 description = "Encapsulated Python environment for the build123d-studio application"
 requires-python = "==3.14.*"
 
-dependencies = [
-    # --- frozen: moves only when the application is rebuilt and retested ---
-    #
-    # Brings ipykernel, jupyter_client, prompt_toolkit, pyzmq and ipython -
-    # bumping this one moves them all, at versions its author reconciled.
-    "jupyter_console==6.6.3",
-    "orjson==3.11.9",
-    "websockets==16.1.1",
-    "pywinpty==3.0.5; sys_platform == 'win32'",
+dependencies = []
+
+[dependency-groups]
+
+# --- Managed by the app: replaced when a new build123d Studio is installed ---
+#
+# What the application itself imports. The first two have no versions to choose
+# between; the rest move within their patch level when you press Upgrade.
+app = [
     "basedpyright==1.39.9",
     "ruff==0.16.3",
 
-    # --- floating: moved by "Upgrade packages", within this range ---
-    #
-    # The shared show pipeline. ocp-tessellate arrives under it. A range rather
-    # than a pin while it settles: its patches reach users through the button
-    # rather than through a release of this application.
-    # The floor moves with what this application imports: 1.0.2 is where
-    # ocp_viewer_core.selectors arrives, and the kernel package fails at import
-    # without it - a missing module rather than a missing feature.
-    "ocp-viewer-core>=1.0.2,<1.1.0",
-    "build123d>=0.11.1",
+    "jupyter_console>=6.6.3, <6.7",
+    "jupyter-client>=8.9.1, <8.10",
+    "pyzmq>=27.1.0, <27.2",
+    "websockets>=16.1.1, <16.2",
+    "pywinpty>=3.0.5, <3.1; sys_platform == 'win32'",
+    "orjson>=3.11.9, <3.12",
+    "prompt_toolkit>=3.0.53, <3.1.0",
+    "ipykernel>=7.3.0, <7.4.0",
+    "ipython>=9.15.0, <9.16",
+    "traitlets>=5.15.1, <5.16",
 ]
+
+# --- Managed by the app: replaced when a new build123d Studio is installed ---
+#
+# What you program against. Settings -> Packages chooses where these come from;
+# Upgrade moves them as far as the ranges here allow.
+core_cad = [
+    "ocp-viewer-core>=1.0.4,<1.1.0",
+    "build123d>=0.11.1",
+
+    # What ocp-viewer-core brings with it, named so Upgrade reaches them - a fix
+    # in the tessellator is a fix in what the viewer draws, and it can arrive
+    # without ocp-viewer-core moving at all. No versions: ocp-viewer-core owns
+    # their ranges through its own metadata, and uv would intersect a second
+    # opinion here with that one.
+    "ocp-tessellate",
+    "pillow",
+    "threejs-materials",
+]
+
+# --- Yours: the "Additional packages" field in Settings writes here ---
+user = []
 
 # This project exists only to pin an environment - there is no package to build.
 [tool.uv]
 package = false
+default-groups = ["app", "core_cad", "user"]

@@ -8,27 +8,29 @@
 
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
+import { readFileSync } from "node:fs";
 
 import {
   findProblems,
-  insertDependencies,
   localSourceProblem,
   normalizeName,
   parseRequirements,
   editableBuildFlags,
+  upgradeFlags,
   renderRequirements,
+  requirementLines,
   tomlString,
 } from "../../src/requirements.js";
 
 const DECLARED = ["ocp_vscode", "ipykernel", "build123d", "basedpyright"];
 
 test("a PyPI requirement, with or without a range", () => {
-  const [plain, ranged] = parseRequirements("ocp-widgets\nocp-widgets-extra>=0.3,<1.0");
-  assert.equal(plain.name, "ocp-widgets");
-  assert.equal(plain.requirement, "ocp-widgets");
+  const [plain, ranged] = parseRequirements("mylib\nmylib-extra>=0.3,<1.0");
+  assert.equal(plain.name, "mylib");
+  assert.equal(plain.requirement, "mylib");
   assert.equal(plain.source, null);
-  assert.equal(ranged.name, "ocp-widgets-extra");
-  assert.equal(ranged.requirement, "ocp-widgets-extra>=0.3,<1.0");
+  assert.equal(ranged.name, "mylib-extra");
+  assert.equal(ranged.requirement, "mylib-extra>=0.3,<1.0");
   assert.equal(ranged.source, null);
 });
 
@@ -153,17 +155,17 @@ test("a backslash is escaped, so a Windows path cannot end the string", () => {
 
 test("rendering produces dependency lines and source entries", () => {
   const entries = parseRequirements(
-    ["ocp-widgets>=0.3", "/Users/me/src/mylib", "git+https://github.com/someone/other@main"].join("\n"),
+    ["mylib>=0.3", "/Users/me/src/otherlib", "git+https://github.com/someone/third@main"].join("\n"),
   );
   const { dependencies, sources } = renderRequirements(entries);
   assert.deepEqual(dependencies, [
-    '    "ocp-widgets>=0.3",',
-    '    "mylib",',
-    '    "other",',
+    '    "mylib>=0.3",',
+    '    "otherlib",',
+    '    "third",',
   ]);
   assert.deepEqual(sources, [
-    'mylib = { path = "/Users/me/src/mylib", editable = true }',
-    'other = { git = "git+https://github.com/someone/other", rev = "main" }',
+    'otherlib = { path = "/Users/me/src/otherlib", editable = true }',
+    'third = { git = "git+https://github.com/someone/third", rev = "main" }',
   ]);
 });
 
@@ -173,58 +175,7 @@ test("an unusable line contributes nothing to the file", () => {
   assert.deepEqual(sources, []);
 });
 
-// --- where the lines go --------------------------------------------------
-
-// The shipped file, shortened but with the shape that matters: a `[tool.uv]`
-// table *after* the dependencies array, so the array's `]` is not the last one.
-const PYPROJECT = `[project]
-name = "build123d-studio-runtime"
-requires-python = "==3.14.*"
-
-dependencies = [
-    # --- frozen: moves only when the application is rebuilt and retested ---
-    "ocp_vscode==4.0.1",
-    "pywinpty==3.0.5; sys_platform == 'win32'",
-
-    # --- floating: moved by "Upgrade packages", within this range ---
-    "build123d>=0.11.1",
-]
-
-# This project exists only to pin an environment - there is no package to build.
-[tool.uv]
-package = false
-`;
-
-test("lines land inside the dependencies array, not in [tool.uv]", () => {
-  // The bug this replaces: inserting at the file's last "]" put the packages
-  // inside `[tool.uv`, and uv refused to parse the file at all.
-  const out = insertDependencies(PYPROJECT, ['    "mylib",']);
-  assert.match(out, /"build123d>=0\.11\.1",\n {4}"mylib",\n\]/);
-  assert.match(out, /\n\[tool\.uv\]\npackage = false\n$/, "[tool.uv] must be intact");
-});
-
-test("a bracket inside a string does not end the array early", () => {
-  const tricky = 'dependencies = [\n    "a; extra == \'x]\'",\n]\n\n[tool.uv]\n';
-  const out = insertDependencies(tricky, ['    "mylib",']);
-  assert.match(out, /"a; extra == 'x\]'",\n {4}"mylib",\n\]/);
-});
-
-test("a bracket inside a comment does not end the array early", () => {
-  const tricky = 'dependencies = [\n    # a ] in a comment\n    "a",\n]\n\n[tool.uv]\n';
-  const out = insertDependencies(tricky, ['    "mylib",']);
-  assert.match(out, /"a",\n {4}"mylib",\n\]/);
-});
-
-test("nothing to insert leaves the file untouched", () => {
-  assert.equal(insertDependencies(PYPROJECT, []), PYPROJECT);
-});
-
-test("a file with no dependencies array is refused rather than mangled", () => {
-  // The caller has to treat null as "do not write", because writing a file we
-  // could not understand is how the array ended up inside [tool.uv].
-  assert.equal(insertDependencies("[project]\nname = \"x\"\n", ['    "mylib",']), null);
-  assert.equal(insertDependencies("dependencies = [\n    \"a\",\n", ['    "x",']), null);
-});
+// --- names and paths ------------------------------------------------------
 
 test("normalizeName follows PEP 503", () => {
   assert.equal(normalizeName("OCP_Tessellate"), "ocp-tessellate");
@@ -341,4 +292,118 @@ test("each checkout is named on its own, because the setting is per package", ()
     "--config-settings-package",
     "cadquery:editable_mode=compat",
   ]);
+});
+
+// --- what an upgrade is allowed to move ----------------------------------
+
+test("upgradeFlags names each package for uv", () => {
+  assert.deepEqual(upgradeFlags(["ocp-tessellate", "pillow"]), [
+    "--upgrade-package", "ocp-tessellate",
+    "--upgrade-package", "pillow",
+  ]);
+});
+
+test("nothing to upgrade adds nothing to the command line", () => {
+  assert.deepEqual(upgradeFlags([]), []);
+});
+
+// --- everything ocp-viewer-core needs can be upgraded ---------------------
+//
+// The viewer stack is declared in the `core_cad` group so that
+// --upgrade-group reaches it. That is a hand-kept list, and a hand-kept list
+// goes stale in silence: add a dependency to ocp-viewer-core and the button
+// that exists to deliver its patches simply stops reaching it. This reads the
+// shipped lock and says so instead.
+
+function lockedDependenciesOf(lock, pkg) {
+  const block = lock
+    .split("[[package]]")
+    .find((section) => section.includes(`\nname = "${pkg}"\n`));
+  assert.ok(block !== undefined, `${pkg} is not in the lock`);
+  const deps = /\ndependencies = \[([\s\S]*?)\]\n/.exec(block);
+  return deps === null ? [] : [...deps[1].matchAll(/name = "([^"]+)"/g)].map((m) => m[1]);
+}
+
+test("every dependency of ocp-viewer-core is declared, so an upgrade reaches it", () => {
+  const lock = readFileSync(new URL("../../runtime/uv.lock", import.meta.url), "utf8");
+  const pyproject = readFileSync(new URL("../../runtime/pyproject.toml", import.meta.url), "utf8");
+
+  for (const dependency of lockedDependenciesOf(lock, "ocp-viewer-core")) {
+    // Declared with a range, bare, or pinned exactly - the last being reachable
+    // by being deliberately immovable rather than by being upgradable.
+    const declared = new RegExp(`^\\s*"${dependency}(?:[><=~,! ].*)?",?\\s*$`, "m").test(pyproject);
+    assert.ok(
+      declared,
+      `${dependency} is a dependency of ocp-viewer-core but is declared nowhere in `
+        + "runtime/pyproject.toml, so no upgrade can ever reach it",
+    );
+  }
+});
+
+// --- reading the field back out of the file --------------------------------
+//
+// A line is stored as two things - a requirement in the group and a source in
+// [tool.uv.sources] - so showing the field again means putting them back
+// together. Getting this wrong replaced a path somebody typed with a bare
+// package name, and the next Apply would have written that name over their
+// checkout.
+
+test("a local checkout comes back as the path that was typed", () => {
+  const lines = requirementLines(["cadquery"], {
+    cadquery: '{ path = "/Users/bernhard/Development/CAD/cadquery", editable = true }',
+  });
+  assert.deepEqual(lines, ["/Users/bernhard/Development/CAD/cadquery"]);
+});
+
+test("a git entry comes back with its ref", () => {
+  assert.deepEqual(
+    requirementLines(["mylib"], { mylib: '{ git = "git+https://github.com/someone/mylib", rev = "main" }' }),
+    ["git+https://github.com/someone/mylib@main"],
+  );
+  assert.deepEqual(
+    requirementLines(["mylib"], { mylib: '{ git = "git+https://github.com/someone/mylib" }' }),
+    ["git+https://github.com/someone/mylib"],
+  );
+});
+
+test("a plain requirement is left exactly as written", () => {
+  assert.deepEqual(requirementLines(["mylib>=0.3", "numpy"], {}), ["mylib>=0.3", "numpy"]);
+});
+
+test("the `name @ url` form keeps its own spelling", () => {
+  const line = "mylib @ git+https://github.com/x/python-lib";
+  assert.deepEqual(requirementLines([line], {}), [line]);
+});
+
+test("a source belonging to another package is not borrowed", () => {
+  // build123d's own checkout lives in the same table. A user package called
+  // something else must not come back wearing its path.
+  assert.deepEqual(
+    requirementLines(["cadquery"], { build123d: '{ path = "/src/build123d", editable = true }' }),
+    ["cadquery"],
+  );
+});
+
+test("a Windows path comes back unescaped", () => {
+  assert.deepEqual(
+    requirementLines(["mylib"], { mylib: '{ path = "C:\\\\src\\\\mylib", editable = true }' }),
+    ["C:\\src\\mylib"],
+  );
+});
+
+test("round-tripping a mixed field changes nothing", () => {
+  const typed = [
+    "mylib>=0.3",
+    "/Users/me/src/otherlib",
+    "git+https://github.com/someone/third@main",
+  ];
+  const entries = parseRequirements(typed.join("\n"));
+  const { names } = renderRequirements(entries);
+  const sources = Object.fromEntries(entries.filter((e) => e.source !== null).map((e) => [
+    e.name,
+    `{ ${Object.entries(e.source).map(([k, v]) =>
+      typeof v === "boolean" ? `${k} = ${v}` : `${k} = ${tomlString(v)}`).join(", ")} }`,
+  ]));
+  void names;
+  assert.deepEqual(requirementLines(entries.map((e) => e.requirement), sources), typed);
 });

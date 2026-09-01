@@ -417,3 +417,106 @@ test.describe("what a package change tells the language server", () => {
     expect(asked(sidecar, "editor.restartLanguageServer")).toBe(0);
   });
 });
+
+// --- the environment's pyproject.toml is what the dialog shows -------------
+//
+// The file is the user's now: it is written when an environment is built and
+// again by Apply, and never on a start. So the dialog has to read it, or it
+// would show settings.json's idea of the world over a file somebody has edited
+// - which is the exact confusion this whole change exists to end.
+
+/** Put a pyproject.toml in front of the dialog before it opens. */
+async function withProjectFile(page, file) {
+  await page.evaluate((next) => globalThis.__HARNESS_PROJECT__.set(next), file);
+}
+
+async function projectWrites(page) {
+  return page.evaluate(() => globalThis.__HARNESS_PROJECT_WRITES__ ?? []);
+}
+
+test.describe("Settings reads the environment's pyproject.toml", () => {
+  test("the additional packages shown are the ones in the file", async ({ page }) => {
+    await open(page, { files: FILES, settings: { workspace: WORKSPACE, customPackages: "stale" } });
+    await withProjectFile(page, {
+      user: ["cadquery", "mylib>=0.3"],
+      app: ["ruff==0.16.3"],
+      coreCad: ["build123d>=0.11.1"],
+      sources: {},
+    });
+    await page.locator("#btn-settings").click();
+
+    // settings.json says "stale"; the file says otherwise, and the file wins.
+    await expect(page.locator("#settings-custom")).toHaveValue("cadquery\nmylib>=0.3");
+  });
+
+  test("a local checkout in the file lights the Local radio and shows its folder", async ({ page }) => {
+    await open(page, { files: FILES, settings: { workspace: WORKSPACE } });
+    await withProjectFile(page, {
+      user: [],
+      app: [],
+      coreCad: [],
+      sources: { build123d: '{ path = "/Users/me/src/build123d", editable = true }' },
+    });
+    await page.locator("#btn-settings").click();
+
+    await expect(page.locator('input[name="src-build123d"][value="local"]')).toBeChecked();
+    await expect(page.locator("#local-build123d")).toHaveValue("/Users/me/src/build123d");
+  });
+
+  test("what the release declares is shown, and not as something to type in", async ({ page }) => {
+    await open(page, { files: FILES, settings: { workspace: WORKSPACE } });
+    await withProjectFile(page, {
+      user: [],
+      app: ["basedpyright==1.39.9"],
+      coreCad: ["build123d>=0.11.1"],
+      sources: {},
+    });
+    await page.locator("#btn-settings").click();
+
+    const declared = page.locator("#settings-declared");
+    await expect(declared).toContainText("basedpyright==1.39.9");
+    await expect(declared).toContainText("build123d>=0.11.1");
+    expect(await declared.evaluate((el) => el.tagName)).toBe("PRE");
+  });
+
+  test("a file the dialog cannot read says so rather than showing stale values", async ({ page }) => {
+    await open(page, { files: FILES, settings: { workspace: WORKSPACE } });
+    // No `user` group at all - a file somebody edited past what this can follow.
+    await withProjectFile(page, { user: null, app: null, coreCad: null, sources: {} });
+    await page.locator("#btn-settings").click();
+
+    await expect(page.locator("#settings-unreadable")).toBeVisible();
+  });
+
+  test("Apply writes the two regions it owns, and runs no uv", async ({ page }) => {
+    await openSettings(page);
+    await page.locator("#settings-custom").fill("cadquery");
+    await page.locator("#settings-apply").click();
+
+    await expect(page.locator("#settings-apply")).toBeHidden();
+    const writes = await projectWrites(page);
+    expect(writes.length, "Apply did not write the environment's pyproject.toml").toBe(1);
+    expect(writes[0].custom).toBe("cadquery");
+    expect(await environmentCalls(page), "Apply ran uv").toEqual([]);
+  });
+
+  test("a local checkout comes back as the path that was typed", async ({ page }) => {
+    // Stored as `cadquery` in the group plus a path source, so showing the
+    // field again means putting the two halves back together. It came back as
+    // the bare package name, and the next Apply would have written that over
+    // the checkout.
+    await open(page, { files: FILES, settings: { workspace: WORKSPACE } });
+    await withProjectFile(page, {
+      user: ["cadquery"],
+      app: [],
+      coreCad: [],
+      sources: {
+        cadquery: '{ path = "/Users/bernhard/Development/CAD/cadquery", editable = true }',
+      },
+    });
+    await page.locator("#btn-settings").click();
+
+    await expect(page.locator("#settings-custom"))
+      .toHaveValue("/Users/bernhard/Development/CAD/cadquery");
+  });
+});

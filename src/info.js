@@ -147,8 +147,10 @@ async function gather() {
   sections.push({
     title: "Python environment",
     note:
-      "Delete this folder to force a clean rebuild on the next start. " +
-      "It is not removed when the application is deleted.",
+      "Delete uv.lock inside this folder to put the versions this release "
+      + "shipped back at the next start; delete the whole folder to rebuild "
+      + "everything, which downloads again. It is not removed when the "
+      + "application is deleted.",
     rows: [
       row("Location", envRoot),
       // Only when something redirected it. A report that says the environment

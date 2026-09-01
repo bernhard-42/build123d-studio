@@ -1,9 +1,5 @@
-import { filesystem } from "@neutralinojs/lib";
-
-import { appDir } from "./bootstrap/envroot.js";
 import { getSetting, setSetting } from "./store.js";
 import {
-  insertDependencies,
   parseRequirements,
   renderRequirements,
   tomlString,
@@ -99,16 +95,6 @@ export function isDefaultSelection(selection = sources) {
   return PACKAGES.every((p) => selection[p.name] === PYPI);
 }
 
-/**
- * Does the shipped uv.lock still describe this environment?
- *
- * Only when nothing has been redirected and nothing has been added. Anything
- * else means uv has to resolve, so `--frozen` would be wrong - it would install
- * the tested combination and quietly ignore what the user asked for.
- */
-export function shippedLockApplies(selection = sources, custom = extras) {
-  return isDefaultSelection(selection) && parseRequirements(custom).length === 0;
-}
 
 /**
  * Is a git binary available?
@@ -194,65 +180,116 @@ function chosenLocally(selection, name) {
 }
 
 /**
- * The pyproject.toml to stage, given the selection.
+ * The requirement strings for the `user` group, from the additional-packages
+ * field.
  *
- * The shipped file is used verbatim when everything is on PyPI, so the common
- * case keeps the exact lock that was tested. Otherwise a [tool.uv.sources]
- * section is appended, which is uv's own mechanism for redirecting a dependency
- * without touching its declaration.
+ * A line the user has mistyped contributes nothing, exactly as it contributes
+ * nothing to what uv is asked to install. findProblems is what tells them why;
+ * this only has to be sure a broken line cannot reach the file.
  */
-export async function renderPyproject(selection = sources, extras = customPackages()) {
-  const base = await filesystem.readFile(`${await appDir()}/runtime/pyproject.toml`);
-  const entries = parseRequirements(extras);
-  const { dependencies, sources: extraSources } = renderRequirements(entries);
+export function userGroupEntries(extras = customPackages()) {
+  return parseRequirements(extras)
+    .filter((entry) => entry.error === null)
+    .map((entry) => entry.requirement);
+}
 
-  const ourSources = [];
+/**
+ * What [tool.uv.sources] should say, as package -> inline table.
+ *
+ * Both halves of it: the two packages with a source picker, and any entry in
+ * the additional-packages field that named a path or a git URL rather than a
+ * plain requirement.
+ */
+export function projectSources(selection = sources, extras = customPackages()) {
+  const entries = {};
+
   for (const p of PACKAGES) {
     if (selection[p.name] === GITHUB) {
-      ourSources.push(
-        `${p.name} = { git = ${tomlString(p.repository)}, branch = ${tomlString(p.branch)} }`,
-      );
+      entries[p.name] = `{ git = ${tomlString(p.repository)}, branch = ${tomlString(p.branch)} }`;
       continue;
     }
     if (chosenLocally(selection, p.name)) {
       // Editable: a local checkout is a working copy, and the whole point of
-      // choosing one is that what you edit is what runs. Re-install is still
-      // there for the times metadata changes rather than code.
-      const path = localPathFor(p.name);
-      ourSources.push(`${p.name} = { path = ${tomlString(path)}, editable = true }`);
+      // choosing one is that what you edit is what runs.
+      entries[p.name] = `{ path = ${tomlString(localPathFor(p.name))}, editable = true }`;
     }
   }
 
-  if (dependencies.length === 0 && ourSources.length === 0 && extraSources.length === 0) {
-    // The shipped file verbatim, which is what makes `uv sync --frozen` install
-    // exactly the combination this release was tested with.
-    return base;
+  for (const entry of parseRequirements(extras)) {
+    if (entry.error !== null || entry.source === null) {
+      continue;
+    }
+    const fields = Object.entries(entry.source)
+      .map(([key, value]) =>
+        // A TOML boolean is bare; only strings are quoted. `editable = "true"`
+        // is a string and uv rejects it.
+        typeof value === "boolean" ? `${key} = ${value}` : `${key} = ${tomlString(value)}`,
+      )
+      .join(", ");
+    entries[entry.name] = `{ ${fields} }`;
   }
 
-  // Inserted into the existing array rather than appended as a second
-  // `dependencies =`, which TOML would reject as a duplicate key. See
-  // insertDependencies for why finding the end of that array is not a one-liner.
-  const marker = "    # --- custom: added in Settings, and removed by clearing that field ---";
-  const rendered =
-    dependencies.length === 0 ? base : insertDependencies(base, [marker, ...dependencies]);
-  if (rendered === null) {
-    // The shipped pyproject.toml is ours, so this is a packaging fault rather
-    // than anything the user did. Refusing loudly beats writing a file we could
-    // not understand - which is exactly how the array once ended up inside
-    // [tool.uv].
-    throw new Error("Could not find the dependencies array in the shipped pyproject.toml");
-  }
+  return entries;
+}
 
-  const allSources = [...ourSources, ...extraSources];
-  if (allSources.length === 0) {
-    return rendered;
+/**
+ * Every package the file installs from a working copy on disk.
+ *
+ * From [tool.uv.sources] rather than from settings.json, for the same reason
+ * the dialog is: the file is what uv reads. A checkout somebody added by hand
+ * needs `editable_mode=compat` exactly as much as one chosen in the dialog, and
+ * deriving this from the settings meant the hand-added one was underlined in
+ * the editor as an unresolved import - correct at runtime, wrong on screen.
+ * See editableBuildFlags for why that setting is needed at all.
+ *
+ * @param {Object<string, string>} entries from sourceEntries
+ */
+export function checkoutsFromSources(entries) {
+  return Object.entries(entries)
+    .filter(([, written]) => /\bpath\s*=/.test(written) && /\beditable\s*=\s*true\b/.test(written))
+    .map(([name]) => name);
+}
+
+/**
+ * The source picker state the file implies.
+ *
+ * The dialog is filled from pyproject.toml rather than from settings.json,
+ * because the file is what uv reads and therefore what is true. A package with
+ * a `git =` source is on its branch, one with a `path =` is a local checkout,
+ * and one with no entry at all is on PyPI - which is the whole vocabulary the
+ * two radio rows can express.
+ *
+ * A source the dialog cannot express - a git URL with a rev, say, or a path
+ * that is not editable - still reads as GitHub or Local, because that is what
+ * it is. Applying would rewrite it in the dialog's own spelling, which is why
+ * Apply is a deliberate act and a start no longer writes this file at all.
+ *
+ * @param {Object<string, string>} entries from sourceEntries
+ * @returns {{selection: Object<string, string>, localPaths: Object<string, string>}}
+ */
+export function selectionFromSources(entries) {
+  const selection = {};
+  const localPaths = {};
+  for (const p of PACKAGES) {
+    const written = entries[p.name];
+    if (written === undefined) {
+      selection[p.name] = PYPI;
+      continue;
+    }
+    if (/\bgit\s*=/.test(written)) {
+      selection[p.name] = GITHUB;
+      continue;
+    }
+    const path = /\bpath\s*=\s*"((?:[^"\\]|\\.)*)"/.exec(written);
+    if (path === null) {
+      selection[p.name] = PYPI;
+      continue;
+    }
+    selection[p.name] = LOCAL;
+    // Unescaped, because tomlString wrote it: a Windows path is full of them.
+    localPaths[p.name] = path[1].replace(/\\(.)/g, "$1");
   }
-  return `${rendered}
-# Written by build123d-studio from the choices made in Settings.
-# Edit those rather than this file: it is regenerated on every start.
-[tool.uv.sources]
-${allSources.join("\n")}
-`;
+  return { selection, localPaths };
 }
 
 /**
@@ -269,6 +306,7 @@ export function localCheckouts(selection = sources, extras = customPackages()) {
   const { editables } = renderRequirements(parseRequirements(extras));
   return [...ours, ...editables];
 }
+
 
 /** A short string that changes whenever the selection does. */
 export function selectionSignature(selection = sources) {

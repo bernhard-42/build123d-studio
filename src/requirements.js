@@ -4,7 +4,7 @@
 // there is no source picker for these, because the string is the source. Three
 // forms, and which one a line is follows from how it starts:
 //
-//   ocp-widgets>=0.3                              PyPI, with or without a range
+//   mylib>=0.3                                    PyPI, with or without a range
 //   /Users/me/src/mylib                           a local checkout
 //   git+https://github.com/someone/mylib          a git repository
 //   mylib @ git+https://github.com/x/python-lib   named explicitly
@@ -241,58 +241,6 @@ export function tomlString(value) {
   return `"${escaped}"`;
 }
 
-/**
- * Insert lines at the end of pyproject.toml's `dependencies` array.
- *
- * This looked like a one-liner and was a bug: the first version inserted at the
- * file's last `]`, which is the one in `[tool.uv]`, not the end of the array.
- * It produced `[tool.uv` with the packages inside it and uv refused to parse the
- * file at all - on a real build, because the function lived in a module that
- * imports Neutralino and so had no tests. It lives here now for that reason.
- *
- * The array is found by scanning rather than by matching a shape, so it does not
- * depend on how the shipped file happens to be formatted: bracket depth from
- * `dependencies = [`, with quoted strings and `#` comments skipped so a bracket
- * inside either cannot end it early.
- *
- * @returns {string|null} the file with the lines inserted, or null if the array
- *   could not be found - which the caller must treat as a reason not to write
- */
-export function insertDependencies(base, lines) {
-  if (lines.length === 0) {
-    return base;
-  }
-  const start = base.search(/^\s*dependencies\s*=\s*\[/m);
-  if (start === -1) {
-    return null;
-  }
-
-  let index = base.indexOf("[", start);
-  let depth = 0;
-  while (index < base.length) {
-    const char = base[index];
-    if (char === "#") {
-      const newline = base.indexOf("\n", index);
-      index = newline === -1 ? base.length : newline;
-      continue;
-    }
-    if (char === '"' || char === "'") {
-      index += 1;
-      while (index < base.length && base[index] !== char) {
-        index += base[index] === "\\" ? 2 : 1;
-      }
-    } else if (char === "[") {
-      depth += 1;
-    } else if (char === "]") {
-      depth -= 1;
-      if (depth === 0) {
-        return `${base.slice(0, index)}${lines.join("\n")}\n${base.slice(index)}`;
-      }
-    }
-    index += 1;
-  }
-  return null;
-}
 
 /**
  * The dependency lines and the [tool.uv.sources] entries a set of entries needs.
@@ -300,17 +248,19 @@ export function insertDependencies(base, lines) {
  * `editables` names the ones installed from a local checkout, which need one
  * more thing said about them - see editableBuildFlags.
  *
- * @returns {{dependencies: string[], sources: string[], editables: string[]}}
+ * @returns {{dependencies: string[], sources: string[], editables: string[], names: string[]}}
  *          all already escaped
  */
 export function renderRequirements(entries) {
   const dependencies = [];
   const sources = [];
   const editables = [];
+  const names = [];
   for (const entry of entries) {
     if (entry.error !== null) {
       continue;
     }
+    names.push(entry.name);
     dependencies.push(`    ${tomlString(entry.requirement)},`);
     if (entry.source === null) {
       continue;
@@ -327,7 +277,7 @@ export function renderRequirements(entries) {
       .join(", ");
     sources.push(`${entry.name} = { ${fields} }`);
   }
-  return { dependencies, sources, editables };
+  return { dependencies, sources, editables, names };
 }
 
 /**
@@ -361,4 +311,89 @@ export function renderRequirements(entries) {
  */
 export function editableBuildFlags(names) {
   return names.flatMap((name) => ["--config-settings-package", `${name}:editable_mode=compat`]);
+}
+
+
+/**
+ * Tell uv which packages an upgrade is allowed to move.
+ *
+ * "Upgrade packages" used to be a blanket `uv lock --upgrade`, on the reasoning
+ * that the exact pins in runtime/pyproject.toml were already the guarantee and
+ * a name list only restated them. That is true of the six packages this
+ * application pins with `==`. It is not true of anything else, and the
+ * environment is 84 packages against 8 declarations - so the reasoning covered
+ * a twelfth of what the button touched.
+ *
+ * Measured on the shipped lock: `uv lock --upgrade` moved 23 packages and
+ * neither of the two the button exists for, both already being newest. What
+ * moved was jupyter-client, pyzmq, ipython, traitlets, tornado, numpy, scipy,
+ * cffi and nodejs-wheel-binaries - the kernel's transport, the language
+ * server's own Node runtime and the viewer's numerics, none of them named
+ * anywhere, all of them landing on combinations no release ever tested.
+ *
+ * So the names are back, and they are every package somebody declared: the two
+ * with a range of their own, plus whatever is in the additional-packages field.
+ * The source does not have to be told apart, because uv already does the right
+ * thing for each - measured: a version moves within its range, a git ref
+ * re-resolves to the branch's current commit, and a local path is a no-op that
+ * exits 0. Filtering to PyPI would only take the git case away, which is the
+ * one source that genuinely drifts.
+ *
+ * What no longer moves is the 76 packages nobody declared. They move when a
+ * release of this application moves them, which is the only place they were
+ * ever tested.
+ *
+ * @param {string[]} names packages the user declared
+ * @returns {string[]} arguments to append to a `uv lock`
+ */
+export function upgradeFlags(names) {
+  return names.flatMap((name) => ["--upgrade-package", name]);
+}
+
+
+/**
+ * The lines a user would have typed, given what the file records.
+ *
+ * The inverse of parseRequirements, and it exists because the two halves of a
+ * line are stored apart: `/Users/me/src/cadquery` becomes `cadquery` in the
+ * dependency group and a `{ path = ... }` entry in [tool.uv.sources]. Reading
+ * back only the group put `cadquery` in the field where a path had been typed -
+ * still installed from the checkout, because the source was untouched, but the
+ * field no longer said so, and pressing Apply would then have written a plain
+ * PyPI requirement over it.
+ *
+ * Only the group's own entries are looked up, so a source belonging to
+ * build123d or ocp-viewer-core - which live in the same table - is never
+ * mistaken for one of these.
+ *
+ * @param {string[]} entries the `user` group, as written
+ * @param {Object<string, string>} sources from sourceEntries
+ */
+export function requirementLines(entries, sources) {
+  return entries.map((requirement) => {
+    const name = /^[A-Za-z0-9._-]+/.exec(requirement);
+    const source = name === null ? undefined : sources[name[0]];
+    if (source === undefined) {
+      // Either a plain PyPI requirement or the `name @ url` form, which carries
+      // its own source and never produced a [tool.uv.sources] entry.
+      return requirement;
+    }
+
+    const path = /\bpath\s*=\s*"((?:[^"\\]|\\.)*)"/.exec(source);
+    if (path !== null) {
+      // Unescaped, because tomlString wrote it - a Windows path is full of them.
+      return path[1].replace(/\\(.)/g, "$1");
+    }
+
+    const git = /\bgit\s*=\s*"((?:[^"\\]|\\.)*)"/.exec(source);
+    if (git !== null) {
+      const rev = /\brev\s*=\s*"([^"]*)"/.exec(source);
+      return rev === null ? git[1] : `${git[1]}@${rev[1]}`;
+    }
+
+    // A source shape this cannot spell. Showing the requirement is honest -
+    // it is what the group says - and Apply would rewrite the source from it,
+    // which is why anything unusual belongs in the file rather than here.
+    return requirement;
+  });
 }

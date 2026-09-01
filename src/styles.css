@@ -1518,6 +1518,26 @@ html body {
 /* The New File template. Monospace because it is Python and will be read back
    as code, and resizable vertically because how long a preamble someone wants
    is not something to decide for them. */
+/* What the application declares, shown rather than edited. Same face as the
+   fields above it so it reads as part of the tab, dimmed so it does not read as
+   something to type in. */
+.settings-declared {
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 8px;
+  max-height: 190px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-alt, var(--bg));
+  color: var(--fg-dim, var(--fg));
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre;
+}
+
 .settings-template {
   width: 100%;
   box-sizing: border-box;

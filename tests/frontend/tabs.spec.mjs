@@ -135,9 +135,16 @@ test.describe("choosing a tab", () => {
     // than through activeElement, because "the editor has focus" is only worth
     // anything if typing reaches the buffer.
     await open(page, { files: FILES, settings: { workspace: WORKSPACE } });
+    await focusEditor(page);
     await page.locator("#pane-viewer").click();
+    await expect(page.locator(".monaco-editor textarea")).not.toBeFocused();
 
     await page.locator(".tab", { hasText: "plate.py" }).click();
+    // Waited for, not assumed. Typing into a window that has not been given the
+    // caret yet is a race this test lost about one run in three under a full
+    // suite - and it is what a person does anyway: click the tab, see the
+    // cursor, then type.
+    await expect(page.locator(".monaco-editor textarea")).toBeFocused();
     await page.keyboard.type("AAA");
 
     await expect(page.locator(".tab-active .tab-label")).toHaveText("plate.py");

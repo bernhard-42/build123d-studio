@@ -71,30 +71,57 @@ wheels = [
 
 [[package]]
 name = "build123d-studio-runtime"
-version = "0.1.0"
+version = "0.5.1"
 source = { virtual = "." }
-dependencies = [
+
+[package.dev-dependencies]
+app = [
     { name = "basedpyright" },
-    { name = "build123d" },
+    { name = "ipykernel" },
+    { name = "ipython" },
+    { name = "jupyter-client" },
     { name = "jupyter-console" },
-    { name = "ocp-viewer-core" },
     { name = "orjson" },
+    { name = "prompt-toolkit" },
     { name = "pywinpty", marker = "sys_platform == 'win32'" },
+    { name = "pyzmq" },
     { name = "ruff" },
+    { name = "traitlets" },
     { name = "websockets" },
+]
+core-cad = [
+    { name = "build123d" },
+    { name = "ocp-tessellate" },
+    { name = "ocp-viewer-core" },
+    { name = "pillow" },
+    { name = "threejs-materials" },
 ]
 
 [package.metadata]
-requires-dist = [
+
+[package.metadata.requires-dev]
+app = [
     { name = "basedpyright", specifier = "==1.39.9" },
-    { name = "build123d", specifier = ">=0.11.1" },
-    { name = "jupyter-console", specifier = "==6.6.3" },
-    { name = "ocp-viewer-core", specifier = ">=1.0.2,<1.1.0" },
-    { name = "orjson", specifier = "==3.11.9" },
-    { name = "pywinpty", marker = "sys_platform == 'win32'", specifier = "==3.0.5" },
+    { name = "ipykernel", specifier = ">=7.3.0,<7.4.0" },
+    { name = "ipython", specifier = ">=9.15.0,<9.16" },
+    { name = "jupyter-client", specifier = ">=8.9.1,<8.10" },
+    { name = "jupyter-console", specifier = ">=6.6.3,<6.7" },
+    { name = "orjson", specifier = ">=3.11.9,<3.12" },
+    { name = "prompt-toolkit", specifier = ">=3.0.53,<3.1.0" },
+    { name = "pywinpty", marker = "sys_platform == 'win32'", specifier = ">=3.0.5,<3.1" },
+    { name = "pyzmq", specifier = ">=27.1.0,<27.2" },
     { name = "ruff", specifier = "==0.16.3" },
-    { name = "websockets", specifier = "==16.1.1" },
+    { name = "traitlets", specifier = ">=5.15.1,<5.16" },
+    { name = "websockets", specifier = ">=16.1.1,<16.2" },
 ]
+core-cad = [
+    { name = "build123d", specifier = ">=0.11.1" },
+    { name = "ocp-tessellate" },
+    { name = "ocp-viewer-core", specifier = ">=1.0.4,<1.1.0" },
+    { name = "pillow" },
+    { name = "threejs-materials" },
+]
+user = []
 
 [[package]]
 name = "cachetools"
@@ -614,7 +641,7 @@ wheels = [
 
 [[package]]
 name = "ocp-viewer-core"
-version = "1.0.2"
+version = "1.0.4"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "ocp-tessellate" },
@@ -622,9 +649,9 @@ dependencies = [
     { name = "pillow" },
     { name = "threejs-materials" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/36/32/5f4430236c0d230a292e3fd8386d0c0c10db9789551b1cb9e5cc6bcda609/ocp_viewer_core-1.0.2.tar.gz", hash = "sha256:a66f379e1e7fae11f7cd8b108d3bfec9a127f90e85d98dd24415d08042dc4bbd", size = 105888, upload-time = "2026-08-27T14:03:12.875Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/1a/14/05c573c4034cda877dcc67e92756a12d940df4076d3bd6936f7ecb6aa71e/ocp_viewer_core-1.0.4.tar.gz", hash = "sha256:7a5a945cdccac155ed72431cac332eabc3fe640363d939863ca6d1e5dae420ba", size = 110625, upload-time = "2026-08-31T12:06:38.906Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/e9/27/0688d5c4880ebe25c8a2c00830797e72196f37e30a10f55cbb90a103d855/ocp_viewer_core-1.0.2-py3-none-any.whl", hash = "sha256:042764b0ea6074199d0982af6120ac4248d85e7c22200ed7e740d4377df66f82", size = 109714, upload-time = "2026-08-27T14:03:11.585Z" },
+    { url = "https://files.pythonhosted.org/packages/ab/0b/42495157f6c97ec3ec219b5c7aa4885c24a1784bd62d620e272ce487e606/ocp_viewer_core-1.0.4-py3-none-any.whl", hash = "sha256:08665c932cb4c89c5a111cd6a31ccc5f6274c7808f90077f4b2b5e308decbeb5", size = 114110, upload-time = "2026-08-31T12:06:37.558Z" },
 ]
 
 [[package]]

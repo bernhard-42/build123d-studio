@@ -54,3 +54,63 @@ export async function applyPackageSources(selection, onLine) {
   onLine?.("Applying…");
   onLine?.("Done.");
 }
+
+/** The environment's pyproject.toml, as far as the dialog is concerned.
+ *
+ * A real file rather than null, because null is the "no environment yet" answer
+ * and would make every test exercise the fallback path instead of the one the
+ * application actually takes. The shape is the shipped file's: three groups and
+ * no sources, which is what a fresh environment has.
+ *
+ * Mutable, so a test can put a source or a user package in it and check that
+ * the dialog shows what the *file* says rather than what settings.json does -
+ * which is the whole point of the change these stubs are here for.
+ */
+export let projectFile = {
+  user: [],
+  app: ["basedpyright==1.39.9", "ruff==0.16.3"],
+  coreCad: ["ocp-viewer-core>=1.0.4,<1.1.0", "build123d>=0.11.1"],
+  sources: {},
+};
+
+globalThis.__HARNESS_PROJECT__ = {
+  set: (next) => {
+    projectFile = next;
+  },
+  get: () => projectFile,
+};
+
+export async function readProjectFile() {
+  return projectFile;
+}
+
+/** Writes to the environment's pyproject.toml, kept apart from the uv calls.
+ *
+ * Not in environmentCalls, and the distinction is the dialog's: Apply writes
+ * this file and runs no uv, which is what "Apply touches nothing else" has
+ * always meant and still does. Filing both in one list would have made that
+ * test fail for a change that did not break it.
+ */
+export const projectWrites = [];
+globalThis.__HARNESS_PROJECT_WRITES__ = projectWrites;
+
+export async function applyProjectSettings(selection, custom) {
+  projectWrites.push({ selection, custom });
+  projectFile = { ...projectFile, user: custom.split("\n").filter((line) => line.trim() !== "") };
+  return true;
+}
+
+export async function restoreEnvironment(onLine) {
+  environmentCalls.push({ name: "restoreEnvironment" });
+  // What Restore actually does, in the only terms this stub can express: the
+  // file goes back to the shipped shape. A test that presses it and then
+  // reopens Settings must see the additional packages gone.
+  projectFile = {
+    user: [],
+    app: ["basedpyright==1.39.9", "ruff==0.16.3"],
+    coreCad: ["ocp-viewer-core>=1.0.4,<1.1.0", "build123d>=0.11.1"],
+    sources: {},
+  };
+  onLine?.("Restoring…");
+  onLine?.("Done.");
+}

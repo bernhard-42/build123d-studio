@@ -1,18 +1,28 @@
 import { filesystem } from "@neutralinojs/lib";
 import { appDir, resolveEnvRoot, uvEnvironment, venvPython } from "./envroot.js";
 import { ensureUv } from "./uv.js";
+
+// The groups an upgrade may move, in the order they appear in the file.
+const UPGRADE_GROUPS = ["app", "core_cad", "user"];
 import {
   PACKAGES,
-  customPackages,
-  isDefaultSelection,
   loadPackageSources,
-  localCheckouts,
-  packageSources,
-  renderPyproject,
+  checkoutsFromSources,
+  projectSources,
+  userGroupEntries,
+  saveCustomPackages,
+  saveLocalPaths,
   savePackageSources,
-  shippedLockApplies,
 } from "../packages.js";
 import { editableBuildFlags } from "../requirements.js";
+import {
+  groupEntries,
+  projectVersion,
+  replaceGroup,
+  replaceSources,
+  sourceEntries,
+  spliceRelease,
+} from "../pyproject.js";
 import { run, quote } from "../proc.js";
 import { appendLog, setStatus } from "./splash.js";
 import * as log from "../log.js";
@@ -34,51 +44,145 @@ async function exists(path) {
 }
 
 /**
- * Write the uv project files into the environment.
+ * Make sure the environment has the two uv files, and that [project] and the
+ * application's groups describe *this* release.
  *
- * Done on every start, not just the first: these files are the application's
- * statement of what the environment should contain, so re-staging them is what
- * makes an app update reconcile an environment built by an earlier version.
+ * The file is the user's. It is written whole exactly once - when an
+ * environment has none - and after that a new release replaces its own three
+ * regions and nothing else. Everything they added, from a comment to their own
+ * package index, survives. spliceRelease is that operation, and the banner at
+ * the top of runtime/pyproject.toml is the promise it keeps.
  *
- * The shipped uv.lock is staged only when every package is on PyPI. That is the
- * tested, reproducible combination and installs with --frozen, resolving
- * nothing. Once a package is redirected to a GitHub branch the shipped lock no
- * longer describes the environment, so it is dropped and uv re-resolves.
+ * uv.lock is seeded the same way and then never written again: the versions a
+ * release ships are where a new environment starts, not something re-imposed on
+ * one that has moved on. Deleting it is the cheap repair - the next start seeds
+ * the tested set again without re-downloading the interpreter or the cache.
  *
- * @returns {Promise<boolean>} whether the shipped lock applies
+ * Settings does not write here. It writes when it is used - see
+ * writeProjectSettings - which is what lets a hand edit survive a restart.
  */
-async function stageProjectFiles(envRoot, selection, custom) {
-  const root = await appDir();
-  await filesystem.writeFile(`${envRoot}/pyproject.toml`, await renderPyproject(selection, custom));
+async function stageProjectFiles(envRoot) {
+  const shippedPath = `${await appDir()}/runtime/pyproject.toml`;
+  const shipped = await filesystem.readFile(shippedPath);
+  const projectPath = `${envRoot}/pyproject.toml`;
 
-  const lockPath = `${envRoot}/uv.lock`;
-  const shipped = await filesystem.readFile(`${root}/runtime/uv.lock`);
-
-  if (shippedLockApplies(selection, custom)) {
-    await filesystem.writeFile(lockPath, shipped);
-    return true;
+  let existing = null;
+  try {
+    existing = await filesystem.readFile(projectPath);
+  } catch {
+    // No environment yet, or one somebody emptied.
   }
 
-  // Whatever lock is here stays, including the shipped one.
-  //
-  // It used to be deleted when it still matched the shipped copy, to stop a
-  // stale lock sending us down `uv sync --frozen` with the wrong contents. That
-  // job belongs to shippedLockApplies above, which already answers false
-  // whenever anything has been added or redirected - so the deletion was
-  // redundant, and it cost the one thing that makes Apply different from
-  // Upgrade.
-  //
-  // Measured: `uv lock` keeps a package at its locked version even after its
-  // constraint is loosened, and still adds whatever is new. Delete the lock
-  // first and the same command resolves from scratch and moves everything. So
-  // deleting it meant the first Apply after adding a single package silently
-  // upgraded the entire environment, which is precisely what Upgrade is for and
-  // what Apply should not do.
-  //
-  // Keeping it is safe because the constraints still do the work: an app update
-  // that ships `ocp_vscode==4.1.0` invalidates the locked 4.0.1 and uv
-  // re-resolves that package regardless of what the old lock preferred.
-  return false;
+  if (existing === null) {
+    log.info("No pyproject.toml in the environment; writing the one this release ships");
+    await filesystem.writeFile(projectPath, shipped);
+  } else if (projectVersion(existing) !== projectVersion(shipped)) {
+    // Compared against the shipped file rather than against the application's
+    // version constant: it is the same question asked of the two things that
+    // actually have to agree, and it stays true if the stamp ever moves.
+    log.info(
+      `The environment was built by ${projectVersion(existing) ?? "an unknown release"};`
+        + ` bringing [project] and the app groups up to ${projectVersion(shipped)}`,
+    );
+    appendLog("Updating the environment's dependencies for this release…");
+    await filesystem.writeFile(projectPath, spliceRelease(existing, shipped));
+  }
+
+  const lockPath = `${envRoot}/uv.lock`;
+  if (!(await exists(lockPath))) {
+    log.info("No lock in the environment; seeding the one this release shipped");
+    await filesystem.writeFile(lockPath, await filesystem.readFile(`${await appDir()}/runtime/uv.lock`));
+  }
+}
+
+/**
+ * Put what Settings says into the environment's pyproject.toml.
+ *
+ * Two regions and no more: [tool.uv.sources] and the `user` group. The rest of
+ * the file is either the application's - replaced by a release - or the user's,
+ * and this must not touch either.
+ *
+ * Called when Settings is *used*, never on a start. That is the whole of what
+ * makes the file editable: a hand edit survives every restart, and is replaced
+ * only when somebody presses Apply, which is them asking for it.
+ *
+ * @returns {Promise<boolean>} false when the file could not be understood
+ */
+export async function writeProjectSettings(envRoot, selection, custom) {
+  const path = `${envRoot}/pyproject.toml`;
+  const text = await filesystem.readFile(path);
+
+  const withGroup = replaceGroup(text, "user", userGroupEntries(custom));
+  if (withGroup === null) {
+    // The group is gone, so there is nowhere to put them. Saying so beats
+    // guessing where the user meant their packages to live.
+    log.warn("No `user` group in the environment's pyproject.toml; leaving it alone");
+    return false;
+  }
+  await filesystem.writeFile(path, replaceSources(withGroup, projectSources(selection, custom)));
+  return true;
+}
+
+/**
+ * What the environment's pyproject.toml currently says, or null.
+ *
+ * Null when the file is not there or cannot be understood, and that is a
+ * meaningful answer rather than a failure: Settings shows what it can and
+ * disables the rest, because a dialog that silently showed stale fields over a
+ * file somebody had edited would be worse than one that says it cannot read it.
+ *
+ * @returns {Promise<{user: string[]|null, app: string[]|null, coreCad: string[]|null,
+ *                    sources: Object<string, string>}|null>}
+ */
+export async function readProjectFile() {
+  const { path: envRoot } = await resolveEnvRoot();
+  let text;
+  try {
+    text = await filesystem.readFile(`${envRoot}/pyproject.toml`);
+  } catch {
+    return null;
+  }
+  return {
+    user: groupEntries(text, "user"),
+    app: groupEntries(text, "app"),
+    coreCad: groupEntries(text, "core_cad"),
+    sources: sourceEntries(text),
+  };
+}
+
+/** Write Settings' two regions into the environment's file. */
+export async function applyProjectSettings(selection, custom) {
+  const { path: envRoot } = await resolveEnvRoot();
+  return writeProjectSettings(envRoot, selection, custom);
+}
+
+/**
+ * Put the environment back to what this release ships. Throws on failure.
+ *
+ * Both files written whole, rather than the lock deleted and left to be seeded
+ * at the next start: deleting it would make this sync *resolve* instead of
+ * install, which is not the tested set and not what "factory settings" can
+ * mean. Written here, Restore is byte for byte a first run, without a restart.
+ *
+ * The stored settings go back too. Restore that left a local checkout selected
+ * would put the sources straight back the next time Settings was applied, which
+ * is precisely the confusion it exists to end.
+ */
+export async function restoreEnvironment(onLine) {
+  const { path: envRoot } = await resolveEnvRoot();
+  const root = await appDir();
+
+  for (const name of ["pyproject.toml", "uv.lock"]) {
+    await filesystem.writeFile(`${envRoot}/${name}`, await filesystem.readFile(`${root}/runtime/${name}`));
+  }
+  await savePackageSources({});
+  await saveLocalPaths({});
+  await saveCustomPackages("");
+
+  const code = await runUvSync(["sync"], envRoot, { onLine }, []);
+  if (code !== 0) {
+    throw new Error(`uv sync failed with exit code ${code}`);
+  }
 }
 
 async function runUv(args, envRoot, { onLine }) {
@@ -157,26 +261,36 @@ function runUvSync(args, envRoot, { onLine }, checkouts) {
 /**
  * Bring the environment in line with the current package selection.
  *
- * @returns {Promise<number>} exit code of the last uv command
+ * One `uv sync`, whatever the selection is. It locks when the declarations have
+ * changed and does nothing when they have not - measured: 64 ms and no network
+ * at all on an unchanged project. There is no --frozen and no separate `uv
+ * lock` step any more, because there is no longer a case where this application
+ * knows better than the pyproject it just wrote.
+ *
+ * No --upgrade, which is what keeps a start from moving anything: uv holds
+ * every locked version the constraints still allow, including the commit a
+ * GitHub branch is pinned at. Moving versions is the Upgrade button's job.
+ *
+ * @returns {Promise<number>} exit code
  */
-async function syncSelection(envRoot, selection, onLine, custom = customPackages()) {
-  const shippedLockApplies = await stageProjectFiles(envRoot, selection, custom);
+async function syncSelection(envRoot, onLine) {
+  return runUvSync(["sync"], envRoot, { onLine }, await checkouts(envRoot));
+}
 
-  const checkouts = localCheckouts(selection, custom);
-
-  if (shippedLockApplies) {
-    // Nothing to resolve: install exactly what was tested.
-    return runUvSync(["sync", "--frozen"], envRoot, { onLine }, checkouts);
+/**
+ * The local checkouts the environment's file declares.
+ *
+ * Read from the file every time rather than passed down from the settings: the
+ * file is what uv installs from, so it is also what decides which packages need
+ * telling how to lay an editable install out.
+ */
+async function checkouts(envRoot) {
+  try {
+    return checkoutsFromSources(sourceEntries(await filesystem.readFile(`${envRoot}/pyproject.toml`)));
+  } catch (error) {
+    log.warn("Could not read the environment's sources:", error);
+    return [];
   }
-
-  // A GitHub source is in play, so uv has to resolve. Without --upgrade this
-  // keeps whatever commit is already pinned, so it is quick on later starts and
-  // does not silently move the branch under the user.
-  const lockCode = await runUv(["lock"], envRoot, { onLine });
-  if (lockCode !== 0) {
-    return lockCode;
-  }
-  return runUvSync(["sync"], envRoot, { onLine }, checkouts);
 }
 
 /**
@@ -201,9 +315,19 @@ export async function ensureEnvironment() {
   // Before anything else needs it: uv is what builds the environment.
   await ensureUv(envRoot);
 
-  const selection = await loadPackageSources();
+  // Before the report below, which reads that file: on a first start it does
+  // not exist yet, and reading it here is what made a fresh install fail with
+  // "Unable to open file: .../pyproject.toml" before uv was ever run.
+  await stageProjectFiles(envRoot);
+
+  // Loaded for its side effect - it fills the in-memory settings the dialog
+  // falls back to - while what is *reported* comes from the environment's own
+  // file, which is what uv will read.
+  await loadPackageSources();
+  const sources = sourceEntries(await filesystem.readFile(`${envRoot}/pyproject.toml`));
   for (const p of PACKAGES) {
-    appendLog(`${p.name}: ${selection[p.name] === "github" ? `${p.branch} branch` : "PyPI"}`);
+    const written = sources[p.name];
+    appendLog(`${p.name}: ${written === undefined ? "PyPI" : written}`);
   }
 
   const python = venvPython(envRoot);
@@ -215,38 +339,30 @@ export async function ensureEnvironment() {
       : "Checking the Python environment…",
   );
 
-  let code = await syncSelection(envRoot, selection, appendLog);
+  let code = await syncSelection(envRoot, appendLog);
 
-  // A bad line in the additional-packages field must not lock the user out of
-  // the dialog that would fix it.
-  //
-  // This runs before the window is usable, so a single typo - or a git URL that
+  // A line somebody added must not lock them out of the dialog that would fix
+  // it. This runs before the window is usable, so one typo - or a git URL that
   // has gone - would otherwise mean the application never starts, with the
-  // field that caused it unreachable. Retried without the custom section, which
-  // is the same shape as the package-source fallback below: keep the app
-  // usable, say plainly what was dropped, and leave the text alone so it can be
-  // corrected rather than retyped.
-  if (code !== 0 && customPackages() !== "") {
-    log.warn("Sync failed with the additional packages; retrying without them");
-    appendLog("");
-    appendLog("Could not build the environment with the additional packages.");
-    appendLog("Starting without them - they are still in Settings, uncorrected.");
-    setStatus("Retrying without the additional packages…");
-    code = await syncSelection(envRoot, selection, appendLog, "");
+  // field that caused it unreachable.
+  //
+  // The environment's own file is what is relaxed, in the order that gives up
+  // the least: their packages first, then their sources. Nothing is deleted -
+  // the text is still in Settings, and the emptied region is written back the
+  // moment they press Apply.
+  if (code !== 0) {
+    code = await retryWithout(envRoot, "user", {
+      failed: "Could not build the environment with the additional packages.",
+      dropped: "Starting without them - they are still in Settings, uncorrected.",
+      status: "Retrying without the additional packages…",
+    });
   }
-
-  if (code !== 0 && !isDefaultSelection(selection)) {
-    // The user chose a source uv cannot satisfy - a dev branch that has moved
-    // ahead of what the frozen packages accept, or a local checkout that does
-    // not build. Not predictable in advance, so rather than leave the
-    // application unusable, fall back to the tested selection and say so.
-    log.warn("Sync failed with the chosen package sources; reverting to PyPI");
-    appendLog("");
-    appendLog("Could not build the environment with the selected package sources.");
-    appendLog("Reverting to PyPI for all packages.");
-    setStatus("Reverting to the default package sources…");
-    await savePackageSources({});
-    code = await syncSelection(envRoot, packageSources(), appendLog);
+  if (code !== 0) {
+    code = await retryWithout(envRoot, "sources", {
+      failed: "Could not build the environment with the selected package sources.",
+      dropped: "Reverting to PyPI for all packages.",
+      status: "Reverting to the default package sources…",
+    });
   }
 
   if (code !== 0) {
@@ -267,12 +383,54 @@ export async function ensureEnvironment() {
 }
 
 /**
- * Upgrade every package to the newest version its constraints allow, then sync.
- * The caller has to restart the kernel afterwards - the running one still holds
- * the old modules.
+ * Empty one of the two user-owned regions and sync again, or say it was already
+ * empty by returning a failure unchanged.
+ *
+ * Returns the exit code of the retry, or 1 when there was nothing to give up -
+ * so the caller can chain the two attempts without asking twice what is in the
+ * file.
+ */
+async function retryWithout(envRoot, region, { failed, dropped, status }) {
+  const path = `${envRoot}/pyproject.toml`;
+  const text = await filesystem.readFile(path);
+
+  const relaxed = region === "user"
+    ? (groupEntries(text, "user")?.length ? replaceGroup(text, "user", []) : null)
+    : (Object.keys(sourceEntries(text)).length > 0 ? replaceSources(text, {}) : null);
+  if (relaxed === null) {
+    return 1;
+  }
+
+  log.warn(`Sync failed; retrying with the ${region} region emptied`);
+  appendLog("");
+  appendLog(failed);
+  appendLog(dropped);
+  setStatus(status);
+  await filesystem.writeFile(path, relaxed);
+  return syncSelection(envRoot, appendLog);
+}
+
+/**
+ * Upgrade every *declared* package as far as its own constraint allows, then
+ * sync. The caller has to restart the kernel afterwards - the running one still
+ * holds the old modules.
+ *
+ * Declared is the whole of it: the two with a range, and whatever the user put
+ * in the additional-packages field. What arrives underneath those - the seventy
+ * or so packages nobody named - moves when a release of this application moves
+ * it, which is the only place that combination was ever tested.
  */
 export async function upgradePackages(onLine) {
   const { path: envRoot } = await resolveEnvRoot();
+
+  // Staged first, as every other route into uv does, and reinstallPackage's
+  // comment records leaving it out as a bug. Two things make it matter here.
+  // A source just changed in this dialog has not reached the environment's
+  // pyproject.toml yet, so the upgrade would resolve the previous one. And the
+  // file is one an experienced user may well have opened and edited - it is
+  // theirs to look at, it says MANAGED FILE at the top, and rewriting it before
+  // uv reads it is what makes that true rather than merely written down.
+  await stageProjectFiles(envRoot);
 
   // uv is deliberately not refreshed here.
   //
@@ -284,28 +442,32 @@ export async function upgradePackages(onLine) {
   // that built the environment, which is the last thing a user chasing a
   // package problem wants changing underneath them. See src/bootstrap/pins.json.
 
-  // A blanket --upgrade, and the exact pins are what make it safe.
+  // By group, not a blanket --upgrade. Measured on the shipped lock: a blanket
+  // upgrade moved 23 packages and neither of the two this button is for, taking
+  // jupyter-client, pyzmq, ipython, tornado, numpy, scipy and the Node the
+  // language server runs on with it - none of them named anywhere, all of them
+  // landing on combinations no release ever tested.
   //
-  // This used to name each package with --upgrade-package, on the grounds that
-  // a blanket upgrade would move ocp_vscode and break the viewer. Measured:
-  // `uv lock --upgrade` cannot move a dependency pinned with ==, so the pins in
-  // runtime/pyproject.toml were already the guarantee and the name list was
-  // restating it. Everything now moves as far as its own constraint allows,
-  // which is one sentence a user can hold - build123d>=0.11.1 moves,
-  // ocp_vscode==4.0.1 does not, and an added package moves exactly as far as
-  // whatever the user wrote for it.
+  // Groups say it once and keep saying it: a package added to `app` becomes
+  // upgradable with nothing else to remember, and the `==` pins inside a group
+  // still hold. Measured that --upgrade-group has the same power as
+  // --upgrade-package: a plain `uv lock` left a locked 5.5.2 alone where
+  // --upgrade-group moved it to 7.1.8.
   //
-  // The cost is transitive drift: packages nothing here declares may land on
-  // combinations this release never tested. That is the nature of the button,
-  // and anyone pressing it has left the tested configuration by definition.
-  // Naming packages instead would mean parsing names out of the user's own text
-  // and putting them on a command line, which this avoids entirely.
-  const lockCode = await runUv(["lock", "--upgrade"], envRoot, { onLine });
+  // ocp-viewer-core's own dependencies are in `core_cad` too, named without
+  // versions: a fix in ocp-tessellate is a fix in what the viewer draws and can
+  // arrive without ocp-viewer-core moving, so the group has to reach it - while
+  // the range stays ocp-viewer-core's, because uv would intersect a second one.
+  const lockCode = await runUv(
+    ["lock", ...UPGRADE_GROUPS.flatMap((g) => ["--upgrade-group", g])],
+    envRoot,
+    { onLine },
+  );
   if (lockCode !== 0) {
     throw new Error(`uv lock failed with exit code ${lockCode}`);
   }
 
-  const syncCode = await runUvSync(["sync"], envRoot, { onLine }, localCheckouts());
+  const syncCode = await runUvSync(["sync"], envRoot, { onLine }, await checkouts(envRoot));
   if (syncCode !== 0) {
     throw new Error(`uv sync failed with exit code ${syncCode}`);
   }
@@ -332,29 +494,17 @@ export async function upgradePackages(onLine) {
  */
 export async function reinstallPackage(name, onLine) {
   const { path: envRoot } = await resolveEnvRoot();
-  const usesShippedLock = await stageProjectFiles(
+  await stageProjectFiles(envRoot);
+
+  // One sync, as everywhere else: it locks first if the source just written is
+  // one the lock has not heard of, and reinstalls the named package either way.
+  // No --upgrade, so this puts one package back without moving the others.
+  const code = await runUvSync(
+    ["sync", "--reinstall-package", name],
     envRoot,
-    await loadPackageSources(),
-    customPackages(),
+    { onLine },
+    await checkouts(envRoot),
   );
-
-  if (!usesShippedLock) {
-    // A path or branch source is in play, so the lock has to learn about it
-    // before anything can be installed from it. No --upgrade: this reinstalls
-    // one package, it does not move the others.
-    const lockCode = await runUv(["lock"], envRoot, { onLine });
-    if (lockCode !== 0) {
-      throw new Error(`uv lock failed with exit code ${lockCode}`);
-    }
-  }
-
-  // --frozen exactly where syncSelection uses it: with the shipped lock in
-  // force there is nothing to resolve, and the reinstall should put back what
-  // this release was tested against rather than re-deciding it.
-  const args = usesShippedLock
-    ? ["sync", "--frozen", "--reinstall-package", name]
-    : ["sync", "--reinstall-package", name];
-  const code = await runUvSync(args, envRoot, { onLine }, localCheckouts());
   if (code !== 0) {
     throw new Error(`uv sync failed with exit code ${code}`);
   }
@@ -363,7 +513,8 @@ export async function reinstallPackage(name, onLine) {
 /** Re-sync after the package selection changed. Throws on failure. */
 export async function applyPackageSources(selection, onLine) {
   const { path: envRoot } = await resolveEnvRoot();
-  const code = await syncSelection(envRoot, selection, onLine);
+  await stageProjectFiles(envRoot);
+  const code = await syncSelection(envRoot, onLine);
   if (code !== 0) {
     throw new Error(`uv failed with exit code ${code}`);
   }
