@@ -63,6 +63,18 @@ Anchored on the path for the same reason the `pgrep` is - `pstree -s build123d` 
 
 That rooting is the point rather than a cost. A surviving sidecar has been reparented to pid 1, so it appears as **its own branch directly under `launchd`** - which is the seven-orphan signature, and is invisible in a flat list. The pass here is "the only branch is my own terminal": `pstree` matches its own command line and no bracket trick can stop it, because `-s` is a substring match rather than a regex. Measured with nothing to find, that leaves exactly one branch, rooted at the terminal.
 
+**And on Windows, while it is still running**, the tree is the better view - the flat listing above cannot show you that the language server is four processes deep or that every interpreter appears twice. `st` (and `stq`, which drops the six webview processes) is in the PowerShell profile on GAUSS; the body is:
+
+```powershell
+$a=Get-CimInstance Win32_Process;$k=@{};$a|%{$x=[int]$_.ParentProcessId;if(!$k[$x]){$k[$x]=@()};$k[$x]+=$_};function T($p,$i){$c=$p.CommandLine;if(!$c){$c=$p.Name};$c=$c -replace [regex]::Escape("$env:LOCALAPPDATA\build123d-studio\runtime"),"<env>" -replace "\s+"," ";if($c.Length -gt 84){$c="..."+$c.Substring($c.Length-81)};"{0}{1,-6} {2,-26} {3}" -f $i,$p.ProcessId,$p.Name,$c;$k[[int]$p.ProcessId]|sort ProcessId|%{T $_ ($i+"  ")}};$a|?{$_.Name -eq "build123d-studio.exe"}|%{T $_ ""}
+```
+
+Rooted at `build123d-studio.exe` rather than matched on the string, for the reason the `[b]` exists in the `pgrep`: a string match finds the shell running the query, because that command line contains it. And it prints the **tail** of each command line, because every process here begins with the same sixty characters of venv path and what tells them apart is at the end.
+
+Measured against a live 0.5.1 on 2026-09-01, and worth knowing before a test claims something is wrong: the healthy tree is app → `cmd.exe` → sidecar, with the kernel, `basedpyright-langserver` (four deep, ending in `node.exe`), `measure_process.py` and winpty's `OpenConsole.exe` under it - and **every interpreter appearing twice**, which is uv's trampoline stub rather than a leak.
+
+It is the *running* view only. After the window has gone a survivor has been reparented, so it is no longer under the app and this tree cannot see it - which is exactly what the flat listing above is for.
+
 Two things it is not. Anchoring on a **pid** instead - `pstree -p $(pgrep …)` - has no self-match at all, but fails with a usage dump the moment nothing matches, which is the case this check exists for. And on **Linux** `pstree` is psmisc's, where `-s` means "show the parents of this pid" and there is no string filter at all, so the line above does something else entirely there; use the `pgrep`, or `pstree -sp <pid>` against one match.
 
 ---
