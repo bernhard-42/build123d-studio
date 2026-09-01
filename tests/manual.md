@@ -59,11 +59,17 @@ A pass is **no output at all**. The old wording here allowed "except processes y
 pstree -s 'build123d-studio/runtime'      # macOS (homebrew pstree)
 ```
 
+**The path, never the bare name.** `pstree -s build123d-studio` matched a `claude --resume build123d-studio` session on 2026-09-01 - anything merely *named* that is in scope, which is how a check reports a survivor that is nothing of the sort.
+
 Anchored on the path for the same reason the `pgrep` is - `pstree -s build123d` drags in anything merely *named* that, another project's jupyter server included. It finds fewer processes than the `pgrep` does (the app binary's own command line does not contain the runtime path) and still shows all of them, because **a tree goes up to the root for every process it matches**, so the app appears as the ancestor of the sidecar that did match.
 
 That rooting is the point rather than a cost. A surviving sidecar has been reparented to pid 1, so it appears as **its own branch directly under `launchd`** - which is the seven-orphan signature, and is invisible in a flat list. The pass here is "the only branch is my own terminal": `pstree` matches its own command line and no bracket trick can stop it, because `-s` is a substring match rather than a regex. Measured with nothing to find, that leaves exactly one branch, rooted at the terminal.
 
-**And on Windows, while it is still running**, the tree is the better view - the flat listing above cannot show you that the language server is four processes deep or that every interpreter appears twice. `st` (and `stq`, which drops the six webview processes) is in the PowerShell profile on GAUSS; the body is:
+**And on Windows, `st`** - in the PowerShell profile on GAUSS, with `stq` dropping the six webview processes. It answers both questions, which is why it replaced the plain listing here: the tree while the application runs, and a flat search on the runtime path for anything the tree did not reach, which is the survivor case. When there is neither it says `clean` rather than printing nothing, because an empty screen is indistinguishable from a check that did not run.
+
+That combination is deliberate. A tree alone is a trap for the quit tests: it is rooted at `build123d-studio.exe`, so once the application has exited there is no root and the tree is empty *whether or not anything survived*. Measured on 2026-09-01 during M1 - the tree said nothing and the flat listing was what actually established the pass.
+
+The body of the running half is:
 
 ```powershell
 $a=Get-CimInstance Win32_Process;$k=@{};$a|%{$x=[int]$_.ParentProcessId;if(!$k[$x]){$k[$x]=@()};$k[$x]+=$_};function T($p,$i){$c=$p.CommandLine;if(!$c){$c=$p.Name};$c=$c -replace [regex]::Escape("$env:LOCALAPPDATA\build123d-studio\runtime"),"<env>" -replace "\s+"," ";if($c.Length -gt 84){$c="..."+$c.Substring($c.Length-81)};"{0}{1,-6} {2,-26} {3}" -f $i,$p.ProcessId,$p.Name,$c;$k[[int]$p.ProcessId]|sort ProcessId|%{T $_ ($i+"  ")}};$a|?{$_.Name -eq "build123d-studio.exe"}|%{T $_ ""}
@@ -73,7 +79,7 @@ Rooted at `build123d-studio.exe` rather than matched on the string, for the reas
 
 Measured against a live 0.5.1 on 2026-09-01, and worth knowing before a test claims something is wrong: the healthy tree is app → `cmd.exe` → sidecar, with the kernel, `basedpyright-langserver` (four deep, ending in `node.exe`), `measure_process.py` and winpty's `OpenConsole.exe` under it - and **every interpreter appearing twice**, which is uv's trampoline stub rather than a leak.
 
-It is the *running* view only. After the window has gone a survivor has been reparented, so it is no longer under the app and this tree cannot see it - which is exactly what the flat listing above is for.
+`st` excludes its own process, because the query's command line contains the path it searches for - the self-match that `[b]uild123d` prevents in the `pgrep` and that PowerShell has no equivalent of. Anything else it lists under *"NOT under the application"* is real.
 
 Two things it is not. Anchoring on a **pid** instead - `pstree -p $(pgrep …)` - has no self-match at all, but fails with a usage dump the moment nothing matches, which is the case this check exists for. And on **Linux** `pstree` is psmisc's, where `-s` means "show the parents of this pid" and there is no string filter at all, so the line above does something else entirely there; use the `pgrep`, or `pstree -sp <pid>` against one match.
 
