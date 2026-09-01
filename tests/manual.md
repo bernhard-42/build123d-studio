@@ -13,6 +13,13 @@ Nothing here needs millisecond timing. Where a test is about a race, the setup w
 3. Have a terminal open beside it. Most tests end in "and now look at what is still running".
 4. Work on a copy of any file you care about. Several tests are about losing them.
 
+### Known, in v0.5.1 — not findings
+
+Two things this build does that are already understood and fixed in the tree. They are here so a run does not spend an hour rediscovering them.
+
+- **Windows, Settings → Packages → Re-install or Upgrade:** the banner *"This window lost its link to the application. Nothing can be saved or closed until it is reloaded"* appears while the install runs, and the install then finishes normally. The link is fine; the watch that asks whether it is alive gets starved by uv's own output and concludes wrongly after two missed answers. Fixed by `9d6cb68`. Reload if it bothers you, or ignore it - nothing is lost.
+- **Any platform, after changing a package source:** an environment that can no longer `import OCP` shows a kernel reading `dead`, a Restart backend button that cannot help, and the real reason only in `build123d-studio.log`. The commonest cause is pointing build123d at a checkout that does not declare `cadquery-ocp`. Fixed by `9d644cd`, which says so on the splash and points at Restore. To recover in this build: add `cadquery-ocp` under Additional packages, or Settings → Packages → Restore.
+
 ### What is still running
 
 The one command each test refers back to. Run it *after* the application's window has gone.
