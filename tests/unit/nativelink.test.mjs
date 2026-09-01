@@ -16,7 +16,11 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
 
-import { watchNativeLink } from "../../src/nativelink.js";
+import {
+  holdNativeLink,
+  nativeLinkHeld,
+  watchNativeLink,
+} from "../../src/nativelink.js";
 
 /** A probe that answers, or hangs, depending on a switch the test holds. */
 function switchable() {
@@ -174,4 +178,62 @@ test("an ordinary tick is not a jump", async () => {
 
   assert.equal(lost, 0, "a second of ordinary time was treated as a suspend");
   assert.equal(link.asked, 0, "it probed without being asked to");
+});
+
+// --- not concluding anything while we are the reason it is slow ------------
+//
+// uv pumps a local checkout's build output through the same connection every
+// native call uses. On Windows that was enough for two probes in a row to miss
+// their five-second deadline, and the window was told it had died - over an
+// install that ran perfectly.
+
+test("a held link is not probed, and is never reported", async () => {
+  const link = switchable();
+  link.answering = false;
+  let lost = 0;
+  const stop = watchNativeLink({
+    probe: link.probe,
+    onLost: () => { lost += 1; },
+    interval: 5,
+    deadline: 15,
+    misses: 2,
+    isHeld: () => true,
+  });
+
+  await settle(120);
+  stop();
+
+  assert.equal(link.asked, 0, "a held link was asked anyway");
+  assert.equal(lost, 0, "a held link was declared dead");
+});
+
+test("and it is asked again once the hold is released", async () => {
+  const link = switchable();
+  let held = true;
+  const stop = watchNativeLink({
+    probe: link.probe, onLost: () => {}, interval: 5, deadline: 15, isHeld: () => held,
+  });
+
+  await settle(40);
+  assert.equal(link.asked, 0, "asked while held");
+
+  held = false;
+  await settle(40);
+  stop();
+
+  assert.ok(link.asked > 0, "the watch did not resume after the hold");
+});
+
+test("holdNativeLink nests, so an action inside an action still holds", () => {
+  // A re-install stages files, runs uv, then restarts the language server and
+  // the kernel. A flag would be cleared by whichever finished first.
+  assert.equal(nativeLinkHeld(), false);
+  const outer = holdNativeLink();
+  const inner = holdNativeLink();
+  inner();
+  assert.equal(nativeLinkHeld(), true, "the outer hold was released by the inner one");
+  outer();
+  assert.equal(nativeLinkHeld(), false);
+  outer();
+  assert.equal(nativeLinkHeld(), false, "releasing twice went negative");
 });

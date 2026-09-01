@@ -73,6 +73,7 @@ import { askTwoWay } from "./confirm.js";
 import { escapeHtml } from "./escape.js";
 import { afterNativeDialog, bounceActivation } from "./nativedialog.js";
 import { closeOnBackdropClick } from "./backdrop.js";
+import { holdNativeLink } from "./nativelink.js";
 import { refreshToolbarTitles } from "./toolbar.js";
 import { resolvedTheme, setThemePreference } from "./theme.js";
 import {
@@ -286,6 +287,13 @@ async function runEnvironmentAction({ status, done, work }) {
   clearLog();
   setStatus(status);
 
+  // uv pumps a local checkout's build output through the same connection the
+  // window uses for every native call, and on Windows that was enough for the
+  // link watchdog to miss two probes and announce that the window was dead -
+  // over an install that was running perfectly. Held for the whole action,
+  // including the two restarts that follow it.
+  const release = holdNativeLink();
+
   try {
     await work();
 
@@ -319,6 +327,7 @@ async function runEnvironmentAction({ status, done, work }) {
     appendLog(`Failed: ${error?.message ?? error}`);
     setStatus("Failed - see above.");
   } finally {
+    release();
     // Dismissed by the user, not by a timer: the log explains what happened,
     // and after a failure it is the only place that says why.
     await acknowledge();

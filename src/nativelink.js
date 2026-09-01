@@ -59,6 +59,43 @@ export const PROBE_DEADLINE = 5000;
  */
 export const MISSES_ALLOWED = 2;
 
+// Long native work, during which a slow answer is not a dead link.
+//
+// The probe is a loopback call that normally answers in well under a
+// millisecond, so five seconds is a thousand-fold margin - except while this
+// application is itself hammering the same connection. `uv sync` on a local
+// checkout spawns processes and pumps their output through it line by line,
+// and on Windows that was enough for two probes in a row to miss: the banner
+// told somebody their window was dead while the install it was running
+// finished perfectly.
+//
+// A count rather than a flag, because the actions nest - a re-install stages
+// files, runs uv, then restarts the language server and the kernel.
+let held = 0;
+
+/**
+ * Stop probing until the returned function is called.
+ *
+ * Not "stop watching": if the link really does die during an install, the next
+ * probe after the hold says so. This only declines to draw a conclusion from
+ * an answer that was late because we were busy.
+ */
+export function holdNativeLink() {
+  held += 1;
+  let released = false;
+  return () => {
+    if (!released) {
+      released = true;
+      held = Math.max(0, held - 1);
+    }
+  };
+}
+
+/** Whether probing is suspended. Exported for the test, which owns the clock. */
+export function nativeLinkHeld() {
+  return held > 0;
+}
+
 /**
  * Ask, repeatedly, and say when the answers stop.
  *
@@ -82,6 +119,7 @@ export function watchNativeLink({
   tick = TICK,
   jump = JUMP,
   wakeDeadline = WAKE_DEADLINE,
+  isHeld = nativeLinkHeld,
 }) {
   let missed = 0;
   let stopped = false;
@@ -116,6 +154,11 @@ export function watchNativeLink({
     if (stopped || asking) {
       return;
     }
+    if (isHeld()) {
+      // A wake during a long install. The ordinary round will ask once we are
+      // no longer the reason an answer might be slow.
+      return;
+    }
     asking = true;
     try {
       for (let attempt = 0; attempt < misses; attempt += 1) {
@@ -139,6 +182,12 @@ export function watchNativeLink({
 
   const round = async () => {
     if (stopped || asking) {
+      return;
+    }
+    if (isHeld()) {
+      // Busy on our own account. Reschedule rather than conclude: a late answer
+      // now says nothing about the link, only about what we asked it to do.
+      timer = setTimeout(round, interval);
       return;
     }
     asking = true;
