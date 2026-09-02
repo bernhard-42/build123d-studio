@@ -1097,7 +1097,7 @@ events.on("windowFocus", () => {
   checkActiveFileChanged().catch((error) => log.warn("Could not check the file on disk:", error));
 }).catch((error) => log.warn("Could not watch the window's focus:", error));
 
-async function writeRecoveryCopy(key) {
+async function writeRecoveryCopy(key, { force = false } = {}) {
   const contents = bufferContents(key);
   if (contents === null) {
     return;
@@ -1107,12 +1107,12 @@ async function writeRecoveryCopy(key) {
     // or a booking a save has already overtaken.
     return;
   }
-  if (!worthRecording(contents.text)) {
+  if (!force && !worthRecording(contents.text)) {
     if (!saidAboutLargeBuffers) {
       saidAboutLargeBuffers = true;
       log.warn(
-        "A buffer is too large to keep a recovery copy of; unsaved changes to it"
-        + " will not survive a crash.",
+        "A buffer is too large to keep a recovery copy of while it is typed in;"
+        + " one is made before each save.",
       );
     }
     return;
@@ -1128,6 +1128,35 @@ async function writeRecoveryCopy(key) {
 }
 
 /** Its copy is no longer the only one: it has been saved, or closed. */
+/**
+ * Make sure something is behind a buffer before its file is emptied.
+ *
+ * A save writes into the file rather than replacing it - see safewrite.js - so
+ * for the moment it takes, the only whole copy of the work is the buffer and
+ * whatever the journal holds. For most buffers the journal holds a current one
+ * already. A buffer past MAX_RECORDED_CHARS holds nothing, because copying
+ * megabytes on every pause in typing is what that limit exists to prevent.
+ *
+ * So it is copied once, here, where the cost is paid per save rather than per
+ * keystroke and only by the files that need it. bufferSettled drops it when the
+ * save succeeds, exactly as it drops an ordinary one.
+ *
+ * Best effort, and deliberately not awaited into the save's failure: a journal
+ * that cannot be written is not a reason to refuse to save.
+ */
+async function recoveryCopyBeforeSave(key) {
+  const contents = bufferContents(key);
+  if (contents === null || worthRecording(contents.text)) {
+    // Nothing to protect, or the journal is already doing it.
+    return;
+  }
+  try {
+    await writeRecoveryCopy(key, { force: true });
+  } catch (error) {
+    log.warn("Could not make a recovery copy before saving:", error);
+  }
+}
+
 export async function bufferSettled(key) {
   // A saved or closed buffer is not unsaved work any more, and nothing else
   // will refresh the mirror: it is written on content changes, and saving is
@@ -1701,6 +1730,9 @@ async function saveBuffer(key, saveAs) {
     // one outcome where the file and the screen deliberately differ.
     log.warn(`${path} was formatted for the write, but the buffer did not take the edit`);
   }
+
+  // Before the write, because the write is what empties the file.
+  await recoveryCopyBeforeSave(key);
 
   try {
     const written = await writeFileSafely({ filesystem, log }, path, text);

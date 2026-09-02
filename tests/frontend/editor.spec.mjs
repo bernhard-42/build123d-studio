@@ -557,6 +557,60 @@ test.describe("the editing contributions", () => {
   });
 });
 
+test.describe("a buffer too large for the journal", () => {
+  /**
+   * The gap that opened when saving stopped replacing the file.
+   *
+   * A save now writes into the file, which empties it before the new content
+   * lands - so for that moment the only whole copy of the work is the buffer
+   * and whatever the journal holds. Past MAX_RECORDED_CHARS the journal holds
+   * nothing, deliberately: copying megabytes on every pause in typing is what
+   * that limit exists to prevent.
+   *
+   * So one copy is made before the write, and dropped when the save succeeds.
+   * Asserted by order rather than by existence, because by the time the save
+   * has finished the copy is correctly gone.
+   */
+  const HUGE = `${PROJECT}/generated.py`;
+  const HUGE_SOURCE = "x = 1\n".repeat(400000);
+
+  const writes = (page) => page.evaluate(() =>
+    globalThis.__NEUTRALINO_STUB__.calls()
+      .map((call, index) => ({ index, name: call.name, path: call.args?.[0] }))
+      .filter((call) => call.name === "writeFile" && typeof call.path === "string"));
+
+  const isRecovery = (path) => path.includes("/recovery/") && path.endsWith(".py");
+
+  test("is copied once before the write, and not while it is typed in", async ({ page }) => {
+    test.slow();
+    await open(page, {
+      files: { ...FILES, [HUGE]: HUGE_SOURCE },
+      settings: { workspace: { folder: PROJECT, tabs: [{ path: HUGE, caret: null }], active: HUGE } },
+    });
+    await expect(page.locator(".tab-active .tab-label")).toHaveText("generated.py");
+
+    await focusEditor(page);
+    await page.keyboard.type("y = 2");
+    // Longer than the journal's own beat, so a copy it was going to make has
+    // been made. There must not be one: that is what the size limit is for.
+    await page.waitForTimeout(1200);
+    expect(
+      (await writes(page)).filter((call) => isRecovery(call.path)),
+      "a buffer past the limit was journalled while it was typed in",
+    ).toHaveLength(0);
+
+    await page.keyboard.press("Meta+s");
+    await expect.poll(async () => (await writes(page)).some((c) => c.path === HUGE)).toBe(true);
+
+    const all = await writes(page);
+    const copy = all.find((call) => isRecovery(call.path));
+    const file = all.find((call) => call.path === HUGE);
+    expect(copy, "no recovery copy was made before the file was emptied").toBeDefined();
+    expect(copy.index, "the copy was made after the write it exists to survive")
+      .toBeLessThan(file.index);
+  });
+});
+
 test.describe("a file changed by something else, noticed without saving", () => {
   /**
    * Until now an outside edit was found only when the user tried to save, so a
