@@ -120,12 +120,17 @@ else
 	@exit 1
 endif
 
-# Commits the two files bump touched and tags them. Pushing is deliberately not
-# here: the tag is what starts the release workflow, and that is a decision
+# Commits the three files bump touched and tags them. Pushing is deliberately
+# not here: the tag is what starts the release workflow, and that is a decision
 # rather than a build step.
+#
+# runtime/pyproject.toml is one of the three, and leaving it out is not
+# cosmetic: its version is the stamp the application compares against to decide
+# that the app and core_cad groups are out of date. A tag without it ships an
+# environment that never notices a new release.
 release:
-	@git diff --quiet package.json neutralino.config.json || \
-	  git commit -m "Version $(VERSION)" package.json neutralino.config.json
+	@git diff --quiet package.json neutralino.config.json runtime/pyproject.toml || \
+	  git commit -m "Version $(VERSION)" package.json neutralino.config.json runtime/pyproject.toml
 	git tag -a v$(VERSION) -m "Version $(VERSION)"
 	@echo
 	@echo "Tagged v$(VERSION). To release it:"
