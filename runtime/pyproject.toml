@@ -13,7 +13,7 @@
 name = "build123d-studio-runtime"
 # The build123d Studio release this file came from. A different one is how the
 # application notices that the groups below are out of date.
-version = "0.5.1"
+version = "0.5.2"
 description = "Encapsulated Python environment for the build123d-studio application"
 requires-python = "==3.14.*"
 

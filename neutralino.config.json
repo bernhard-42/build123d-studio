@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/neutralinojs/neutralinojs/main/schemas/neutralino.config.schema.json",
   "applicationId": "dev.build123dstudio.app",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "applicationName": "build123d Studio",
   "author": "Bernhard Walter",
   "description": "A standalone build123d IDE",
