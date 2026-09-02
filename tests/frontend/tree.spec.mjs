@@ -312,3 +312,64 @@ test.describe("watching the folder", () => {
     await expect(row(page, "other.py")).toBeVisible();
   });
 });
+
+test.describe("a directory opened a second time", () => {
+  /**
+   * M35, on all three platforms. A collapsed directory is deliberately skipped
+   * by refreshSidebar - watching one nobody can see is work spent on nothing -
+   * so opening it is the moment its listing has to be asked for again. It was
+   * read only the first time it was ever opened, and kept for the life of the
+   * project: a file written into it while it was closed never appeared however
+   * often it was drilled into, a deleted one stayed, and a rename showed both
+   * names at once.
+   *
+   * The other program here is the stub writing the directory directly, which is
+   * what a terminal, a git checkout or an export from another application does.
+   */
+  const NESTED = `${PROJECT}/schnaddel`;
+
+  async function withNested(page) {
+    return open(page, {
+      files: { ...FILES, [`${NESTED}/first.py`]: "FIRST = 1\n" },
+      settings: { workspace: WORKSPACE },
+    });
+  }
+
+  test("shows what is in it now, not what was in it the first time", async ({ page }) => {
+    await withNested(page);
+
+    await row(page, "schnaddel").click();
+    await expect(row(page, "first.py")).toBeVisible();
+    await row(page, "schnaddel").click();
+    await expect(row(page, "first.py")).toHaveCount(0);
+
+    // Written while the directory is closed, so nothing is expected to happen
+    // on screen until it is opened again.
+    await page.evaluate(
+      (p) => globalThis.__NEUTRALINO_STUB__.given(p, "SECOND = 1\n"),
+      `${NESTED}/second.py`,
+    );
+
+    await row(page, "schnaddel").click();
+
+    await expect(row(page, "second.py"), "the listing was the one read the first time")
+      .toBeVisible();
+  });
+
+  test("and a file removed while it was closed is gone from it", async ({ page }) => {
+    await withNested(page);
+
+    await row(page, "schnaddel").click();
+    await expect(row(page, "first.py")).toBeVisible();
+    await row(page, "schnaddel").click();
+
+    await page.evaluate(
+      (p) => globalThis.__NEUTRALINO_STUB__.removePath(p),
+      `${NESTED}/first.py`,
+    );
+
+    await row(page, "schnaddel").click();
+
+    await expect(row(page, "first.py"), "a deleted file survived in the tree").toHaveCount(0);
+  });
+});

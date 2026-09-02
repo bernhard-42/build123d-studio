@@ -896,8 +896,12 @@ async function toggle(path) {
     return;
   }
   expanded.add(path);
-  if (!children.has(path)) {
-    await read(path);
-  }
+  // Read every time, not only the first. A collapsed directory is deliberately
+  // skipped by refreshSidebar - watching one the user cannot see is work spent
+  // on nothing - so opening it is the moment its listing is asked for again.
+  // Keeping the old one meant a directory showed what it held the first time it
+  // was ever opened: a file written into it while it was closed never appeared,
+  // a deleted one stayed, and a rename showed both names.
+  await read(path);
   render();
 }
