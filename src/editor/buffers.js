@@ -23,8 +23,8 @@
  */
 
 // The injected model operations:
-// { create(text), dispose(model), versionOf(model), textOf(model),
-//   replaceText(model, text) }.
+// { create(text, path), dispose(model), versionOf(model), textOf(model),
+//   replaceText(model, text), setLanguage(model, path) }.
 let models = null;
 
 const buffers = new Map();
@@ -64,7 +64,7 @@ export function initBuffers(modelOperations) {
 export function open({ path = null, text = "", caret = null, matchesDisk = true }) {
   const key = nextKey;
   nextKey += 1;
-  const model = models.create(text);
+  const model = models.create(text, path);
   buffers.set(key, {
     key,
     path,
@@ -181,6 +181,10 @@ export function setPath(key, path) {
     }
   }
   buffer.path = path;
+  // A Save As can turn an unnamed buffer into a .step, or a .py into neither.
+  // The model was told what it was when it was made, and that answer is now out
+  // of date - see languageFor.
+  models.setLanguage(buffer.model, path);
   return true;
 }
 

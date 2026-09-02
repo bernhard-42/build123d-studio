@@ -33,6 +33,26 @@ export const SNIFF_BYTES = 8000;
 export const LARGE_FILE_BYTES = 10 * 1024 * 1024;
 
 /**
+ * The Monaco language for a file, which is Python or nothing.
+ *
+ * Only Python is registered in this editor, so everything else is plaintext -
+ * and that is the point rather than a fallback. A model told it is Python is
+ * highlighted as Python, offered to ruff on save, and sent to the language
+ * server, which then reports a STEP file as 6779 syntax errors because it is
+ * not one. A user opening an export to look at it should see it, not a wall of
+ * complaints that OpenCascade's exchange format is invalid Python.
+ *
+ * A buffer with no path is Python: it has just been made by New file, which
+ * inserts a Python snippet into it.
+ */
+export function languageFor(path) {
+  if (path === null || path === undefined || path === "") {
+    return "python";
+  }
+  return /\.pyi?$/i.test(path) ? "python" : "plaintext";
+}
+
+/**
  * Whether these bytes came from something that is not text.
  *
  * One NUL byte is the whole test, which is git's, and it is chosen for being

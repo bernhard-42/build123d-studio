@@ -31,6 +31,7 @@ import {
   setViewState,
   viewState,
 } from "../../../src/editor/buffers.js";
+import { languageFor } from "../../../src/editor/filetype.js";
 
 /**
  * Monaco stands in as a counter with a disposed flag.
@@ -42,10 +43,15 @@ import {
 function fakeModels() {
   const created = [];
   const api = {
-    create(text) {
-      const model = { text, version: 1, disposed: false };
+    create(text, path) {
+      // The language comes from the same rule the real factory uses, so a test
+      // that gets it wrong here fails for the same reason the editor would.
+      const model = { text, version: 1, disposed: false, language: languageFor(path) };
       created.push(model);
       return model;
+    },
+    setLanguage(model, path) {
+      model.language = languageFor(path);
     },
     dispose(model) {
       model.disposed = true;
@@ -358,4 +364,52 @@ test("initBuffers starts a window with nothing open", () => {
   initBuffers(api);
   assert.deepEqual(keys(), []);
   assert.equal(activeKeyOf(), null);
+});
+
+// --- what a buffer is treated as -------------------------------------------
+
+test("a Python file gets a Python model and anything else does not", () => {
+  // Only Python is registered in this editor, so a plaintext model is the
+  // difference between reading a STEP export and reading 6779 complaints that
+  // it is not valid Python.
+  const { api, created } = fakeModels();
+  initBuffers(api);
+
+  open({ path: "/p/part.py", text: "" });
+  open({ path: "/p/screw.step", text: "" });
+
+  assert.equal(created[0].language, "python");
+  assert.equal(created[1].language, "plaintext");
+});
+
+test("a buffer with no file yet is Python, because New file made it", () => {
+  const { api, created } = fakeModels();
+  initBuffers(api);
+
+  open({ text: "" });
+
+  assert.equal(created[0].language, "python");
+});
+
+test("Save As onto another kind of file changes what the buffer is", () => {
+  // The model was told what it was when it was made, and a rename is the one
+  // moment that answer can stop being true.
+  const { api, created } = fakeModels();
+  initBuffers(api);
+  const key = open({ text: "" });
+  assert.equal(created[0].language, "python");
+
+  setPath(key, "/p/notes.txt");
+
+  assert.equal(created[0].language, "plaintext", "the model kept a stale language");
+});
+
+test("and back again, so renaming to .py restores it", () => {
+  const { api, created } = fakeModels();
+  initBuffers(api);
+  const key = open({ path: "/p/notes.txt", text: "" });
+
+  setPath(key, "/p/notes.py");
+
+  assert.equal(created[0].language, "python");
 });

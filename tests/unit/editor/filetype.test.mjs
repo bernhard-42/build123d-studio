@@ -9,11 +9,12 @@ import { strict as assert } from "node:assert";
 import { test } from "node:test";
 
 import {
+  LARGE_FILE_BYTES,
+  SNIFF_BYTES,
   describeSize,
   isLarge,
-  LARGE_FILE_BYTES,
+  languageFor,
   looksBinary,
-  SNIFF_BYTES,
 } from "../../../src/editor/filetype.js";
 
 const bytesOf = (text) => new TextEncoder().encode(text);
@@ -109,4 +110,33 @@ test("an unknown size says so rather than inventing a number", () => {
   assert.equal(describeSize(null), "an unknown size");
   assert.equal(describeSize(Number.NaN), "an unknown size");
   assert.equal(describeSize(-1), "an unknown size");
+});
+
+// --- what the editor treats a file as --------------------------------------
+
+test("Python files are Python", () => {
+  assert.equal(languageFor("/p/part.py"), "python");
+  assert.equal(languageFor("/p/stubs.pyi"), "python");
+  assert.equal(languageFor("/p/PART.PY"), "python", "the suffix is not case sensitive");
+});
+
+test("everything else is plaintext, which is the whole point", () => {
+  // Only Python is registered here, so this is not a fallback - it is the
+  // difference between reading a STEP export and reading thousands of
+  // complaints that it is not valid Python.
+  assert.equal(languageFor("/p/screw.step"), "plaintext");
+  assert.equal(languageFor("/p/mesh.3mf"), "plaintext");
+  assert.equal(languageFor("/p/notes.txt"), "plaintext");
+  assert.equal(languageFor("/p/README"), "plaintext");
+});
+
+test("a name that merely contains .py is not a Python file", () => {
+  assert.equal(languageFor("/p/part.py.step"), "plaintext");
+  assert.equal(languageFor("/p/pyproject.toml"), "plaintext");
+});
+
+test("a buffer with no file yet is Python, because New file made it", () => {
+  assert.equal(languageFor(null), "python");
+  assert.equal(languageFor(undefined), "python");
+  assert.equal(languageFor(""), "python");
 });

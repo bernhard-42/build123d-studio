@@ -122,6 +122,7 @@ import {
 import { completionItems, completionQuery, isIncomplete } from "./completion.js";
 import { snippetCompletions } from "./snippets.js";
 import { markersFor } from "./diagnostics.js";
+import { languageFor } from "./filetype.js";
 import { MAX_FORMAT_LINES, formatEdits, tooLargeToFormat } from "./format.js";
 import { showConsolePanel } from "../debug/console.js";
 import { cellActionsShown } from "./cellactions.js";
@@ -937,7 +938,8 @@ export function initEditor() {
   // Every buffer's model is made here, so that buffers.js can stay free of
   // monaco and be tested without a window.
   buffers.initBuffers({
-    create: (text) => monaco.editor.createModel(text, "python"),
+    create: (text, path) => monaco.editor.createModel(text, languageFor(path)),
+    setLanguage: (model, path) => monaco.editor.setModelLanguage(model, languageFor(path)),
     dispose: (model) => model.dispose(),
     versionOf: (model) => model.getAlternativeVersionId(),
     textOf: (model) => model.getValue(),
@@ -1389,6 +1391,11 @@ function scheduleSync() {
     const model = currentModel();
     const key = buffers.activeKeyOf();
     if (model === null || key === null || !ipc.isConnected()) {
+      return;
+    }
+    if (model.getLanguageId() !== "python") {
+      // A STEP export, a .dat, anything opened to be looked at. The server
+      // would be told it is Python and answer accordingly - see languageFor.
       return;
     }
     try {

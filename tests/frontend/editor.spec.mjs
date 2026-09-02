@@ -1214,6 +1214,54 @@ test.describe("formatting", () => {
   });
 });
 
+test.describe("only Python reaches the language server", () => {
+  /**
+   * A STEP export opened to be looked at.
+   *
+   * Every buffer used to be created as a Python model, so the sidecar was told
+   * `languageId: "python"` about all of them. Measured on a real 10 320 line
+   * export: basedpyright answers in half a second with **6779 diagnostics**,
+   * because OpenCascade's exchange format is not valid Python. Cheap, and a
+   * wall of red over a file nobody is editing.
+   *
+   * Asserted by what is not sent, because ignoring the answer is not the same
+   * as not asking.
+   */
+  const STEP = `${PROJECT}/screw.step`;
+  const STEP_SOURCE = "ISO-10303-21;\nHEADER;\n#1=CARTESIAN_POINT('',(0.,0.,0.));\n";
+
+  async function openOne(page, path, text) {
+    return open(page, {
+      files: { ...FILES, [path]: text },
+      settings: { workspace: { folder: PROJECT, tabs: [{ path, caret: null }], active: path } },
+    });
+  }
+
+  function syncs(sidecar) {
+    return sidecar.received.filter((frame) => frame.type === "editor.sync");
+  }
+
+  test("a STEP file is never sent for analysis", async ({ page }) => {
+    const { sidecar } = await openOne(page, STEP, STEP_SOURCE);
+    await expect(page.locator(".tab-active .tab-label")).toHaveText("screw.step");
+
+    await focusEditor(page);
+    await page.keyboard.type("#2=DIRECTION('',(0.,0.,1.));");
+    // Longer than SYNC_DELAY, so a sync that was going to happen has happened.
+    await page.waitForTimeout(900);
+
+    expect(syncs(sidecar), "a STEP file was sent to the language server").toHaveLength(0);
+  });
+
+  test("and a Python file still is, so the check is not simply off", async ({ page }) => {
+    const { sidecar } = await openOne(page, `${PROJECT}/part.py`, "x = 1\n");
+
+    await focusEditor(page);
+    await page.keyboard.type("y = 2");
+    await expect.poll(() => syncs(sidecar).length).toBeGreaterThan(0);
+  });
+});
+
 test.describe("the language features reach the screen", () => {
   test("the suggestion widget shows what the sidecar offered", async ({ page }) => {
     // The contribution trap, stated as a test. Without the suggest widget
