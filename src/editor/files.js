@@ -1620,9 +1620,7 @@ async function saveBuffer(key, saveAs) {
   }
 
   try {
-    const written = await writeFileSafely(
-      { filesystem, log, instanceId: log.instanceId }, path, text,
-    );
+    const written = await writeFileSafely({ filesystem, log }, path, text);
     if (written !== path) {
       log.info(`Saved ${path}, which resolves to ${written}`);
     }

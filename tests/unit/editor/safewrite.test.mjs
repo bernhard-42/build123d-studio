@@ -22,6 +22,16 @@ import { writeFileSafely } from "../../../src/editor/safewrite.js";
  */
 function fakeFilesystem({ files = {}, fail = [], truncateThenFail = [], permissions = null, resolve = null } = {}) {
   const calls = [];
+  // Identity, because that is the property at stake and a text-only disk cannot
+  // be wrong about it. A write keeps the number; a move carries the source's
+  // number to the destination, which is what a rename does and what replacing a
+  // file through a temporary costs.
+  let nextInode = 1;
+  const inodes = {};
+  for (const path of Object.keys(files)) {
+    inodes[path] = nextInode;
+    nextInode += 1;
+  }
   const noRoomOnce = new Set(truncateThenFail);
   const refuses = (operation, path) => fail.includes(operation) || fail.includes(`${operation}:${path}`);
   const guard = (operation, path) => {
@@ -34,6 +44,7 @@ function fakeFilesystem({ files = {}, fail = [], truncateThenFail = [], permissi
   return {
     calls,
     files,
+    inodes,
     getJoinedPath: async (path) => {
       guard("resolve", path);
       return resolve === null ? path : resolve;
@@ -83,37 +94,29 @@ function fakeFilesystem({ files = {}, fail = [], truncateThenFail = [], permissi
       if (refuses("write", path)) {
         throw new Error(`refused: write ${path}`);
       }
+      if (!(path in files)) {
+        inodes[path] = nextInode;
+        nextInode += 1;
+      }
       files[path] = data;
     },
     move: async (source, destination) => {
       guard("move", source);
       files[destination] = files[source];
+      inodes[destination] = inodes[source];
       delete files[source];
+      delete inodes[source];
     },
     remove: async (path) => {
       guard("remove", path);
       delete files[path];
+      delete inodes[path];
     },
   };
 }
 
 const silent = { info: () => {}, warn: () => {}, error: () => {} };
-const deps = (filesystem) => ({ filesystem, log: silent, instanceId: "abcd1234" });
-
-test("writes through a temporary and moves it into place", async () => {
-  const filesystem = fakeFilesystem({ files: { "/w/part.py": "old" } });
-  const written = await writeFileSafely(deps(filesystem), "/w/part.py", "new");
-
-  assert.equal(written, "/w/part.py");
-  assert.equal(filesystem.files["/w/part.py"], "new");
-  assert.deepEqual(Object.keys(filesystem.files), ["/w/part.py"], "no temporary left behind");
-  // The order is the guarantee: the target is never opened for writing.
-  assert.deepEqual(
-    filesystem.calls.filter((c) => c.operation === "write" || c.operation === "move"),
-    [{ operation: "write", path: "/w/part.py.abcd1234.b123d-tmp" },
-      { operation: "move", path: "/w/part.py.abcd1234.b123d-tmp" }],
-  );
-});
+const deps = (filesystem) => ({ filesystem, log: silent });
 
 test("follows a symlink instead of replacing it", async () => {
   // The link is /w/part.py; the real file is /repo/part.py. Writing the link
@@ -133,55 +136,6 @@ test("follows a symlink instead of replacing it", async () => {
   }
 });
 
-test("falls back to a direct write when the move is refused", async () => {
-  // Windows: rename onto an existing file is not guaranteed.
-  const filesystem = fakeFilesystem({ files: { "/w/part.py": "old" }, fail: ["move"] });
-  await writeFileSafely(deps(filesystem), "/w/part.py", "new");
-
-  assert.equal(filesystem.files["/w/part.py"], "new");
-  assert.deepEqual(Object.keys(filesystem.files), ["/w/part.py"],
-    "the duplicate temporary is cleaned up");
-});
-
-test("falls back when the temporary itself cannot be written", async () => {
-  // A writable file in a non-writable directory. This is the case the atomic
-  // write broke and the fallback now covers.
-  const filesystem = fakeFilesystem({
-    files: { "/w/part.py": "old" },
-    fail: ["write:/w/part.py.abcd1234.b123d-tmp"],
-  });
-  await writeFileSafely(deps(filesystem), "/w/part.py", "new");
-
-  assert.equal(filesystem.files["/w/part.py"], "new");
-});
-
-test("a partial temporary is cleaned up rather than left as a fake backup", async () => {
-  const filesystem = fakeFilesystem({
-    files: { "/w/part.py": "old" },
-    fail: ["write:/w/part.py.abcd1234.b123d-tmp"],
-  });
-  await writeFileSafely(deps(filesystem), "/w/part.py", "new");
-
-  assert.ok(filesystem.calls.some((c) => c.operation === "remove"),
-    "the fragment must be removed");
-  assert.equal(filesystem.files["/w/part.py.abcd1234.b123d-tmp"], undefined);
-});
-
-test("when both writes fail, the error names the temporary holding the work", async () => {
-  const filesystem = fakeFilesystem({
-    files: { "/w/part.py": "old" },
-    fail: ["move", "write:/w/part.py"],
-  });
-
-  await assert.rejects(
-    () => writeFileSafely(deps(filesystem), "/w/part.py", "new"),
-    /Your content is in \/w\/part\.py\.abcd1234\.b123d-tmp/,
-  );
-  assert.equal(filesystem.files["/w/part.py.abcd1234.b123d-tmp"], "new",
-    "the only copy of the work must survive");
-  assert.equal(filesystem.files["/w/part.py"], "old", "the original is untouched");
-});
-
 test("when nothing could be written at all, the original survives and nothing is left", async () => {
   const filesystem = fakeFilesystem({
     files: { "/w/part.py": "old" },
@@ -191,21 +145,6 @@ test("when nothing could be written at all, the original survives and nothing is
   await assert.rejects(() => writeFileSafely(deps(filesystem), "/w/part.py", "new"));
   assert.equal(filesystem.files["/w/part.py"], "old");
   assert.equal(filesystem.files["/w/part.py.abcd1234.b123d-tmp"], undefined);
-});
-
-test("two instances do not share a scratch name", async () => {
-  // Both windows have part.py open and both save. With one shared temporary
-  // the second overwrites the first's and then moves it into place, so a save
-  // that reported success wrote the other window's content.
-  const filesystem = fakeFilesystem({ files: { "/w/part.py": "old" }, fail: ["move"] });
-  const other = { filesystem, log: silent, instanceId: "99887766" };
-
-  await writeFileSafely(other, "/w/part.py", "theirs");
-
-  const written = filesystem.calls.filter((c) => c.operation === "write").map((c) => c.path);
-  assert.ok(written.includes("/w/part.py.99887766.b123d-tmp"),
-    `the scratch name must name the instance: ${written.join(", ")}`);
-  assert.ok(!written.includes("/w/part.py.abcd1234.b123d-tmp"));
 });
 
 test("a new file that cannot be written leaves nothing behind", async () => {
@@ -234,58 +173,65 @@ test("a write that empties the file and then fails puts it back", async () => {
     "a failed save must leave the file as it was, not empty it");
 });
 
-test("and when the move failed too, the work is still named", async () => {
-  // Same, but the temporary was written before the disk filled: the original
-  // goes back and the new content is in the temporary the message names.
-  const filesystem = fakeFilesystem({
-    files: { "/w/part.py": "old" },
-    fail: ["move"],
-    truncateThenFail: ["/w/part.py"],
-  });
-
-  await assert.rejects(
-    () => writeFileSafely(deps(filesystem), "/w/part.py", "new"),
-    /Your content is in \/w\/part\.py\.abcd1234\.b123d-tmp/,
-  );
-  assert.equal(filesystem.files["/w/part.py"], "old", "the original is put back");
-  assert.equal(filesystem.files["/w/part.py.abcd1234.b123d-tmp"], "new",
-    "the only copy of the work must survive");
-});
-
-test("the target's permissions survive the replacement", async () => {
-  const mode = { ownerRead: true, ownerWrite: true, ownerExec: true, othersRead: false };
-  const filesystem = fakeFilesystem({ files: { "/w/part.py": "old" }, permissions: mode });
-  await writeFileSafely(deps(filesystem), "/w/part.py", "new");
-
-  const restored = filesystem.calls.find((c) => c.operation === "setPermissions");
-  assert.notEqual(restored, undefined, "an executable script must not become 0644");
-  assert.deepEqual(restored.value, mode);
-  assert.equal(restored.mode, "REPLACE");
-});
-
-test("a new file is left with whatever the platform gives it", async () => {
-  const filesystem = fakeFilesystem({ files: {} });
-  await writeFileSafely(deps(filesystem), "/w/new.py", "content");
-
-  assert.equal(filesystem.files["/w/new.py"], "content");
-  assert.equal(filesystem.calls.find((c) => c.operation === "setPermissions"), undefined);
-});
-
-test("a save still succeeds when the permissions cannot be put back", async () => {
-  const filesystem = fakeFilesystem({
-    files: { "/w/part.py": "old" },
-    permissions: { ownerRead: true },
-    fail: ["setPermissions"],
-  });
-
-  await writeFileSafely(deps(filesystem), "/w/part.py", "new");
-  assert.equal(filesystem.files["/w/part.py"], "new", "a lost mode must not fail the save");
-});
-
 test("an unresolvable path falls back to the one the user gave", async () => {
   const filesystem = fakeFilesystem({ files: { "/w/part.py": "old" }, fail: ["resolve"] });
   const written = await writeFileSafely(deps(filesystem), "/w/part.py", "new");
 
   assert.equal(written, "/w/part.py");
   assert.equal(filesystem.files["/w/part.py"], "new");
+});
+
+// --- the file stays the file ------------------------------------------------
+
+test("a save keeps the file it saved, rather than putting a new one there", async () => {
+  // The property this module was changed for. Writing a temporary and renaming
+  // it over the target replaces the inode, and what goes with it is not
+  // abstract: a hard link keeps the old contents for ever, and extended
+  // attributes - Finder tags among them - are gone. Measured on a real file
+  // before the change: part.py and a hard link to it ended up with different
+  // inodes and different text.
+  const filesystem = fakeFilesystem({ files: { "/p/part.py": "old" } });
+  const before = filesystem.inodes["/p/part.py"];
+
+  await writeFileSafely(deps(filesystem), "/p/part.py", "new");
+
+  assert.equal(filesystem.files["/p/part.py"], "new");
+  assert.equal(filesystem.inodes["/p/part.py"], before, "the file was replaced rather than written");
+});
+
+test("nothing is written beside the target, and nothing is moved", async () => {
+  // The same claim from the other side: a temporary that is renamed into place
+  // would leave both a write to another path and a move in the record.
+  const filesystem = fakeFilesystem({ files: { "/p/part.py": "old" } });
+
+  await writeFileSafely(deps(filesystem), "/p/part.py", "new");
+
+  const writes = filesystem.calls.filter((c) => c.operation === "write");
+  assert.deepEqual(writes.map((c) => c.path), ["/p/part.py"]);
+  assert.equal(filesystem.calls.some((c) => c.operation === "move"), false);
+  assert.deepEqual(Object.keys(filesystem.files), ["/p/part.py"], "something was left beside it");
+});
+
+test("the mode is left alone, because the file was never replaced", async () => {
+  // A fresh temporary carries the default mode, so the old path had to put the
+  // target's permissions back after every save. Writing into the file keeps
+  // them, and touching them anyway is a way to get them wrong.
+  const filesystem = fakeFilesystem({ files: { "/p/part.py": "old" }, permissions: { r: true } });
+
+  await writeFileSafely(deps(filesystem), "/p/part.py", "new");
+
+  assert.equal(
+    filesystem.calls.some((c) => c.operation === "setPermissions"),
+    false,
+    "the save changed permissions it had no reason to touch",
+  );
+});
+
+test("a new file is created, and only where it was asked for", async () => {
+  const filesystem = fakeFilesystem({ files: {} });
+
+  const written = await writeFileSafely(deps(filesystem), "/p/fresh.py", "b = Box(1, 2, 3)");
+
+  assert.equal(written, "/p/fresh.py");
+  assert.deepEqual(Object.keys(filesystem.files), ["/p/fresh.py"]);
 });

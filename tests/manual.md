@@ -342,15 +342,17 @@ The first: a session whose beat was over a minute old was skipped as "asleep", w
 
 **Left as it is, deliberately.** What VS Code has and this does not is a way to *see* it: an encoding in the status bar and a "Reopen with Encoding" command. If this is ever revisited, that is the shape worth copying - say so on open, rather than refusing the file or guessing at latin-1. `readBinaryFile`/`writeBinaryFile` exist, so a lossless round trip is reachable without leaving Neutralino; it was not done because nothing about it is what a user of this application expects to be different.
 
-### M18 — What a save does to the file's identity
+### M18 — A save keeps the file it saved
 
-**Proves** what is lost when the inode is replaced. **From** D8. Also an experiment.
+**Proves** the file is written rather than replaced. **From** D8.
 
 1. macOS/Linux: `ln part.py hard-link.py`, and on macOS `xattr -w com.apple.metadata:test 1 part.py`.
 2. Edit and save `part.py` in the application.
 3. `ls -li part.py hard-link.py` and `xattr -l part.py`.
 
-**Record:** the link count and inode, and whether the attribute survived. Permissions are restored deliberately; ownership and extended attributes are not.
+**Pass:** one inode, shared by both names, with a link count of 2 - and `hard-link.py` holds what was just saved. The extended attribute is still there.
+
+**The failure:** two inodes. `hard-link.py` keeps the old text for ever, the attribute is gone, and on macOS so are any Finder tags. That is what writing a temporary and renaming it over the target costs, and it is what this used to do.
 
 ---
 

@@ -12,10 +12,10 @@
 /**
  * The real file behind a path, with any symlinks resolved.
  *
- * Saving through a symlink used to destroy it. std::filesystem::rename replaces
- * the *link*, not its target, so a `part.py` symlinked into a repository became
- * an ordinary file holding the content while the real file silently stopped
- * receiving edits - and the editor reported a successful save every time.
+ * The write below goes through a symlink of its own accord - opening one opens
+ * its target - so this is not what keeps a link intact. It is what the caller
+ * is told: a save reports the file it actually wrote, so a `part.py` symlinked
+ * into a repository names the file in the repository.
  *
  * getJoinedPath is the resolver, which is not where anyone would look for it:
  * Neutralino implements it with std::filesystem::weakly_canonical, while
@@ -34,68 +34,6 @@ async function resolveTarget({ filesystem, log }, path) {
     log.warn("Could not resolve the save target, using the path as given:", error);
     return path;
   }
-}
-
-/** A file's permissions, or null when there is no file there yet. */
-async function permissionsOf({ filesystem }, path) {
-  try {
-    return await filesystem.getPermissions(path);
-  } catch {
-    // A new file. Whatever the platform gives it is right.
-    return null;
-  }
-}
-
-/**
- * Put the original permissions back on a file that has just been replaced.
- *
- * The temporary is created fresh, so it carries the default mode rather than
- * the target's: a script the user had made executable, or a file deliberately
- * kept at 0600, quietly became 0644 on every save.
- *
- * Reported rather than thrown. The content is already safely in place, and
- * losing a mode is not worth failing a save that otherwise worked.
- */
-async function restorePermissions({ filesystem, log }, path, permissions) {
-  if (permissions === null) {
-    return;
-  }
-  try {
-    await filesystem.setPermissions(path, permissions, "REPLACE");
-  } catch (error) {
-    log.warn(`Saved ${path} but could not restore its permissions:`, error);
-  }
-}
-
-/** Remove a temporary, tolerating one that was never created. */
-async function discardTemporary({ filesystem }, temporary) {
-  try {
-    await filesystem.remove(temporary);
-  } catch {
-    // It is not there, which is the common case and not a problem.
-  }
-}
-
-/**
- * The scratch name to write beside the target.
- *
- * Named for the instance, because two windows can have the same file open and
- * a shared scratch name makes their saves collide: one overwrites the other's
- * temporary and then moves it into place, so a save that reported success
- * wrote the other window's content. The identity is the same one the log
- * stamps its lines with, passed in rather than imported because this module
- * takes its whole world as arguments.
- *
- * It makes the name longer, which matters only where a path length is capped -
- * Windows, at 260 unless long paths are enabled. What that costs is bounded and
- * worth stating: a temporary that cannot be created falls through to the direct
- * write below, which puts the file back if it fails. So a deep path loses
- * atomicity, and loses content only where putBack cannot restore it either - an
- * original that exists and cannot be read, which putBack deliberately leaves
- * alone, or a restore that fails in turn, which it can only log.
- */
-function temporaryFor({ instanceId }, path) {
-  return `${path}.${instanceId}.b123d-tmp`;
 }
 
 /**
@@ -153,85 +91,54 @@ async function putBack({ filesystem, log }, path, original) {
 }
 
 /**
- * Write a file without ever truncating the existing one.
+ * Write a file in place, keeping it the same file.
  *
- * writeFile opens the target and truncates it before the new contents are
- * there, so a crash, a full disk or the process being killed mid-write leaves a
- * half-written .py. Writing beside it and moving into place means the target is
- * either the old file or the new one, never a fragment.
+ * The obvious alternative - write a temporary beside it and rename it over the
+ * target - is what this used to do, and it is what makes a save atomic: the
+ * path is either the old file or the new one, never a fragment. It also
+ * replaces the inode, and that is not a detail. A hard link to the file keeps
+ * the old contents for ever, extended attributes go (on macOS that includes
+ * Finder tags and labels), and so do ownership and ACLs. Measured: after one
+ * save, `part.py` and a hard link to it had different inodes and different
+ * text.
  *
- * The temporary lives in the same directory deliberately: a move within one
- * filesystem is a rename, while /tmp would be a copy across devices and no
- * better than writing directly.
+ * Users expect a file to stay the file they linked or tagged, and every editor
+ * they compare this one to keeps it. So the file is opened and written, and its
+ * identity is preserved by never replacing it.
  *
- * What this does *not* promise: nothing is fsynced, because Neutralino offers
- * no way to. The guarantee is against this process dying or being killed, not
- * against losing power - after a power cut the directory entry can point at a
- * file whose contents never reached the disk. Worth stating, because "atomic
- * save" is usually read as the stronger claim.
+ * **What replaces the atomicity is the recovery journal.** The copy of a
+ * modified buffer is written when typing stops and is dropped only after a save
+ * has *succeeded*, so a process killed mid-write leaves the journal holding the
+ * work - see files.js, bufferSettled. Two gaps in that, and both are stated
+ * rather than hidden: anything typed since the last journal beat is not in the
+ * copy, and a buffer past MAX_RECORDED_CHARS has no copy at all.
  *
- * The fallback is not decoration. std::filesystem::rename onto an existing file
- * is well defined on POSIX and not on Windows, and there is no Windows machine
- * here to find that out on. It covers the temporary write as well as the move,
- * which is a fix rather than tidying: with the write outside the try, a
- * writable file in a non-writable directory - the file accepts a write, the
- * directory refuses a new entry - stopped saving at all the day the atomic
- * write landed, having saved perfectly well before it.
+ * A write that *fails* is covered here rather than by the journal. writeFile
+ * opens the target and empties it before the new content arrives, so a full
+ * disk destroys the file it was replacing; the original is read into memory
+ * first and put back if the write throws, which turns that into "the file is as
+ * it was and the buffer is still modified".
+ *
+ * Permissions need no restoring now. The mode belongs to the file, and the file
+ * is the same one it was.
  *
  * @returns {Promise<string>} the path actually written, symlinks resolved
  */
 export async function writeFileSafely(deps, requestedPath, content) {
-  const { filesystem, log } = deps;
+  const { filesystem } = deps;
   const path = await resolveTarget(deps, requestedPath);
-  const temporary = temporaryFor(deps, path);
-  const permissions = await permissionsOf(deps, path);
 
-  // Whether the temporary holds the whole of the user's work, which is what
-  // decides between deleting it and telling the user where it is.
-  let temporaryIsComplete = false;
-
-  try {
-    await filesystem.writeFile(temporary, content);
-    temporaryIsComplete = true;
-    await filesystem.move(temporary, path);
-    await restorePermissions(deps, path, permissions);
-    return path;
-  } catch (error) {
-    log.warn("Could not save through a temporary file, writing directly:", error);
-  }
-
-  // What is on disk now, read before anything empties it.
-  //
-  // The direct write below is not atomic - that is the whole point of it - so
-  // if it fails, the file it was replacing is already gone. That is the one
-  // outcome this module exists to prevent, and it is reachable: a full disk
-  // refuses the temporary and can refuse this too. Held here so it can be put
-  // back, which turns a failed save from "the file is destroyed" into "the
-  // file is as it was and the buffer is still modified".
-  //
-  // Cheap, and only on this path. A source file is small and the fallback runs
-  // only once something has already gone wrong.
+  // Read before anything empties it, and only for as long as the write takes.
+  // A source file is small; this is the copy that makes a failed write
+  // recoverable.
   const original = await contentOf(deps, path);
 
   try {
     await filesystem.writeFile(path, content);
   } catch (error) {
     await putBack(deps, path, original);
-    if (temporaryIsComplete) {
-      // Both writes failed, and the temporary is now the only copy of the work.
-      // Naming it is the entire value left here.
-      log.error(`Save failed. Your content is in ${temporary}`);
-      throw new Error(`${path} could not be saved. Your content is in ${temporary}`,
-        { cause: error });
-    }
-    // The temporary never completed, so it is a truncated fragment rather than
-    // a copy of anything. Left beside the user's source it would be litter that
-    // looks like a backup.
-    await discardTemporary(deps, temporary);
     throw error;
   }
 
-  await restorePermissions(deps, path, permissions);
-  await discardTemporary(deps, temporary);
   return path;
 }
