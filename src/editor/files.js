@@ -36,7 +36,7 @@ import {
   bufferPath,
   captureActiveCaret,
   closeBuffer,
-  formatBuffer,
+  formatBufferFor,
   getCurrentFile,
   bufferContents,
   bufferExists,
@@ -1518,40 +1518,32 @@ async function saveBuffer(key, saveAs) {
     }
   }
 
-  // Formatted before it is written, never after: what lands on disk and what
-  // is on screen have to be the same text, and formatting the file underneath
-  // the buffer would leave the tab showing the old layout and claiming to be
-  // clean. Awaited for the same reason - the write below reads the buffer.
+  // Formatted before it is written, and what ruff produced is what gets
+  // written. The formatted text comes back from the call rather than being read
+  // out of the editor afterwards, which is the difference between a save that
+  // writes the formatter's answer and one that writes whatever the buffer holds
+  // by the time it looks. The buffer is shared mutable state - a tab switch, a
+  // caret move, another edit - and a save that asks it what to write inherits
+  // every race that reaches it.
+  //
+  // Keyed by buffer for the same reason, so a save formats the file it is
+  // saving and not the one that happens to be on screen when ruff answers.
   //
   // Failure here is not failure to save. ruff declining a buffer that does not
   // parse is the ordinary state of a file being typed into, and refusing to
   // write it would turn a formatter into an obstacle between somebody and their
   // own work.
+  //
   // isConnected first, because the alternative is a save that hangs. The
   // request would otherwise sit out its whole timeout before failing, and a
   // Cmd-S that takes half a minute because the sidecar died is a worse answer
   // than a file saved with the layout it already had.
-  // Only while this buffer is still the one on screen, because formatBuffer is
-  // the one thing on this path that is not keyed: it runs Monaco's format
-  // action against the editor, which means whichever model the editor is
-  // showing. A Save As dialog or the changed-on-disk prompt above can sit open
-  // for as long as somebody takes to answer it, and a click on another tab in
-  // that time used to format *that* buffer instead - leaving it dirty with an
-  // edit nobody asked for while this one was written unformatted.
-  //
-  // Not formatting is the harmless half of that choice. The file is saved
-  // either way, and the next save formats it.
+  let formatted = null;
   if (formatOnSave() && ipc.isConnected()) {
-    if (activeBufferKey() === key) {
-      try {
-        // Not cancellable: this application moves the caret itself around a
-        // save, and a cancelled format here is a file written unformatted.
-        await formatBuffer({ cancellable: false });
-      } catch (error) {
-        log.warn("Not formatted before saving:", error);
-      }
-    } else {
-      log.info("Not formatted: another buffer is on screen by the time it saved");
+    try {
+      formatted = await formatBufferFor(key);
+    } catch (error) {
+      log.warn("Not formatted before saving:", error);
     }
   }
 
@@ -1608,9 +1600,28 @@ async function saveBuffer(key, saveAs) {
     return null;
   }
 
+  // What the formatter produced, or what the buffer holds when it produced
+  // nothing.
+  //
+  // Only while the buffer is still at the version the format left it at. There
+  // are awaits between the format and here - the stamp, and the changed-on-disk
+  // prompt, which sits open for as long as somebody takes to answer it - and
+  // anything typed in that window is newer than what ruff was given. Writing
+  // the formatted text then would put the file *behind* the buffer, which is
+  // the one direction a save must never go.
+  const usable = formatted !== null && formatted.versionId === contents.versionId;
+  const text = usable ? formatted.text : contents.text;
+  const agreed = contents.text === text;
+  if (!agreed) {
+    // The formatted text is going to disk, and the buffer does not have it -
+    // so the tab is right to stay modified, and this is worth a line: it is the
+    // one outcome where the file and the screen deliberately differ.
+    log.warn(`${path} was formatted for the write, but the buffer did not take the edit`);
+  }
+
   try {
     const written = await writeFileSafely(
-      { filesystem, log, instanceId: log.instanceId }, path, contents.text,
+      { filesystem, log, instanceId: log.instanceId }, path, text,
     );
     if (written !== path) {
       log.info(`Saved ${path}, which resolves to ${written}`);
@@ -1635,7 +1646,9 @@ async function saveBuffer(key, saveAs) {
   if (!setCurrentFile(key, path)) {
     log.warn(`Saved ${path}, but another buffer already holds that path`);
   }
-  markSaved(key, contents.versionId);
+  if (agreed) {
+    markSaved(key, contents.versionId);
+  }
   // Written by us, so this is now the state we agree with. Read back rather
   // than assumed: the size on disk is the encoded length, and the time is the
   // filesystem's rather than ours.
@@ -1645,7 +1658,7 @@ async function saveBuffer(key, saveAs) {
   // the ones with no other copy - dropping their booking, or deleting a copy
   // already made of them, would break the one second this journal promises.
   const settled = bufferContents(key);
-  if (settled === null || settled.versionId === contents.versionId) {
+  if (agreed && (settled === null || settled.versionId === contents.versionId)) {
     await bufferSettled(key);
   }
   refreshTabs();

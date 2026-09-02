@@ -895,6 +895,166 @@ test.describe("a save carries its own buffer", () => {
     expect(labels).toContain("other.py");
   });
 
+  /**
+   * Typing while ruff is answering, which is M11's territory.
+   *
+   * The formatted text replaces the whole document, so applying it after
+   * somebody has typed overwrites the one thing in the buffer with no other
+   * copy. The formatting can be had again by saving once more; the keystrokes
+   * cannot.
+   *
+   * Held and released so the typing lands *during* the request, which is the
+   * whole of the race and cannot be reached by timing alone.
+   */
+  test("typing while ruff answers keeps the typing, not the formatting", async ({ page }) => {
+    const { sidecar } = await openTwo(page);
+    sidecar.answer("editor.format", () => undefined);
+
+    await caretToEnd(page);
+    await page.keyboard.type("FIRST");
+    await page.keyboard.press("Meta+s");
+    await expect
+      .poll(() => sidecar.held.filter((frame) => frame.type === "editor.format").length)
+      .toBe(1);
+
+    // Lands while the request is open, so ruff's answer is already stale.
+    await page.keyboard.type("_TYPED_LATER");
+    sidecar.release("editor.format", { source: "REFORMATTED = 1\n" });
+
+    await expect
+      .poll(() => onDisk(page, `${PROJECT}/part.py`), {
+        message: "the formatted text overwrote what was typed during the save",
+      })
+      .toContain("_TYPED_LATER");
+  });
+
+  /**
+   * M10 at the size it actually fails at.
+   *
+   * The small-buffer version of this test passes, and on a real machine the
+   * small case cannot even be reached - the format returns before a hand can
+   * reach another tab. Reported failing on all three platforms with a million
+   * line file: the log says `Format: formatted`, the save completes, and the
+   * file on disk still holds the unformatted text.
+   *
+   * The size is the whole point, so it is written large rather than held: what
+   * is being reproduced is a format whose result is thrown away, and every
+   * cheaper way of writing it has already passed against the broken code.
+   */
+  // Under the 50 000 line limit on purpose: this test is about a tab changing
+  // mid-save, and a buffer past the limit is not formatted at all.
+  const LINES = 40000;
+  const BIG_SOURCE = "x=1\n".repeat(LINES);
+  const BIG_FORMATTED = "x = 1\n".repeat(LINES);
+
+  test("a large buffer keeps its formatting when the tab changes during the save", async ({ page }) => {
+    test.slow();
+    const BIG = `${PROJECT}/big.py`;
+    const { sidecar } = await open(page, {
+      files: { ...FILES, [BIG]: BIG_SOURCE, [OTHER]: OTHER_SOURCE },
+      settings: {
+        workspace: {
+          folder: PROJECT,
+          tabs: [{ path: BIG, caret: null }, { path: OTHER, caret: null }],
+          active: BIG,
+        },
+      },
+    });
+    await expect(page.locator(".tab-active .tab-label")).toHaveText("big.py");
+
+    sidecar.answer("editor.format", () => undefined);
+    await page.keyboard.press("Meta+s");
+    await expect
+      .poll(() => sidecar.held.filter((frame) => frame.type === "editor.format").length)
+      .toBe(1);
+
+    await page.locator(".tab", { hasText: "other.py" }).click();
+    await expect(page.locator(".tab-active .tab-label")).toHaveText("other.py");
+
+    sidecar.release("editor.format", { source: BIG_FORMATTED });
+
+    await expect
+      .poll(
+        async () => (await onDisk(page, BIG)).slice(0, 6),
+        { message: "the large file was written with the layout it already had" },
+      )
+      .toBe("x = 1\n");
+  });
+
+  /**
+   * M10: save, then switch tabs before ruff answers.
+   *
+   * The three tests above hold the format open and switch away, but every one
+   * of them releases it with `source: null` - ruff declining - so none of them
+   * ever asks whether the *formatting* survives the switch. It did not. The file
+   * was written, correctly and with its own text, and simply was not formatted:
+   * saved with the layout it already had, on all three platforms.
+   *
+   * Released with real formatted text here, which is the only difference from
+   * saveAndSwitchAway, and the only thing that makes the gap visible.
+   */
+  test("the formatting survives switching tabs while ruff is still answering", async ({ page }) => {
+    const { sidecar } = await openTwo(page);
+    sidecar.answer("editor.format", () => undefined);
+
+    await caretToEnd(page);
+    await page.keyboard.type("MINE");
+    await page.keyboard.press("Meta+s");
+    await expect
+      .poll(() => sidecar.held.filter((frame) => frame.type === "editor.format").length)
+      .toBe(1);
+
+    await page.locator(".tab", { hasText: "other.py" }).click();
+    await expect(page.locator(".tab-active .tab-label")).toHaveText("other.py");
+
+    sidecar.release("editor.format", { source: "FORMATTED_BY_RUFF = 1\n" });
+
+    await expect
+      .poll(() => onDisk(page, `${PROJECT}/part.py`), {
+        message: "the file was saved with the layout it already had",
+      })
+      .toContain("FORMATTED_BY_RUFF");
+  });
+
+  /**
+   * The line above which format on save stands aside.
+   *
+   * A buffer this size is generated, and the journal already refuses to keep a
+   * recovery copy of one - so its edits exist nowhere but in memory, and
+   * holding the save open while a formatter works is the one moment that
+   * cannot be afforded. It is written immediately instead.
+   *
+   * Asserted by what is *not* sent: the whole point is that nothing crosses the
+   * socket, not merely that the answer is ignored.
+   */
+  test("a buffer past the line limit is written without asking ruff at all", async ({ page }) => {
+    test.slow();
+    const HUGE = `${PROJECT}/generated.py`;
+    const { sidecar } = await open(page, {
+      files: { ...FILES, [HUGE]: "x=1\n".repeat(60000) },
+      settings: {
+        workspace: {
+          folder: PROJECT,
+          tabs: [{ path: HUGE, caret: null }],
+          active: HUGE,
+        },
+      },
+    });
+    await expect(page.locator(".tab-active .tab-label")).toHaveText("generated.py");
+
+    await caretToEnd(page);
+    await page.keyboard.type("y=2");
+    await page.keyboard.press("Meta+s");
+
+    await expect.poll(() => onDisk(page, HUGE)).toContain("y=2");
+    expect(
+      sidecar.received.filter((frame) => frame.type === "editor.format"),
+      "a buffer past the limit was sent to ruff anyway",
+    ).toHaveLength(0);
+    expect(await onDisk(page, HUGE), "it was formatted despite being past the limit")
+      .toContain("x=1\n");
+  });
+
   test("and the buffer that was written is the one marked clean", async ({ page }) => {
     const { sidecar } = await openTwo(page);
 

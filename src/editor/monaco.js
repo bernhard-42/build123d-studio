@@ -122,7 +122,7 @@ import {
 import { completionItems, completionQuery, isIncomplete } from "./completion.js";
 import { snippetCompletions } from "./snippets.js";
 import { markersFor } from "./diagnostics.js";
-import { formatEdits } from "./format.js";
+import { MAX_FORMAT_LINES, formatEdits, tooLargeToFormat } from "./format.js";
 import { showConsolePanel } from "../debug/console.js";
 import { cellActionsShown } from "./cellactions.js";
 import { formatLineLength } from "./formatting.js";
@@ -1511,72 +1511,74 @@ export function registerRunActions(target) {
 }
 
 /**
- * Format the buffer on screen, as Shift-Alt-F does.
+ * Format one buffer and answer with the text ruff produced, or null.
  *
- * Through Monaco's own action rather than by calling the provider directly, so
- * that the keystroke and Format on Save are the same code path - including the
- * progress indication and the single undo stop the action wraps the edit in.
- * Two routes to one behaviour is how they come to differ.
+ * Keyed by buffer, not by what is on screen, and it *returns* the formatted
+ * text rather than only pushing it into the model. Both of those matter to the
+ * caller that saves: a save has to write what the formatter produced, and
+ * reading it back out of the editor afterwards makes the write depend on an
+ * edit having landed on the right model while nothing else moved. See
+ * saveBuffer, which writes what this returns.
  *
- * **The action is not used when the caller cannot afford to lose the result.**
- * It carries a cancellation token tied to the editor's position and value, so
- * anything that moves the caret while ruff is answering throws the formatting
- * away - silently, because a cancelled format is a normal outcome and there is
- * nothing to report. That is right for a keystroke: somebody who starts typing
- * has said what they want. It is wrong for a save, where a caret moved by the
- * application itself - the focus put back after the native chooser, or the
- * windowFocus the operating system sends when it activates the window again -
- * meant the first save of every new file wrote its text unformatted.
+ * The model is still updated, because the file on disk and the tab on screen
+ * have to be the same text. It is done through pushEditOperations rather than
+ * through Monaco's format action: the action carries a cancellation token tied
+ * to the editor's position and value, so anything moving the caret while ruff
+ * is answering throws the result away silently. That is right for a keystroke -
+ * somebody who starts typing has said what they want - and wrong for a save.
  *
- * @param {{cancellable?: boolean}} how `false` to format regardless of what the
- *   caret does meanwhile, which is what a save needs
+ * The undo stops are the model's rather than the editor's, so they land on this
+ * buffer whether or not it is the one being looked at.
+ *
+ * Null covers every "nothing to write back": no such buffer, a buffer that does
+ * not parse, one that was already formatted, and a request that went
+ * unanswered. None of them is a failure to save.
  */
-export async function formatBuffer({ cancellable = true } = {}) {
-  const model = currentModel();
-  if (editor === null || editor === undefined || model === null) {
-    return;
+export async function formatBufferFor(key) {
+  const buffer = buffers.get(key);
+  if (buffer === null) {
+    return null;
   }
-
-  if (!cancellable) {
-    await formatModelDirectly(model);
-    return;
+  const model = buffer.model;
+  const lineCount = model.getLineCount();
+  if (tooLargeToFormat(lineCount)) {
+    // Said once per save rather than silently, because "my file stopped being
+    // formatted" is otherwise indistinguishable from a formatter that broke.
+    log.info(`Not formatted: ${lineCount} lines is past the ${MAX_FORMAT_LINES} line limit`);
+    return null;
   }
-
-  const action = editor.getAction("editor.action.formatDocument");
-  if (action === null || action === undefined) {
-    // The contribution is imported, so this cannot happen - and if an upgrade
-    // ever makes it happen, a save must not fail because of it.
-    log.warn("No format action registered; the buffer was not formatted");
-    return;
-  }
-  await action.run();
-}
-
-/**
- * Ask ruff and apply what comes back, with no token in the way.
- *
- * The same request the provider makes and the same edit it would return - see
- * the formatting provider above - applied through pushEditOperations rather
- * than through the action, so nothing between here and the model can decide the
- * answer is no longer wanted.
- *
- * Undo stops around it, because the action's are what make a format one step
- * rather than an edit welded to whatever was typed before it.
- */
-async function formatModelDirectly(model) {
   const source = model.getValue();
+  const before = model.getVersionId();
   const reply = await ipc.request(
     "editor.format",
     { source, lineLength: formatLineLength() },
     { timeout: FORMAT_TIMEOUT },
   );
+  if (model.getVersionId() !== before) {
+    // Typed into while ruff was working, so what came back describes text that
+    // no longer exists. The edit replaces the whole document, so applying it
+    // would overwrite those keystrokes - and they are the ones with no other
+    // copy anywhere. The formatting is the half that can be had again, by
+    // saving once more.
+    //
+    // A *content* change, which is the distinction that matters: the format
+    // this replaced went through Monaco's action, whose token also cancels when
+    // the caret moves or the window is focused, and this application moves the
+    // caret itself around a save. Cancelling on those meant the first save of
+    // every new file wrote unformatted; cancelling on this means somebody's
+    // typing survives.
+    return null;
+  }
   const edits = formatEdits(source, reply?.source, model.getFullModelRange());
   if (edits.length === 0) {
-    return;
+    return null;
   }
-  editor.pushUndoStop();
+  model.pushStackElement();
   model.pushEditOperations([], edits, () => null);
-  editor.pushUndoStop();
+  model.pushStackElement();
+  // The version this left the buffer at, so the caller can tell whether the
+  // text below is still what the buffer holds by the time it writes.
+  return { text: reply.source, versionId: model.getVersionId() };
 }
 
 /**

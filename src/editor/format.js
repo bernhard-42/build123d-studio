@@ -73,6 +73,36 @@ export function lineLengthProblem(text) {
 }
 
 /**
+ * The most lines a buffer can have and still be formatted on save.
+ *
+ * Not a performance tuning number: ruff itself is quick, and formats a million
+ * lines in well under a second. What costs is everything around it - the whole
+ * buffer crosses the socket twice, and the result is applied as one edit over
+ * the entire document, which is the expensive part on a model that size.
+ *
+ * The reason for a limit at all is that a buffer this large has no safety net
+ * while that happens. The journal refuses to keep a recovery copy past two
+ * megabytes, so a file above this line is one with edits that exist nowhere but
+ * in memory, and holding the save open while a formatter works on it is the one
+ * moment that matters. Skipping the format writes it immediately instead.
+ *
+ * 50 000 lines is far beyond any Python anybody writes; the files that reach it
+ * are generated, and generated files are not what format-on-save is for.
+ */
+export const MAX_FORMAT_LINES = 50000;
+
+/**
+ * Whether a buffer of this many lines should be left alone.
+ *
+ * Lines rather than bytes, because it is the line count that the edit's cost
+ * follows, and because it is the number somebody can check against their own
+ * file without converting anything.
+ */
+export function tooLargeToFormat(lineCount) {
+  return typeof lineCount === "number" && lineCount > MAX_FORMAT_LINES;
+}
+
+/**
  * The edits that turn the buffer into the formatted text.
  *
  * One edit over the whole document, which is what every formatter of a

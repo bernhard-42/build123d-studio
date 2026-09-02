@@ -11,8 +11,10 @@ import { test } from "node:test";
 
 import {
   DEFAULT_LINE_LENGTH,
+  MAX_FORMAT_LINES,
   formatEdits,
   lineLengthProblem,
+  tooLargeToFormat,
   usableLineLength,
 } from "../../../src/editor/format.js";
 
@@ -110,4 +112,27 @@ test("formatting to empty is a real edit", () => {
   // A file of only comments and blank lines legitimately formats to nothing
   // much, and "" is falsey - a check written as `if (!formatted)` would drop it.
   assert.equal(formatEdits("\n\n\n", "", RANGE).length, 1);
+});
+
+// --- the size a buffer stops being formatted at -----------------------------
+
+test("an ordinary Python file is nowhere near the limit", () => {
+  // The number exists to exclude generated files, not to have an opinion about
+  // anybody's source. A very large hand-written module is a few thousand lines.
+  assert.equal(tooLargeToFormat(5000), false);
+  assert.equal(tooLargeToFormat(MAX_FORMAT_LINES), false, "the limit itself is allowed");
+});
+
+test("a generated file past the limit is left alone", () => {
+  assert.equal(tooLargeToFormat(MAX_FORMAT_LINES + 1), true);
+  assert.equal(tooLargeToFormat(1000000), true);
+});
+
+test("a line count that is not a number does not stop the format", () => {
+  // Falling open rather than closed: the guard exists to protect a buffer with
+  // no recovery copy, and refusing to format everything because a count could
+  // not be read would be the larger failure of the two.
+  assert.equal(tooLargeToFormat(undefined), false);
+  assert.equal(tooLargeToFormat(null), false);
+  assert.equal(tooLargeToFormat("60000"), false);
 });

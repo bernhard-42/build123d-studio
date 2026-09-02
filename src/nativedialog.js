@@ -120,7 +120,8 @@ async function claimKeyboard() {
  * operating system sends when it activates the window again, which arrives
  * whenever it arrives. Anything that cannot survive the caret moving under it
  * must not depend on this having finished; awaiting the promise below is not
- * enough, because the event is not ours. See formatBuffer's `cancellable`.
+ * enough, because the event is not ours. See formatBufferFor, which is not
+ * routed through Monaco's format action for exactly this reason.
  *
  * The promise is returned rather than swallowed so a caller *can* wait, which
  * some have reason to. Most have nothing after this and are right not to.
