@@ -132,6 +132,7 @@ jobs:
             release/*.dmg
             release/*.zip
             release/*.AppImage
+            release/studio
           if-no-files-found: error
 
   release:
@@ -190,7 +191,7 @@ jobs:
       - name: Generate SHA256SUMS.txt
         working-directory: artifacts
         run: |
-          sha256sum -- *.dmg *.zip *.AppImage > SHA256SUMS.txt
+          sha256sum -- *.dmg *.zip *.AppImage studio > SHA256SUMS.txt
           cat SHA256SUMS.txt
 
       # The half that proves origin. Attestation is minted by GitHub against
@@ -214,6 +215,7 @@ jobs:
             artifacts/*.dmg
             artifacts/*.zip
             artifacts/*.AppImage
+            artifacts/studio
 
       - uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:

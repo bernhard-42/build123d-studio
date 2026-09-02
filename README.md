@@ -89,12 +89,28 @@ show(b)
 
 ### Opening projects from a terminal
 
-Each package carries a `studio` launcher beside the application. Copy it somewhere on your PATH — it does not have to stay where it came from, and nothing needs installing with a password:
+A small `studio` launcher ships with every release. Copy it somewhere on your PATH — it does not have to stay where it came from, and nothing needs installing with a password:
 
+Any directory on your `PATH` will do. `~/.local/bin` is the usual one on Linux and macOS; on Windows, pick a folder that is already on `PATH` — `echo $PATH` or `$env:PATH -split ";"` says which are.
+
+```sh
+# macOS - inside the application bundle
+install -m 755 "/Applications/build123d Studio.app/Contents/MacOS/studio" ~/.local/bin/
+
+# Linux - a separate download, beside the AppImage on the Releases page
+install -m 755 studio ~/.local/bin/
 ```
-cp "/Applications/build123d Studio.app/Contents/MacOS/studio" ~/bin/studio   # macOS
-cp /path/to/build123d-studio/studio ~/bin/studio                             # Linux
-copy C:\path\to\build123d-studio\studio.cmd %USERPROFILE%\bin\studio.cmd     # Windows
+
+```bat
+REM Windows - in the folder you unzipped
+copy C:\path\to\build123d-studio\studio.cmd C:\some\folder\on\PATH\
+```
+
+**On Linux, `studio` is its own download.** An AppImage is a single read-only file, so there is nothing to copy the launcher out of. Releases up to and including 0.5.1 do not have that download; extract the launcher from the AppImage instead — it is the same file:
+
+```sh
+./build123d-studio-*.AppImage --appimage-extract usr/bin/studio
+install -m 755 squashfs-root/usr/bin/studio ~/.local/bin/
 ```
 
 Then, from any project directory:

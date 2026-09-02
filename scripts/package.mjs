@@ -402,6 +402,23 @@ Terminal=false
   }
   chmodSync(tool, 0o755);
 
+  // The launcher, beside the AppImage as well as inside it.
+  //
+  // Inside is where it has to live for the application to find it, but an
+  // AppImage is one read-only file: there is no directory to copy it out of,
+  // and the instructions said `cp /path/to/build123d-studio/studio`, which
+  // described the AppDir tarball and not the artifact anyone downloads. Users
+  // could reach it with `--appimage-extract usr/bin/studio`, which works and is
+  // not something to make somebody learn to get a shortcut.
+  //
+  // Named `studio` because that is what it is called once it is on a PATH. It
+  // is Linux's alone - the macOS bundle and the Windows zip are directories a
+  // person can already copy from - so the release carries exactly one, and the
+  // workflow's globs name it rather than matching it.
+  const launcher = join(OUT, "studio");
+  cpSync(join(ROOT, "cli", "studio"), launcher);
+  chmodSync(launcher, 0o755);
+
   const output = join(OUT, `${APP_SLUG}-${VERSION}-${targetName}.AppImage`);
   rmSync(output, { force: true });
   // --appimage-extract-and-run avoids needing FUSE, which CI runners lack.
