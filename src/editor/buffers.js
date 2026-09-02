@@ -209,6 +209,21 @@ export function markSaved(key, versionId) {
 }
 
 /**
+ * Say a buffer no longer agrees with its file, without touching its text.
+ *
+ * null is never a version id, so the buffer is dirty at whatever version it is
+ * on. Used when the file changed underneath and the user chose neither to
+ * reload nor to overwrite: the tab shows a dot, and quitting asks - which is
+ * the only outcome where "I will deal with it later" survives being closed.
+ */
+export function markModified(key) {
+  const buffer = buffers.get(key);
+  if (buffer !== undefined) {
+    buffer.savedVersionId = null;
+  }
+}
+
+/**
  * A buffer's text and the version it is on, read together.
  *
  * One call because they have to be one instant. Reading the text and then

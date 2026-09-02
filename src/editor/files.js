@@ -26,7 +26,7 @@
 // read and written here too, and is deliberately paths only. What is *in* a
 // buffer that has never been saved is the journal's job, not the workspace's.
 
-import { filesystem, os } from "@neutralinojs/lib";
+import { events, filesystem, os } from "@neutralinojs/lib";
 
 import {
   activeBufferKey,
@@ -46,6 +46,8 @@ import {
   insertSnippet,
   bufferNeedsSaving,
   markMissingFiles,
+  isBufferMissing,
+  markModified,
   markSaved,
   onContentChange,
   reloadBufferText,
@@ -288,6 +290,7 @@ export async function selectTab(key) {
   // thing typed went nowhere.
   focusEditor();
   refreshTabs();
+  await checkActiveFileChanged();
   await revealInTree(getCurrentFile());
   syncKernelDirectory();
   await saveWorkspace();
@@ -727,13 +730,87 @@ export async function openFile() {
   return openPath(entries[0]);
 }
 
+// Whether a question about a changed file is already on screen. Focus events
+// arrive whenever the window comes back, including from the dialog itself.
+let askingAboutDisk = false;
+
+/**
+ * Notice that the file under the buffer on screen was changed by something else.
+ *
+ * Run when the window is focused and when a tab is chosen, which is when a
+ * person is about to read or type into it. Only the buffer being looked at:
+ * checking every open file would queue a dialog per tab in front of somebody
+ * who asked for none of them, and a background tab is checked the moment it is
+ * selected.
+ *
+ * On focus rather than through a watcher, although one exists - the sidebar
+ * watches the project folder. A tab can name a file outside that folder, and a
+ * stat here covers every buffer wherever it lives.
+ *
+ * The same three-way question a save asks, because it is the same question: the
+ * file and the buffer disagree and only the user knows which is right. Cancel
+ * records the new stamp and marks the buffer modified, so the answer is asked
+ * once, the tab carries a dot, and quitting asks about it. Saying nothing and
+ * leaving the buffer clean would let the edit be closed and lost.
+ */
+export async function checkActiveFileChanged() {
+  if (askingAboutDisk) {
+    return;
+  }
+  const key = activeBufferKey();
+  if (key === null) {
+    return;
+  }
+  const path = bufferPath(key);
+  // A buffer with no file cannot have been changed underneath, a missing one is
+  // already saying so on its tab, and a save in flight is about to record its
+  // own stamp - asking over the top of it would be about a change we made.
+  if (path === null || isBufferMissing(key) || saving.get(key) !== undefined) {
+    return;
+  }
+  const before = bufferStamp(key);
+  if (!hasTimestamp(before)) {
+    return;
+  }
+  const now = await stampAt(path);
+  if (!changedSince(before, now)) {
+    return;
+  }
+
+  askingAboutDisk = true;
+  try {
+    const answer = await askThreeWay({
+      title: "It changed on disk",
+      detail: `${path} was modified by something else since it was opened here.`,
+      save: "Overwrite",
+      discard: "Reload",
+      cancel: "Cancel",
+    });
+    if (answer === "discard") {
+      await reloadFrom(key, path);
+      return;
+    }
+    // Whatever was chosen, this is the version that has been seen - so neither
+    // the next focus nor the next save asks again about the same change.
+    recordStamp(key, now);
+    if (answer === "save") {
+      await saveFile();
+      return;
+    }
+    markModified(key);
+    refreshTabs();
+  } finally {
+    askingAboutDisk = false;
+  }
+}
+
 /**
  * Check which open files are still on disk, and mark the ones that are not.
  *
  * Stat'd one by one rather than inferred from the tree's listings, because a
  * tab can name a file outside the project folder - the tree would never see it.
- * There is no watcher, deliberately: createWatcher stayed deferred until a real
- * build establishes it on all three platforms, so this runs when the tree is
+ * Not driven by a watcher: the sidebar has one, but it watches the project
+ * folder and a tab can name a file outside it. So this runs when the tree is
  * refreshed. It is therefore not live, and any stat failure counts as gone -
  * so a file on a volume that has gone away is struck through as deleted.
  */
@@ -1013,6 +1090,12 @@ function bufferChanged(key) {
 }
 
 onContentChange(bufferChanged);
+
+// The window coming back is the moment somebody is about to read what is on
+// screen, so it is the moment to find out whether it is still true.
+events.on("windowFocus", () => {
+  checkActiveFileChanged().catch((error) => log.warn("Could not check the file on disk:", error));
+}).catch((error) => log.warn("Could not watch the window's focus:", error));
 
 async function writeRecoveryCopy(key) {
   const contents = bufferContents(key);

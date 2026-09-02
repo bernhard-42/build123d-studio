@@ -557,6 +557,95 @@ test.describe("the editing contributions", () => {
   });
 });
 
+test.describe("a file changed by something else, noticed without saving", () => {
+  /**
+   * Until now an outside edit was found only when the user tried to save, so a
+   * file rewritten by a formatter, a git checkout or a second window sat stale
+   * in the tab and was read as current - which is worse than being asked,
+   * because nothing looks wrong.
+   *
+   * Checked when the window is focused and when a tab is chosen: the moment
+   * somebody is about to read it. The buffer on screen only - a dialog per open
+   * tab would be a queue nobody asked for, and a background tab is checked when
+   * it is selected.
+   */
+  const onDisk = (page, path) =>
+    page.evaluate((p) => String(globalThis.__NEUTRALINO_STUB__.wrote(p) ?? ""), path);
+
+  async function changedElsewhere(page) {
+    const handles = await openApp(page);
+    await page.evaluate(
+      (p) => globalThis.__NEUTRALINO_STUB__.given(p, "THEIRS = 1\n"),
+      `${PROJECT}/part.py`,
+    );
+    return handles;
+  }
+
+  const focusWindow = (page) =>
+    page.evaluate(() => globalThis.__NEUTRALINO_STUB__.emit("windowFocus", {}));
+
+  test("focusing the window asks about it, without a save being attempted", async ({ page }) => {
+    await changedElsewhere(page);
+
+    await focusWindow(page);
+
+    await expect(page.locator(".confirm-overlay")).toBeVisible();
+    expect(await page.locator(".confirm-overlay").innerText()).toContain("changed on disk");
+  });
+
+  test("Reload brings the other program's text into the buffer", async ({ page }) => {
+    await changedElsewhere(page);
+    await focusWindow(page);
+    await expect(page.locator(".confirm-overlay")).toBeVisible();
+
+    await page.locator('.confirm-overlay [data-answer="discard"]').click();
+
+    await expect.poll(() => editorText(page)).toContain("THEIRS = 1");
+    await expect(
+      page.locator(".tab-active .tab-close.tab-dirty"),
+      "a reloaded buffer agrees with its file",
+    ).toHaveCount(0);
+  });
+
+  test("Cancel keeps the buffer and marks the tab modified", async ({ page }) => {
+    // The whole point of the third answer: "I will deal with it later" has to
+    // survive being closed, and a clean tab is closed without a word.
+    await changedElsewhere(page);
+    await focusWindow(page);
+    await expect(page.locator(".confirm-overlay")).toBeVisible();
+
+    await page.locator('.confirm-overlay [data-answer="cancel"]').click();
+
+    await expect(page.locator(".tab-active .tab-close.tab-dirty")).toHaveCount(1);
+    expect(await editorText(page), "the buffer was reloaded behind the answer")
+      .not.toContain("THEIRS = 1");
+  });
+
+  test("and having answered, it does not ask again about the same change", async ({ page }) => {
+    await changedElsewhere(page);
+    await focusWindow(page);
+    await expect(page.locator(".confirm-overlay")).toBeVisible();
+    await page.locator('.confirm-overlay [data-answer="cancel"]').click();
+    // Hidden rather than removed: the overlay is one element reused for every
+    // question, so "no dialog" is invisibility and never absence.
+    await expect(page.locator(".confirm-overlay")).toBeHidden();
+
+    await focusWindow(page);
+
+    await expect(page.locator(".confirm-overlay")).toBeHidden();
+  });
+
+  test("Overwrite puts the buffer on disk", async ({ page }) => {
+    await changedElsewhere(page);
+    await focusWindow(page);
+    await expect(page.locator(".confirm-overlay")).toBeVisible();
+
+    await page.locator('.confirm-overlay [data-answer="save"]').click();
+
+    await expect.poll(() => onDisk(page, `${PROJECT}/part.py`)).not.toContain("THEIRS");
+  });
+});
+
 test.describe("a file that changed on disk", () => {
   /**
    * D5. Nothing compared anything: openPath deliberately never re-reads a file

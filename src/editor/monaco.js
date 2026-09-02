@@ -868,6 +868,12 @@ export function setCurrentFile(key, path) {
   return buffers.setPath(key, path);
 }
 
+/** Say a buffer no longer agrees with its file. See buffers.markModified. */
+export function markModified(key) {
+  buffers.markModified(key);
+  notifyDirtyChanged();
+}
+
 export function focus() {
   editor.focus();
 }
