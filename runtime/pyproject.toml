@@ -49,6 +49,9 @@ core_cad = [
     "ocp-viewer-core>=1.0.4,<1.1.0",
     "build123d>=0.11.1",
 
+    # Type information for the OpenCascade bindings
+    "cadquery-ocp-stubs>=7.9.3, <7.10",
+
     # What ocp-viewer-core brings with it, named so Upgrade reaches them - a fix
     # in the tessellator is a fix in what the viewer draws, and it can arrive
     # without ocp-viewer-core moving at all. No versions: ocp-viewer-core owns
