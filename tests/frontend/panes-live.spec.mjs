@@ -149,6 +149,40 @@ test.describe("the toolbar says what the kernel is doing", () => {
     await expect(page.locator("#kernel-status")).toHaveClass(/idle/);
   });
 
+  test("pressing Interrupt says so, and the dot stays busy", async ({ page }) => {
+    // Asked for: a button that appears to do nothing while a long boolean runs
+    // is a button people press again. The dot is deliberately unchanged - the
+    // kernel *is* busy, it has just been asked not to be.
+    const { sidecar } = await openApp(page);
+
+    sidecar.send("kernel.status", { state: "busy" });
+    await expect(page.locator("#kernel-label")).toHaveText("busy");
+
+    await page.locator("#btn-interrupt").click();
+
+    await expect(page.locator("#kernel-label")).toHaveText("interrupting");
+    await expect(page.locator("#kernel-status")).toHaveClass(/busy/);
+    await expect
+      .poll(() => sidecar.received.filter((f) => f.type === "kernel.interrupt").length)
+      .toBe(1);
+  });
+
+  test("and it says idle again the moment the kernel stops", async ({ page }) => {
+    // The word must not outlive the request. A kernel that stopped is idle,
+    // whatever was asked of it a moment earlier.
+    const { sidecar } = await openApp(page);
+
+    sidecar.send("kernel.status", { state: "busy" });
+    await expect(page.locator("#kernel-label")).toHaveText("busy");
+    await page.locator("#btn-interrupt").click();
+    await expect(page.locator("#kernel-label")).toHaveText("interrupting");
+
+    sidecar.send("kernel.status", { state: "idle" });
+
+    await expect(page.locator("#kernel-label")).toHaveText("idle");
+    await expect(page.locator("#kernel-status")).toHaveClass(/idle/);
+  });
+
   test("a kernel that died is not still reported as busy", async ({ page }) => {
     // A dead ZMQ peer raises nothing, so an exhausted kernel used to look
     // exactly like an idle one and the toolbar kept whatever it last had -

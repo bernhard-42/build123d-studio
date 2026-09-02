@@ -25,22 +25,31 @@ import { toggleRunFile } from "./run/file.js";
 import { labelFor } from "./keybindings.js";
 import { menuChordLabel } from "./menubar.js";
 import { MENU } from "./menu.js";
+import {
+  abandonInterrupt,
+  hasStopped,
+  indicatorClass,
+  label as kernelLabel,
+  onKernelChange,
+  report as reportKernel,
+  requestInterrupt,
+} from "./kernelstate.js";
 import { titleWithChord } from "./keys.js";
 
 // Toolbar wiring and the kernel state indicator.
 
-// What the indicator is showing, which is also the only thing that can answer
-// "did the interrupt land": an interrupted kernel goes idle, and one that
-// ignored the signal stays busy.
-let kernelState = "idle";
-
-function setKernelState(state) {
-  kernelState = state;
+// Drawing the kernel indicator. What it *means* is kernelstate.js, which owns
+// the state, the pending interrupt and the word derived from both - see the
+// note there for why those are not one value.
+function renderKernelState() {
   const container = document.getElementById("kernel-status");
   const label = document.getElementById("kernel-label");
-  container.classList.remove("idle", "busy", "dead");
-  container.classList.add(state);
-  label.textContent = state;
+  if (container === null || label === null) {
+    return;
+  }
+  container.classList.remove("idle", "busy", "dead", "starting");
+  container.classList.add(indicatorClass());
+  label.textContent = kernelLabel();
 }
 
 /**
@@ -154,9 +163,10 @@ async function offerRestartIfItDidNotStop() {
   offeringRestart = true;
   try {
     await new Promise((resolve) => setTimeout(resolve, INTERRUPT_GRACE));
-    if (kernelState !== "busy") {
+    if (hasStopped()) {
       return;
     }
+    abandonInterrupt();
     const answer = await askTwoWay({
       title: "The kernel did not stop",
       detail: "It is still running five seconds after the interrupt. Python can only "
@@ -285,6 +295,9 @@ export function refreshToolbarTitles() {
  */
 export function interruptKernel() {
   return withErrorReporting("Interrupt", async () => {
+    // Before the send, not after: the point of saying it is that the button
+    // did something, and whether it worked is seconds away.
+    requestInterrupt();
     await ipc.send("kernel.interrupt");
     await offerRestartIfItDidNotStop();
   });
@@ -364,7 +377,7 @@ export function initToolbar() {
   });
 
   ipc.on("kernel.status", (frame) => {
-    setKernelState(frame.state === "busy" ? "busy" : "idle");
+    reportKernel(frame.state === "busy" ? "busy" : "idle");
   });
 
   // The chip, and what it does when clicked. Subscribed before the sidecar is
@@ -377,6 +390,12 @@ export function initToolbar() {
     refreshHealthChip();
     revealBackendOnFailure(entries);
   });
+
+  // The indicator is a subscriber like the chip beside it, so nothing that
+  // changes the kernel's state has to remember to redraw. Once now as well,
+  // because the state has a value before this runs.
+  onKernelChange(renderKernelState);
+  renderKernelState();
   // Once now as well, because subsystems report from the moment the sidecar
   // starts and this runs after some of them already have: a listener that only
   // fires on the *next* change would leave a failed start unmarked until
@@ -407,18 +426,18 @@ export function initToolbar() {
       setEnabled(DEBUG_BUTTONS, false);
     });
   }
-  ipc.on("sidecar.disconnected", () => setKernelState("dead"));
+  ipc.on("sidecar.disconnected", () => reportKernel("dead"));
   // The kernel dying without the sidecar is the case that used to leave this
   // reading "busy" for the rest of the session, because nothing was watching
   // the process and a dead ZMQ peer says nothing.
-  ipc.on("kernel.died", () => setKernelState("dead"));
-  ipc.on("sidecar.exit", () => setKernelState("dead"));
-  ipc.on("kernel.restarting", () => setKernelState("busy"));
-  ipc.on("kernel.restarted", () => setKernelState("idle"));
+  ipc.on("kernel.died", () => reportKernel("dead"));
+  ipc.on("sidecar.exit", () => reportKernel("dead"));
+  ipc.on("kernel.restarting", () => reportKernel("busy"));
+  ipc.on("kernel.restarted", () => reportKernel("idle"));
   // The replacement reports its own state once its kernel is up; until then
   // this is neither dead nor idle.
-  ipc.on("sidecar.restarting", () => setKernelState("busy"));
-  ipc.on("kernel.restart_failed", () => setKernelState("dead"));
+  ipc.on("sidecar.restarting", () => reportKernel("busy"));
+  ipc.on("kernel.restart_failed", () => reportKernel("dead"));
 
   // Ctrl/Cmd+N, +O and +S have to work from anywhere, not only when Monaco
   // has focus - the console pane takes most of the typing in practice.
