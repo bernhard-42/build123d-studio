@@ -46,7 +46,7 @@ app = [
 # What you program against. Settings -> Packages chooses where these come from;
 # Upgrade moves them as far as the ranges here allow.
 core_cad = [
-    "ocp-viewer-core>=1.0.4,<1.1.0",
+    "ocp-viewer-core>=1.0.5,<1.1.0",
     "build123d>=0.11.1",
 
     # Type information for the OpenCascade bindings
