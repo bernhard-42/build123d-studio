@@ -20,12 +20,14 @@ on the text that accepting it produces, not on the name being present.
 """
 
 import os
+import signal
 import subprocess
 import sys
 import tempfile
 import threading
 import time
 import unittest
+from unittest import mock
 
 import completer
 
@@ -455,11 +457,117 @@ class TreeKillCommandTest(unittest.TestCase):
         # which is the bug rather than the fix.
         self.assertIn("/T", completer.tree_kill_command(1, platform="win32"))
 
-    def test_the_others_are_left_to_their_signals(self):
-        # Where EOF and the initialize processId do reach the grandchild, a
-        # tree kill would only take away the server's chance to exit cleanly.
+    def test_the_others_have_their_own_answer(self):
+        # Not because signals reach the grandchild there - measured, they do not
+        # when it has wedged - but because POSIX kills the process group
+        # instead, which needs no external command. See KillGroupTest.
         self.assertIsNone(completer.tree_kill_command(4242, platform="darwin"))
         self.assertIsNone(completer.tree_kill_command(4242, platform="linux"))
+
+
+class KillGroupTest(unittest.TestCase):
+    """Reaching the node grandchild on POSIX, including after the launcher dies.
+
+    Closing the descriptors is what normally stops it: node sees EOF on stdin
+    and exits. Measured on macOS, that does not hold for a server that has
+    wedged - a 10 000 line file of repeated assignments is enough - and the
+    orphan then runs at 100% of a core until it is killed by hand. Nor does it
+    hold when the launcher crashes, since nothing has closed anything.
+
+    The group is what makes this reachable at all: it outlives its leader, so it
+    still works from a pid that has already exited.
+    """
+
+    def setUp(self):
+        self.killed = []
+
+    def _record(self, pgid, sig):
+        self.killed.append((pgid, sig))
+
+    def test_the_group_is_signalled_on_posix(self):
+        # The group id is the pid itself: start_new_session made the launcher
+        # a session leader, and asking a reaped pid for its group is how the
+        # orphan survived. getpgid(0) is our own group, which must differ.
+        with mock.patch.object(completer.os, "getpgid", return_value=1), \
+             mock.patch.object(completer.os, "killpg", self._record):
+            completer._kill_group(4242, platform="linux")
+
+        self.assertEqual(self.killed, [(4242, signal.SIGKILL)])
+
+    def test_windows_is_left_to_its_tree_kill(self):
+        # taskkill /T has already run there, and os.killpg does not exist.
+        with mock.patch.object(completer.os, "getpgid", return_value=909), \
+             mock.patch.object(completer.os, "killpg", self._record):
+            completer._kill_group(4242, platform="win32")
+
+        self.assertEqual(self.killed, [])
+
+    def test_our_own_group_is_never_signalled(self):
+        # The one outcome that must not happen: this group holds the sidecar,
+        # the kernel and the console, so killing it to reap a language server
+        # would take the application down with it.
+        with mock.patch.object(completer.os, "getpgid", return_value=4242), \
+             mock.patch.object(completer.os, "killpg", self._record):
+            completer._kill_group(4242, platform="linux")
+
+        self.assertEqual(self.killed, [], "the sidecar signalled its own group")
+
+    def test_a_group_that_has_gone_is_the_good_case(self):
+        # Nothing left to kill is the outcome this is aiming for, not a failure
+        # to report. A group id only stops resolving when its last member is
+        # gone, so ProcessLookupError from the kill itself really means done.
+        with mock.patch.object(completer.os, "getpgid", return_value=1), \
+             mock.patch.object(completer.os, "killpg", side_effect=ProcessLookupError):
+            completer._kill_group(4242, platform="linux")
+
+    def test_a_group_that_is_not_ours_is_left_alone(self):
+        # PermissionError means the id was reused and the group belongs to
+        # somebody else now. Killing it would be the bug.
+        with mock.patch.object(completer.os, "getpgid", return_value=1), \
+             mock.patch.object(completer.os, "killpg", side_effect=PermissionError):
+            completer._kill_group(4242, platform="linux")
+
+    @unittest.skipIf(sys.platform == "win32", "process groups are POSIX")
+    def test_the_grandchild_dies_after_the_leader_was_reaped(self):
+        # The case the mocks cannot carry, with real processes: the launcher
+        # is killed and *reaped* - exactly what stop() has done by the time it
+        # calls this - and the grandchild it left in the group must still be
+        # taken. Asking the dead leader for its group id here is what orphaned
+        # a wedged node until somebody found it at 100% of a core.
+        launcher = subprocess.Popen(
+            ["/bin/sh", "-c", "sleep 300 & wait"],
+            start_new_session=True,
+        )
+        try:
+            deadline = time.monotonic() + 5.0
+            while time.monotonic() < deadline:
+                members = subprocess.run(
+                    ["pgrep", "-g", str(launcher.pid)], capture_output=True, text=True
+                ).stdout.split()
+                if len(members) == 2:
+                    break
+                time.sleep(0.05)
+            self.assertEqual(len(members), 2, "launcher did not spawn its child")
+
+            launcher.kill()
+            launcher.wait()
+
+            completer._kill_group(launcher.pid, platform="linux")
+
+            deadline = time.monotonic() + 5.0
+            while time.monotonic() < deadline:
+                members = subprocess.run(
+                    ["pgrep", "-g", str(launcher.pid)], capture_output=True, text=True
+                ).stdout.split()
+                if len(members) == 0:
+                    break
+                time.sleep(0.05)
+            self.assertEqual(members, [], "the grandchild survived the group kill")
+        finally:
+            try:
+                os.killpg(launcher.pid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError, OSError):
+                pass
 
 
 class RestartTest(unittest.TestCase):

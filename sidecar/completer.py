@@ -53,6 +53,7 @@ running - the kernel serves shell requests serially and cannot.
 
 import os
 import pathlib
+import signal
 import subprocess
 import sys
 import threading
@@ -183,6 +184,52 @@ WINDOWS_KILL_TIMEOUT = 3.0
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 
+def _kill_group(pid, platform=sys.platform):
+    """Take the process group a language server leads, if it still has one.
+
+    POSIX only, and the counterpart to tree_kill_command on Windows. The server
+    this talks to is a *grandchild* - basedpyright ships a launcher that runs
+    Python, which runs node - and the pid handed to us is the launcher's.
+
+    Closing the descriptors is what normally stops node: it sees EOF on stdin
+    and exits. Measured, that promise does not hold for a server that has wedged
+    - a node pinned analysing a pathological file never reaches its event loop
+    to notice - and the orphan then runs at 100% of a core until it is killed by
+    hand. It also does not hold when the launcher dies on its own account, since
+    nothing has closed anything.
+
+    Signalling the group covers both, and covers them after the launcher has
+    gone: a process group outlives its leader.
+
+    The group id is the pid itself, never discovered. `start_new_session`
+    made the launcher a session leader, so its group id equals its pid - and
+    by the time this runs, stop() has already reaped the launcher, so
+    `os.getpgid(pid)` raises ProcessLookupError even while node is still
+    alive in the group. Asking the dead leader for the group id is how the
+    orphan survived: the lookup failed, the failure read as "nothing left to
+    kill", and node kept its core until somebody found it in a process list.
+
+    Every failure of the kill itself is expected rather than exceptional.
+    ProcessLookupError now really is the good case - a group id only stops
+    resolving when its last member is gone - and PermissionError says the
+    group is not ours, which means the id was reused and now belongs to
+    somebody else. Killing it then would be the bug.
+    """
+    if platform == "win32":
+        return
+    try:
+        if pid == os.getpgid(0):
+            # Its own group is the whole premise. If this pid is somehow the
+            # id of *our* group - a start_new_session that did not take, an
+            # id reused by a sibling - then the group holds this process, the
+            # kernel and the console, and signalling it would take the
+            # application down to tidy up a language server.
+            return
+        os.killpg(pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError, OSError):
+        pass
+
+
 def tree_kill_command(pid, platform=sys.platform):
     """The command that takes a whole process tree, or None where signals reach it.
 
@@ -293,6 +340,14 @@ class LanguageServer:
                 # Never the application directory: a read-only install, and a
                 # bundle that can be replaced underneath a running process.
                 cwd=os.path.expanduser("~"),
+                # Its own process group, so the node grandchild stays reachable.
+                # A group outlives the leader that made it, which is the whole
+                # reason for this: the launcher is the only pid we are given,
+                # and once it has exited - crashed, or been terminated below -
+                # the grandchild is no longer reachable through it. See
+                # _kill_group, and tree_kill_command for the same problem
+                # answered the same way on Windows.
+                start_new_session=(sys.platform != "win32"),
             )
         except OSError as exc:
             log(f"Could not start basedpyright: {exc}")
@@ -387,6 +442,10 @@ class LanguageServer:
             except OSError:
                 pass
         _close_within(process.stdout, CLOSE_TIMEOUT)
+        # Last, and unconditional. Everything above addresses the launcher; this
+        # is the only step that reaches a node that did not take the hint, and
+        # by here the launcher is gone so its pid alone no longer would.
+        _kill_group(process.pid)
 
     # --- the protocol ---
 
@@ -467,6 +526,12 @@ class LanguageServer:
                 self._replies[request_id] = message
                 self._arrived.notify_all()
 
+        # Whatever ended this loop, the launcher's stdout is at EOF and so the
+        # launcher is gone - but node is its own process and may not be. Nothing
+        # closed its descriptors here, so it has been told nothing at all; left
+        # alone it keeps its analysis and its core. Reaped on every exit, not
+        # only the expected one, because this path is reached by a crash.
+        _kill_group(process.pid)
         if process is self._process:
             log("basedpyright exited; it will be restarted on the next request")
 
