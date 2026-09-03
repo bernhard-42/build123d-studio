@@ -194,12 +194,11 @@ test.describe("the Editor tab", () => {
     // theme the machine running the suite is in - the point is that Apply
     // changes nothing, whichever it is.
     //
-    // On the Viewer tab, where the control moved: the theme is a viewer
-    // setting in every other host, and this application paints the editor with
-    // it too - which is why it stays one application-level setting rather than
-    // joining the viewer's own.
+    // On the Application tab. The theme is a viewer setting in every other
+    // host, and this application paints the editor and the console with it too,
+    // so it belongs to the window rather than to one surface in it.
     await openSettings(page);
-    await page.locator("#tab-viewer").click();
+    await page.locator("#tab-application").click();
 
     await page.locator("#settings-apply").click();
     await expect(page.locator("#settings-apply")).toBeHidden();
@@ -216,7 +215,7 @@ test.describe("the Editor tab", () => {
 
   test("and changing it pins the one now showing", async ({ page }) => {
     await openSettings(page);
-    await page.locator("#tab-viewer").click();
+    await page.locator("#tab-application").click();
     const box = page.locator("#settings-dark-mode");
     const wasDark = await box.isChecked();
 

@@ -569,19 +569,6 @@ export async function showSettings({ tab = null } = {}) {
             applies. They take effect on the next <code>show()</code>.
           </p>
 
-          <p class="settings-group">Appearance</p>
-          <p class="info-note">
-            Unticked and untouched, the application follows the desktop's own
-            light or dark setting and changes with it. Ticking or unticking pins
-            it, and it stops following. It is the whole window's theme, not the
-            viewer's alone, which is why it is one setting rather than one per
-            surface.
-          </p>
-          <label class="settings-check">
-            <input type="checkbox" id="settings-dark-mode" />
-            <span>Dark mode</span>
-          </label>
-
 ${VIEWER_GROUPS.map(
             (group) => `
           <p class="settings-group">${escapeHtml(group.label)}</p>
@@ -621,6 +608,19 @@ ${VIEWER_GROUPS.map(
         </section>
 
         <section class="settings-panel" data-panel="application" hidden>
+          <p class="settings-group">Appearance</p>
+          <p class="info-note">
+            Unticked and untouched, the application follows the desktop's own
+            light or dark setting and changes with it. Ticking or unticking pins
+            it, and it stops following. It is the whole window - editor, viewer
+            and console - rather than a theme per surface, which is why it is
+            here rather than on the Viewer tab.
+          </p>
+          <label class="settings-check">
+            <input type="checkbox" id="settings-dark-mode" />
+            <span>Dark mode</span>
+          </label>
+
           <p class="settings-group">Debug console</p>
           <p class="info-note">
             How much of what the browser and its libraries print is written to
