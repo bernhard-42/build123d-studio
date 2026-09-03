@@ -23,6 +23,9 @@ const STATES = ["starting", "idle", "busy", "dead"];
 
 let state = "idle";
 let interrupting = false;
+// How many runs are waiting behind the one the kernel is on. Counted by the
+// sidecar, which is the only party that knows: it sent them.
+let queued = 0;
 const listeners = new Set();
 
 function announce() {
@@ -42,13 +45,17 @@ function announce() {
  * indicator has three words and a fourth would arrive with no colour, no
  * meaning to a reader and no branch anywhere that handles it.
  */
-export function report(next) {
+export function report(next, waiting = 0) {
   const known = STATES.includes(next) ? next : "dead";
   if (known !== "busy") {
     // It stopped, died, or was restarted. Whatever was asked of it is over.
     interrupting = false;
   }
   state = known;
+  // Only meaningful while something is running, and nonsense arrives: the
+  // frame comes from another process and a queue against an idle kernel would
+  // be a contradiction on screen.
+  queued = known === "busy" && Number.isInteger(waiting) && waiting > 0 ? waiting : 0;
   announce();
 }
 
@@ -94,7 +101,18 @@ export function hasStopped() {
  * is idle, whatever was asked of it a moment earlier.
  */
 export function label() {
-  return interrupting && state === "busy" ? "interrupting" : state;
+  if (interrupting && state === "busy") {
+    return "interrupting";
+  }
+  // Pressing Run while a cell is running queues it, and until now nothing said
+  // so: the indicator already read "busy", the console shows `In [n]` only when
+  // the kernel *starts* a request, and a long computation made that silence
+  // last minutes. Indistinguishable from a button that did nothing.
+  //
+  // Not while interrupting. That word is about the run in progress, and a
+  // queue behind it is not what somebody who has just pressed Interrupt is
+  // asking about.
+  return state === "busy" && queued > 0 ? `busy [+${queued}]` : state;
 }
 
 /**
@@ -118,4 +136,5 @@ export function onKernelChange(listener) {
 export function reset() {
   state = "idle";
   interrupting = false;
+  queued = 0;
 }

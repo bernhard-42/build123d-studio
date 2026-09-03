@@ -377,7 +377,7 @@ export function initToolbar() {
   });
 
   ipc.on("kernel.status", (frame) => {
-    reportKernel(frame.state === "busy" ? "busy" : "idle");
+    reportKernel(frame.state === "busy" ? "busy" : "idle", frame.queued);
   });
 
   // The chip, and what it does when clicked. Subscribed before the sidecar is

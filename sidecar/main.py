@@ -281,6 +281,19 @@ class Sidecar:
         # and it costs no decoding of a header that is otherwise passed through
         # as the bytes the kernel produced.
         self._splash = True
+        # The runs this process has sent that the kernel has not finished, and
+        # which of them it is actually working on. Two facts rather than a
+        # count, because "queued" is the difference: a run accepted while the
+        # console's own request is running is waiting, and so is one accepted
+        # behind ours.
+        #
+        # Only ours. A console line goes straight to the kernel's shell socket
+        # and publishes nothing until the kernel starts it, so a queued console
+        # request is not knowable here - and does not need to be, because the
+        # console echoes what was typed into its own pane immediately.
+        self._runs_lock = threading.Lock()
+        self._pending_runs = []
+        self._running_run = None
 
         # Inline: these only forward, and none of them waits on a lock. Running
         # them on the receive thread is what keeps a keystroke ahead of
@@ -473,7 +486,12 @@ class Sidecar:
         # status is forwarded only for an execute_request, so before this the
         # toolbar read "starting" until the first Run - for the whole session if
         # somebody only ever used the console.
-        self.channel.send("kernel.status", state="idle")
+        with self._runs_lock:
+            # A restart takes the queue with it: the requests were sent to a
+            # kernel that is gone, and nothing will ever report them finished.
+            self._pending_runs.clear()
+            self._running_run = None
+        self.send_kernel_status("idle")
 
     def kernel_start(self):
         self.kernel = Kernel(
@@ -675,6 +693,18 @@ class Sidecar:
             # when it is idle. Set from the same messages the toolbar is driven
             # by, so what completion believes and what the user is looking at
             # cannot differ.
+            # Which run this is about. A busy names the one the kernel has
+            # just started - ours or the console's - and an idle retires it.
+            parent_id = message["parent_header"].get("msg_id")
+            with self._runs_lock:
+                if state == "busy":
+                    self._running_run = parent_id
+                elif state == "idle":
+                    if parent_id in self._pending_runs:
+                        self._pending_runs.remove(parent_id)
+                    if parent_id == self._running_run:
+                        self._running_run = None
+
             if state == "busy":
                 self._kernel_busy.set()
             elif state == "idle":
@@ -684,7 +714,7 @@ class Sidecar:
             # how the flicker above went unexplained until somebody counted the
             # pairs by hand.
             log(f"Kernel {state} ({parent_type})")
-            self.channel.send("kernel.status", state=state)
+            self.send_kernel_status(state)
             # Only code can have changed the namespace, which is the same gate
             # as the one above and now enforced by it: nothing else reaches
             # here. Kept as a condition rather than assumed, because it says
@@ -740,6 +770,20 @@ class Sidecar:
         webview would roughly double the traffic for data it cannot read.
         """
         self.measurements.load(mapping_bytes)
+
+    def queued_runs(self):
+        """How many of our runs are waiting for the kernel to reach them."""
+        with self._runs_lock:
+            return len([m for m in self._pending_runs if m != self._running_run])
+
+    def send_kernel_status(self, state):
+        """Say what the kernel is doing, and how much is waiting behind it.
+
+        The count is on the same frame rather than one of its own: they are one
+        fact, and two frames could be rendered in either order - "busy" arriving
+        after "two waiting" would show a queue against an idle kernel.
+        """
+        self.channel.send("kernel.status", state=state, queued=self.queued_runs())
 
     def on_viewer_config(self, message):
         """Pass a `ui` message to the viewer that is already on screen.
@@ -1065,7 +1109,10 @@ class Sidecar:
         # moment: between this frame and the kernel's own busy, a completion
         # would otherwise still ask a kernel that has a Run waiting in line.
         self._kernel_busy.set()
-        self.channel.send("kernel.status", state="busy")
+        # Recorded before the frame, so the count on it includes this run.
+        with self._runs_lock:
+            self._pending_runs.append(msg_id)
+        self.send_kernel_status("busy")
         log(f"Execute: {len(code)} chars, msg_id {msg_id}")
 
         # A Run may legitimately take minutes - tessellating a real assembly

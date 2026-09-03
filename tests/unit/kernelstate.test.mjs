@@ -142,3 +142,62 @@ test("a listener that throws does not stop the next one being told", () => {
   first();
   second();
 });
+
+// --- what is waiting behind the one that is running ---------------------------
+
+test("a queue behind the running cell is counted in the word", () => {
+  // Pressing Run while a cell runs queues it, and nothing used to say so: the
+  // indicator already read "busy" and the console shows `In [n]` only when the
+  // kernel starts a request. His table, in order.
+  report("busy", 0);
+  assert.equal(label(), "busy");
+  report("busy", 1);
+  assert.equal(label(), "busy [+1]");
+  report("busy", 2);
+  assert.equal(label(), "busy [+2]");
+  report("busy", 1);
+  assert.equal(label(), "busy [+1]");
+  report("busy", 0);
+  assert.equal(label(), "busy");
+  report("idle", 0);
+  assert.equal(label(), "idle");
+});
+
+test("the dot is still the busy one, however many are waiting", () => {
+  // The kernel is running one thing. A queue says how much work is booked, not
+  // what state the kernel is in.
+  report("busy", 3);
+  assert.equal(indicatorClass(), "busy");
+});
+
+test("a queue against a kernel that is not running is not shown", () => {
+  // The count arrives from another process on the same frame as the state, and
+  // "idle [+2]" would be a contradiction on screen rather than information.
+  report("idle", 2);
+  assert.equal(label(), "idle");
+});
+
+test("a count that is not a whole number is no count at all", () => {
+  report("busy", undefined);
+  assert.equal(label(), "busy");
+  report("busy", null);
+  assert.equal(label(), "busy");
+  report("busy", -1);
+  assert.equal(label(), "busy");
+});
+
+test("interrupting still wins, because it is about the run in progress", () => {
+  // Somebody who has just pressed Interrupt is asking about the cell that is
+  // running, not about what is booked behind it.
+  report("busy", 2);
+  requestInterrupt();
+  assert.equal(label(), "interrupting");
+});
+
+test("and the queue is forgotten when the kernel stops", () => {
+  report("busy", 2);
+  report("idle");
+  assert.equal(label(), "idle");
+  report("busy");
+  assert.equal(label(), "busy", "a stale count outlived the run it belonged to");
+});
