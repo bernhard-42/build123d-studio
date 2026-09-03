@@ -266,6 +266,15 @@ function showInTab({ path = null, text = "" }) {
   if (open !== null) {
     showBuffer(open);
   }
+  // The keyboard comes with it, as it does when a tab is chosen. Monaco draws
+  // no cursor while it does not have focus, so a file opened from the tree or
+  // from the menu arrived on screen with nothing to type into and no caret to
+  // say where typing would go - and the click that opened it had left the focus
+  // on a tree row or, for the menu, on a dialog that has since closed.
+  //
+  // Here rather than at each caller, because every route that puts a file on
+  // screen comes through this function.
+  focusEditor();
   refreshTabs();
   // Not awaited: nothing downstream depends on the tree having caught up, and
   // making every open wait on a directory read would put the filesystem in

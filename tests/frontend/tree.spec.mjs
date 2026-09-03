@@ -373,3 +373,36 @@ test.describe("a directory opened a second time", () => {
     await expect(row(page, "first.py"), "a deleted file survived in the tree").toHaveCount(0);
   });
 });
+
+test.describe("opening a file gives it the keyboard", () => {
+  /**
+   * Monaco draws no cursor while it does not have focus, so a file opened from
+   * the tree arrived on screen with no caret and nothing to type into - the
+   * click that opened it had left the focus on the tree row. The menu's Open
+   * File had the same end for a different reason: the focus was put back before
+   * the buffer existed, and an editor with no model cannot take it.
+   *
+   * Asserted through the editor's textarea, which is what "the editor has the
+   * keyboard" means in Monaco.
+   */
+  test("clicking a file in the tree focuses the editor", async ({ page }) => {
+    await openApp(page);
+
+    await row(page, "hinge.py").click();
+
+    await expect(page.locator(".tab-active .tab-label")).toHaveText("hinge.py");
+    await expect(page.locator(".monaco-editor textarea")).toBeFocused();
+  });
+
+  test("and so does typing into it straight away", async ({ page }) => {
+    // The point of the focus, rather than the focus itself: what is typed next
+    // has to land in the file that was just opened.
+    await openApp(page);
+    await row(page, "hinge.py").click();
+    await expect(page.locator(".tab-active .tab-label")).toHaveText("hinge.py");
+
+    await page.keyboard.type("MINE");
+
+    await expect(page.locator(".monaco-editor .view-lines")).toContainText("MINE");
+  });
+});
