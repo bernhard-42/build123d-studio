@@ -1545,3 +1545,63 @@ test.describe("the language features reach the screen", () => {
     await expect(page.locator(".squiggly-error, .squiggly-warning")).toHaveCount(0);
   });
 });
+
+test.describe("Alt-Enter while the find widget is open", () => {
+  /**
+   * Monaco registers Select All Matches on Alt-Enter under
+   * `precondition: CONTEXT_FIND_WIDGET_VISIBLE`, and this application puts Run
+   * All on the same chord. The collision was known and written down; who won it
+   * was not. addAction registers at weight 1000 and findController's action at
+   * 105, so Run All won always - including with the find box open and a search
+   * typed into it, which is the one moment nobody wants to run a file.
+   *
+   * Asserted both ways round, because either half alone would pass against a
+   * chord that simply stopped working: every match is selected, *and* nothing
+   * was sent to the kernel.
+   */
+  const MANY = `${PROJECT}/part.py`;
+
+  async function withMatches(page) {
+    return open(page, {
+      files: { ...FILES, [MANY]: "a = 1\nb = 1\nc = 1\n" },
+      settings: {
+        workspace: { folder: PROJECT, tabs: [{ path: MANY, caret: null }], active: MANY },
+      },
+    });
+  }
+
+  const ran = (sidecar) => sidecar.received.filter((frame) => frame.type === "kernel.execute");
+
+  test("selects every match rather than running the file", async ({ page }) => {
+    const { sidecar } = await withMatches(page);
+    await focusEditor(page);
+
+    await page.keyboard.press("Meta+f");
+    await page.keyboard.type("1");
+    await page.keyboard.press("Alt+Enter");
+    // selectAllMatches focuses the editor itself, so this lands on every
+    // selection at once - which is what makes the selection observable without
+    // reaching into Monaco.
+    await page.keyboard.type("9");
+
+    // Every match, not just the one the caret was on. editorText reads the
+    // rendered lines, which arrive without their newlines, so the three are
+    // asserted by count rather than by shape.
+    await expect.poll(async () => (await editorText(page)).match(/9/g)?.length ?? 0).toBe(3);
+    expect(await editorText(page), "a match was left behind").not.toContain("1");
+    expect(ran(sidecar), "the file was run instead of the matches being selected")
+      .toHaveLength(0);
+  });
+
+  test("and still runs everything when the find widget is closed", async ({ page }) => {
+    // Only the chord yields, and only while the widget is up. Losing Run All
+    // altogether would pass the test above and be a worse bug than the one it
+    // is about.
+    const { sidecar } = await withMatches(page);
+    await focusEditor(page);
+
+    await page.keyboard.press("Alt+Enter");
+
+    await expect.poll(() => ran(sidecar).length).toBeGreaterThan(0);
+  });
+});

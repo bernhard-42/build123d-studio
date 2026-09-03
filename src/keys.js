@@ -155,6 +155,13 @@ export const COMMANDS = [
     // meaning in a .py file - there are `# %%` markers here, not cells to
     // insert - so the reflex costs a surprise rather than a wrong result.
     chords: ["alt+enter"],
+    // And the collision is settled in the find widget's favour, because there
+    // Alt-Enter means one thing to everybody who has used VS Code. Without this
+    // it was settled the other way and silently: addAction registers at
+    // weight 1000 and findController's Select All Matches at 105, so Run All
+    // won every time - including with the find box open and a search typed
+    // into it, which is the one moment nobody wants to run a file.
+    unlessFinding: true,
   },
   {
     id: "run.cellAbove",

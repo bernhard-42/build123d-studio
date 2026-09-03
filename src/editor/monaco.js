@@ -1511,6 +1511,11 @@ export function registerRunActions(target) {
       id: `build123d-studio.${id}`,
       label: command.label,
       keybindings: bindingsFor(monaco, id),
+      // A command that stands aside while the find widget is open - see
+      // keys.js, where the one command that needs it says why. ANDed into the
+      // keybinding's `when`, so the action stays available from the palette and
+      // the context menu; it is only the chord that yields.
+      ...(command.unlessFinding === true ? { keybindingContext: "!findWidgetVisible" } : {}),
       // In the context menu too, above Cut/Copy/Paste - Monaco's clipboard
       // group is "9_cutcopypaste", and groups sort by name. Running code is
       // what this editor is for, and the menu that only offers to copy it
