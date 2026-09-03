@@ -465,3 +465,32 @@ test.describe("restarting the kernel from the keyboard", () => {
     expect(restarts(sidecar)).toBe(0);
   });
 });
+
+test.describe("running from the toolbar", () => {
+  /**
+   * A run usually moves the caret - Run Cell advances to the next cell - and
+   * Monaco draws no cursor at all while it does not have focus. Pressed from
+   * the toolbar the button takes the focus with it, so the one thing the
+   * command is for was invisible: it had moved, and nothing on screen said
+   * where.
+   *
+   * The code lens buttons above a marker never had this; Monaco keeps the
+   * focus for its own widgets. Asserted through the editor's textarea, which
+   * is what "the editor has the keyboard" actually means.
+   */
+  test("gives the keyboard back to the editor", async ({ page }) => {
+    const { sidecar } = await openWithCells(page);
+    // The toolbar's run buttons stay disabled until the console has finished
+    // its handshake - not because a Run needs the console, but because until
+    // then the kernel is still importing build123d. A real window reaches that
+    // state on its own; the harness has to be told.
+    sidecar.send("console.ready", {});
+    await expect(page.locator("#btn-run-cell")).toBeEnabled();
+    await putCaretOnLine(page, 3);
+    await expect(page.locator(".monaco-editor textarea")).toBeFocused();
+
+    await page.locator("#btn-run-cell").click();
+
+    await expect(page.locator(".monaco-editor textarea")).toBeFocused();
+  });
+});

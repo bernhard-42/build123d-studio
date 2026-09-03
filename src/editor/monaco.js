@@ -209,6 +209,19 @@ function execute(code) {
   // the tabs were introduced to end.
   showConsolePanel("console");
   ipc.send("kernel.execute", { code });
+
+  // And the keyboard comes back, because a run usually moves the caret and
+  // Monaco draws no cursor while it does not have focus. Pressed from the
+  // toolbar or the menu, the button takes the focus with it, so Run Cell
+  // advanced to the next cell and left nothing on screen saying where - the
+  // one thing the command is for. The code lens buttons never had the problem;
+  // Monaco keeps the focus for its own widgets.
+  //
+  // Harmless where the focus never left: this is the same editor, already
+  // focused, and focusing it again does not move the caret.
+  if (currentModel() !== null) {
+    editor.focus();
+  }
 }
 
 /**
