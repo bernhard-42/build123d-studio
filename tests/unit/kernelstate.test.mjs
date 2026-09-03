@@ -12,7 +12,7 @@ import { test, beforeEach } from "node:test";
 
 import {
   abandonInterrupt,
-  hasStopped,
+  interruptPending,
   indicatorClass,
   kernelState,
   label,
@@ -44,17 +44,30 @@ test("a state nobody defined is taken as dead rather than shown", () => {
 
 // --- the interrupt question ------------------------------------------------
 
-test("hasStopped reads the kernel, and an asked-for interrupt does not answer it", () => {
+test("asking is not being obeyed", () => {
   report("busy");
   requestInterrupt();
-  assert.equal(hasStopped(), false, "asking was mistaken for stopping");
+  assert.equal(interruptPending(), true, "asking was mistaken for stopping");
 });
 
-test("and it is true once the kernel goes idle", () => {
+test("and the request is answered once the kernel goes idle", () => {
   report("busy");
   requestInterrupt();
   report("idle");
-  assert.equal(hasStopped(), true);
+  assert.equal(interruptPending(), false);
+});
+
+test("a kernel that stopped and was given new work has still obeyed", () => {
+  // The defect this replaced a state reading for. Interrupt a cell, let it
+  // stop, run two more inside the five second grace, and a check that sampled
+  // the state at the deadline saw `busy` - the new work - and offered to
+  // restart a kernel that had done exactly what it was told.
+  report("busy");
+  requestInterrupt();
+  report("idle");
+  report("busy");
+
+  assert.equal(interruptPending(), false, "new work was mistaken for a missed interrupt");
 });
 
 test("a kernel that stopped is idle, whatever was asked of it", () => {
@@ -82,7 +95,7 @@ test("giving up on the interrupt says busy again, not idle", () => {
   requestInterrupt();
   abandonInterrupt();
   assert.equal(label(), "busy");
-  assert.equal(hasStopped(), false, "giving up was mistaken for stopping");
+  assert.equal(interruptPending(), false, "the offer is made once, not repeatedly");
 });
 
 // --- what the indicator shows ----------------------------------------------
@@ -96,14 +109,14 @@ test("the dot stays the busy one while an interrupt is pending", () => {
   assert.equal(label(), "interrupting");
 });
 
-test("asking an idle kernel to stop does not make it look busy", () => {
-  // hasStopped must read the kernel and nothing else. Folding the pending
-  // request into it - `state !== "busy" && !interrupting` - looks harmless and
-  // is not: the button is reachable while nothing runs, and one press then
-  // leaves the restart offer believing the kernel never stopped.
+test("asking an idle kernel to stop leaves nothing pending", () => {
+  // The button is reachable while nothing is running - from the keymap and from
+  // the cell markers - and a press then must not leave a request standing that
+  // the grace would later report as a kernel refusing to stop.
   report("idle");
   requestInterrupt();
-  assert.equal(hasStopped(), true);
+  report("idle");
+  assert.equal(interruptPending(), false);
 });
 
 test("interrupting an idle kernel says nothing", () => {

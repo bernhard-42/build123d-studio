@@ -12,7 +12,15 @@
 // Here the two are separate by construction. `state` is what the kernel says
 // about itself and nothing else may write it; `interrupting` is a request this
 // application has made and is waiting on. `label()` derives the word from both,
-// and `hasStopped()` answers the interrupt question from the state alone.
+// and `interruptPending()` answers the interrupt question from the request.
+//
+// That question is "did the kernel ever stop", not "is it busy now", and the
+// difference is a real defect rather than a nicety: interrupt a cell, let it
+// stop, and start two more within the five second grace, and a check that
+// sampled the state at the deadline found `busy` - the *new* work - and offered
+// to restart a kernel that had obeyed. `interrupting` is the memory that
+// answers it, because report() clears it the moment the kernel says anything
+// other than busy and nothing sets it again but another press.
 //
 // Pure: no DOM, no Neutralino. What to *do* about a busy kernel is the
 // toolbar's business; what is true about it is a rule, and rules belong where
@@ -83,15 +91,20 @@ export function kernelState() {
 }
 
 /**
- * Whether the kernel has stopped doing what it was asked to stop.
+ * Whether an interrupt is still waiting to be obeyed.
  *
- * The interrupt question, and it reads the reported state alone - which is the
- * property this module exists to keep true. An interrupted kernel goes idle; one
- * that never saw the signal stays busy, because Python raises KeyboardInterrupt
- * between operations and a single long native call has no between.
+ * The interrupt question. An interrupted kernel goes idle, and report() clears
+ * the request when it does; one that never saw the signal stays busy and the
+ * request stands, because Python raises KeyboardInterrupt between operations
+ * and a single long native call has no between.
+ *
+ * A memory rather than a reading, which is the whole point. Whatever the kernel
+ * is doing five seconds later may be work started since - the user is not
+ * obliged to sit still - and a kernel that stopped and was given something new
+ * has answered the interrupt.
  */
-export function hasStopped() {
-  return state !== "busy";
+export function interruptPending() {
+  return interrupting;
 }
 
 /**

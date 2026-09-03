@@ -27,7 +27,7 @@ import { menuChordLabel } from "./menubar.js";
 import { MENU } from "./menu.js";
 import {
   abandonInterrupt,
-  hasStopped,
+  interruptPending,
   indicatorClass,
   label as kernelLabel,
   onKernelChange,
@@ -156,14 +156,48 @@ let offeringRestart = false;
  * longer costs time, and restarting costs the namespace - every variable the
  * session has built, which for CAD work can be a model that took minutes.
  */
+/**
+ * Wait out the grace, or stop waiting the moment the kernel obeys.
+ *
+ * Cancelled rather than merely checked at the end, and that is not tidiness.
+ * `offeringRestart` is held for as long as this is pending, so a timer left to
+ * run its five seconds after the kernel has already stopped swallows the *next*
+ * interrupt's grace entirely - and then fires against that newer request,
+ * judging it after however much of the first grace was left. Interrupt, let it
+ * stop, run again, interrupt again: the second press got no grace and the
+ * dialog arrived early, about a kernel that had been given three seconds.
+ *
+ * @returns {Promise<boolean>} true if the grace elapsed with the interrupt
+ *   still unanswered, false if the kernel stopped first
+ */
+function graceElapsed() {
+  return new Promise((resolve) => {
+    const settle = (elapsed) => {
+      clearTimeout(timer);
+      unsubscribe();
+      resolve(elapsed);
+    };
+    const timer = setTimeout(() => settle(true), INTERRUPT_GRACE);
+    const unsubscribe = onKernelChange(() => {
+      if (!interruptPending()) {
+        settle(false);
+      }
+    });
+  });
+}
+
 async function offerRestartIfItDidNotStop() {
   if (offeringRestart) {
     return;
   }
   offeringRestart = true;
   try {
-    await new Promise((resolve) => setTimeout(resolve, INTERRUPT_GRACE));
-    if (hasStopped()) {
+    // The kernel stopping ends the wait; only a grace that ran out asks
+    // anything. Either way the question is whether the interrupt was obeyed,
+    // never whether the kernel is idle at this instant - somebody who
+    // interrupts a cell and immediately runs two more has a busy kernel five
+    // seconds later and nothing wrong with it.
+    if (!(await graceElapsed())) {
       return;
     }
     abandonInterrupt();

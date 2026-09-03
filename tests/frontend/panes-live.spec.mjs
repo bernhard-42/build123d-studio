@@ -183,6 +183,36 @@ test.describe("the toolbar says what the kernel is doing", () => {
     await expect(page.locator("#kernel-status")).toHaveClass(/idle/);
   });
 
+  test("a kernel that obeyed and was given more work is not offered a restart", async ({ page }) => {
+    // Reported: interrupt two cells, then run them again straight away, and
+    // five seconds later "The kernel did not stop" appeared over a kernel that
+    // had stopped exactly when asked. The grace sampled the state at its
+    // deadline and found `busy` - the *new* work.
+    //
+    // Six seconds of real waiting, because the grace is five and the whole
+    // claim is that nothing happens when it passes. Nothing here can be
+    // hurried: a shorter grace would be testing a different constant.
+    test.slow();
+    const { sidecar } = await openApp(page);
+
+    sidecar.send("kernel.status", { state: "busy" });
+    await page.locator("#btn-interrupt").click();
+    await expect(page.locator("#kernel-label")).toHaveText("interrupting");
+
+    // It obeys, and the user immediately runs something else.
+    sidecar.send("kernel.status", { state: "idle" });
+    await expect(page.locator("#kernel-label")).toHaveText("idle");
+    sidecar.send("kernel.status", { state: "busy" });
+    await expect(page.locator("#kernel-label")).toHaveText("busy");
+
+    await page.waitForTimeout(6000);
+
+    await expect(
+      page.locator(".confirm-overlay"),
+      "a kernel that stopped when asked was offered a restart",
+    ).toBeHidden();
+  });
+
   test("a kernel that died is not still reported as busy", async ({ page }) => {
     // A dead ZMQ peer raises nothing, so an exhausted kernel used to look
     // exactly like an idle one and the toolbar kept whatever it last had -
