@@ -503,8 +503,8 @@ async function retryWithout(envRoot, region, { failed, dropped, status }) {
 export async function upgradePackages(onLine) {
   const { path: envRoot } = await resolveEnvRoot();
 
-  // Staged first, as every other route into uv does, and reinstallPackage's
-  // comment records leaving it out as a bug. Two things make it matter here.
+  // Staged first, as every other route into uv does, and leaving it out was
+  // once a bug. Two things make it matter here.
   // A source just changed in this dialog has not reached the environment's
   // pyproject.toml yet, so the upgrade would resolve the previous one. And the
   // file is one an experienced user may well have opened and edited - it is
@@ -556,43 +556,6 @@ export async function upgradePackages(onLine) {
   await verifiedAfterChange(envRoot, changed);
 }
 
-/**
- * Put one package back into the environment from its source. Throws on failure.
- *
- * For a local checkout, which is the case that needs it: uv installs a `path`
- * source as an ordinary build rather than a live link, so editing the source
- * tree changes nothing in the environment until it is installed again - and
- * nothing in the lock has changed, so an ordinary sync is a no-op. Only
- * `--reinstall-package` makes it happen.
- *
- * The staging is not optional, and leaving it out was a bug. What uv reinstalls
- * *from* is the environment's own pyproject and lock, and those are generated
- * from the settings rather than being the settings - so a source just changed
- * in this dialog has not reached them. Without this, --reinstall-package
- * faithfully put back the source that was selected before, and only restarting
- * applied the new one, because ensureEnvironment stages on every launch.
- *
- * The name comes from PACKAGES, so what reaches the command line is a constant
- * in this repository rather than anything a user typed.
- */
-export async function reinstallPackage(name, onLine) {
-  const { path: envRoot } = await resolveEnvRoot();
-  await stageProjectFiles(envRoot);
-
-  // One sync, as everywhere else: it locks first if the source just written is
-  // one the lock has not heard of, and reinstalls the named package either way.
-  // No --upgrade, so this puts one package back without moving the others.
-  const { code, changed } = await syncNoticingChanges(
-    ["sync", "--reinstall-package", name],
-    envRoot,
-    onLine,
-    await checkouts(envRoot),
-  );
-  if (code !== 0) {
-    throw new Error(`uv sync failed with exit code ${code}`);
-  }
-  await verifiedAfterChange(envRoot, changed);
-}
 
 /** Re-sync after the package selection changed. Throws on failure. */
 export async function applyPackageSources(selection, onLine) {

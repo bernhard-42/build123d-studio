@@ -43,11 +43,6 @@ export async function upgradePackages(onLine) {
   onLine?.("Done.");
 }
 
-export async function reinstallPackage(name, onLine) {
-  environmentCalls.push({ name: "reinstallPackage", package: name });
-  onLine?.(`Reinstalling ${name}…`);
-  onLine?.("Done.");
-}
 
 export async function applyPackageSources(selection, onLine) {
   environmentCalls.push({ name: "applyPackageSources", selection });

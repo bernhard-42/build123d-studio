@@ -34,7 +34,6 @@ import {
   applyPackageSources,
   applyProjectSettings,
   readProjectFile,
-  reinstallPackage,
   restoreEnvironment,
   upgradePackages,
 } from "./bootstrap/setup.js";
@@ -268,16 +267,13 @@ function packageRow(pkg, selection, gitPresent, localPath) {
         <button class="settings-btn" id="choose-${escapeHtml(pkg.name)}">Choose…</button>
       </div>
       <p class="info-note settings-problem" id="local-problem-${escapeHtml(pkg.name)}" hidden></p>
-      <button class="settings-btn settings-action" id="reinstall-${escapeHtml(pkg.name)}">
-        Re-install ${escapeHtml(pkg.name)}
-      </button>
     </div>`;
 }
 
 /**
  * Run one environment action behind the splash, then come back to the dialog.
  *
- * Only Apply and Cancel close Settings. Install, Re-install and Upgrade all act
+ * Only Apply and Cancel close Settings. Update, Upgrade and Restore all act
  * on the environment and return to where they were pressed - on success as well
  * as on failure, so the rule is one sentence rather than two.
  */
@@ -337,22 +333,14 @@ async function runEnvironmentAction({ status, done, work }) {
 }
 
 /** Make the environment match the saved configuration, changing nothing else. */
-function installPackages() {
+function updatePackages() {
   return runEnvironmentAction({
-    status: "Installing packages…",
-    done: "Packages installed.",
+    status: "Updating packages…",
+    done: "Packages updated.",
     work: () => applyPackageSources(packageSources(), appendLog),
   });
 }
 
-/** Put one package back from its source - see reinstallPackage. */
-function reinstall(name) {
-  return runEnvironmentAction({
-    status: `Re-installing ${name}…`,
-    done: `${name} re-installed.`,
-    work: () => reinstallPackage(name, appendLog),
-  });
-}
 
 /** Move every package as far as its own constraint allows. */
 function upgradeAndResync() {
@@ -444,11 +432,20 @@ export async function showSettings({ tab = null } = {}) {
       </div>
       <div class="info-body">
         <section class="settings-panel" data-panel="packages">
+          <h2 class="info-heading">What this release declares</h2>
           <p class="info-note">
-            Where build123d and the viewer come from. These write
-            <code>[tool.uv.sources]</code> in the environment's
-            <code>pyproject.toml</code>, which is yours to edit — see Restore at the
-            foot of this tab.
+            The <code>app</code> and <code>core_cad</code> groups as the environment has
+            them, in one alphabetical list. Installing a new build123d Studio replaces
+            both; nothing else in that file is touched.
+          </p>
+          <pre class="settings-declared" id="settings-declared"></pre>
+
+          <h2 class="info-heading">Customization</h2>
+          <p class="info-note">
+            Where build123d and the viewer come from, and anything else you want
+            installed. These write <code>[tool.uv.sources]</code> and the
+            <code>user</code> group in the environment's <code>pyproject.toml</code>,
+            which is yours to edit — see Restore at the foot of this tab.
           </p>
           ${PACKAGES.map((p) => packageRow(p, selection, gitPresent, pathOf(p.name))).join("")}
 
@@ -458,15 +455,7 @@ export async function showSettings({ tab = null } = {}) {
             directly, or press Restore below.
           </p>
 
-          <h2 class="info-heading">What this release declares</h2>
-          <p class="info-note">
-            The <code>app</code> and <code>core_cad</code> groups, as the environment
-            has them. Installing a new build123d Studio replaces both; nothing else in
-            that file is touched.
-          </p>
-          <pre class="settings-declared" id="settings-declared"></pre>
-
-          <h2 class="info-heading">Additional packages</h2>
+          <h3 class="info-subheading">Additional packages</h3>
           <p class="info-note">
             One per line. The line itself says where the package comes from — a
             name for PyPI, a folder for a local checkout, or a git URL. Add
@@ -474,17 +463,17 @@ export async function showSettings({ tab = null } = {}) {
             folder or repository. Nothing here is checked for you beyond the two
             rules below; uv reports anything else, and reports it better.
           </p>
-          <p class="info-note">
-            They become the <code>user</code> group in the environment's
-            <code>pyproject.toml</code>, and are written when you press Apply — not at
-            the next start, so an edit you make to that file by hand is kept.
-          </p>
           <textarea class="settings-template" id="settings-custom" rows="6" spellcheck="false"
                     placeholder="mylib&#10;/Users/me/src/mylib&#10;git+https://github.com/someone/other@main"
           >${escapeHtml(extras)}</textarea>
           <p class="info-note" id="settings-custom-problems" hidden></p>
-          <button class="settings-btn settings-action" id="settings-install">
-            Install packages
+          <p class="info-note">
+            Update installs what this section says: the sources above, the packages
+            below them, and nothing moved that you did not change. Apply saves your
+            choices without installing — the next start reconciles them anyway.
+          </p>
+          <button class="settings-btn settings-action" id="settings-update">
+            Update packages
           </button>
 
           <h2 class="info-heading">Upgrade</h2>
@@ -506,7 +495,7 @@ export async function showSettings({ tab = null } = {}) {
             ocp-viewer-core from PyPI, the additional packages cleared, and any edits you
             made to those files gone. The same environment a first start builds.
           </p>
-          <button class="settings-btn" id="settings-restore">Restore factory settings</button>
+          <button class="settings-btn" id="settings-restore">Restore packages</button>
         </section>
 
         <section class="settings-panel" data-panel="newfile" hidden>
@@ -709,7 +698,11 @@ ${VIEWER_GROUPS.map(
   // Read-only, and built from nodes: these strings come out of a file the user
   // can put anything in, and this pane is not worth an escaping mistake.
   const declared = document.getElementById("settings-declared");
-  const shown = [...(project?.app ?? []), ...(project?.coreCad ?? [])];
+  // One list, sorted, because the two groups are an implementation detail of
+  // how a release replaces them - a reader looking for a package wants it where
+  // its name puts it, not in whichever group happens to own it.
+  const shown = [...(project?.app ?? []), ...(project?.coreCad ?? [])]
+    .sort((a, b) => a.localeCompare(b));
   declared.textContent = shown.length === 0
     ? "Not readable from the environment's pyproject.toml."
     : shown.join("\n");
@@ -1099,21 +1092,13 @@ ${VIEWER_GROUPS.map(
     }
   });
 
-  // Install and Upgrade act on the environment and come back here afterwards.
-  // Only Apply and Cancel close the dialog.
-  document.getElementById("settings-install").addEventListener("click", async () => {
+  // Update, Upgrade and Restore act on the environment and come back here
+  // afterwards. Only Apply and Cancel close the dialog.
+  document.getElementById("settings-update").addEventListener("click", async () => {
     if (await saveEverything()) {
-      await installPackages();
+      await updatePackages();
     }
   });
-
-  for (const p of PACKAGES) {
-    document.getElementById(`reinstall-${p.name}`).addEventListener("click", async () => {
-      if (await saveEverything()) {
-        await reinstall(p.name);
-      }
-    });
-  }
 
   document.getElementById("settings-upgrade").addEventListener("click", async () => {
     if (await saveEverything()) {

@@ -1,14 +1,14 @@
 /** The Settings dialog: four buttons that do different things, and the chords.
  *
- * The four buttons are the case worth holding down, because the difference
- * between them is a *decision* rather than a mechanism. Apply saves and closes
- * and touches nothing else; Install, Re-install and Upgrade act on the
- * environment and return to the dialog, on success as well as failure, so there
- * is never a question of what happened or where you now are. That rule is the
- * kind that erodes quietly - one handler learning to close, and suddenly two
- * buttons out of four behave differently for no reason anybody wrote down.
+ * The buttons are the case worth holding down, because the difference between
+ * them is a *decision* rather than a mechanism. Apply saves and closes and
+ * touches nothing else; Update, Upgrade and Restore act on the environment and
+ * return to the dialog, on success as well as failure, so there is never a
+ * question of what happened or where you now are. That rule is the kind that
+ * erodes quietly - one handler learning to close, and suddenly one button
+ * behaves differently for no reason anybody wrote down.
  *
- * `applyPackageSources`, `upgradePackages` and `reinstallPackage` are replaced
+ * `applyPackageSources`, `upgradePackages` and `restoreEnvironment` are replaced
  * by the harness's bootstrap stub, so what is asserted is which one a button
  * asked for - not that uv did anything, which belongs nowhere near a browser.
  *
@@ -103,15 +103,15 @@ test.describe("the four buttons", () => {
     expect(await environmentCalls(page)).toEqual([]);
   });
 
-  test("Install runs the install and comes back to the dialog", async ({ page }) => {
+  test("Update runs the install and comes back to the dialog", async ({ page }) => {
     const { sidecar } = await openSettings(page);
 
-    await page.locator("#settings-install").click();
+    await page.locator("#settings-update").click();
 
     await expect
       .poll(async () => (await environmentCalls(page)).map((call) => call.name))
       .toContain("applyPackageSources");
-    await finishEnvironmentAction(page, sidecar, "Install");
+    await finishEnvironmentAction(page, sidecar, "Update");
   });
 
   test("Upgrade runs the upgrade and comes back to the dialog", async ({ page }) => {
@@ -125,21 +125,6 @@ test.describe("the four buttons", () => {
     await finishEnvironmentAction(page, sidecar, "Upgrade");
   });
 
-  test("Re-install names the one package it is for", async ({ page }) => {
-    // The only thing that picks up edits to a local checkout: uv installs a path
-    // source as a built copy, and with the lock unchanged an ordinary Install is
-    // a no-op.
-    const { sidecar } = await openSettings(page);
-
-    await page.locator("#reinstall-build123d").click();
-
-    await expect
-      .poll(async () => (await environmentCalls(page)).filter((c) => c.name === "reinstallPackage"))
-      .toHaveLength(1);
-    const call = (await environmentCalls(page)).find((c) => c.name === "reinstallPackage");
-    expect(call.package).toBe("build123d");
-    await finishEnvironmentAction(page, sidecar, "Re-install");
-  });
 });
 
 test.describe("the tabs", () => {
@@ -399,7 +384,7 @@ test.describe("what a package change tells the language server", () => {
       globalThis.__NEUTRALINO_STUB__.emit("mainMenuItemClicked", { id: "app.settings" }),
     );
     await page.locator('.settings-tab[data-tab="packages"]').click();
-    await page.locator("#settings-install").click();
+    await page.locator("#settings-update").click();
 
     await expect.poll(() => asked(sidecar, "editor.restartLanguageServer")).toBe(1);
   });
@@ -529,7 +514,7 @@ test.describe("the splash these buttons raise", () => {
    * splash" could never say which version stopped.
    *
    * It matters most here rather than at startup: Install, Upgrade and
-   * Re-install raise this same overlay, and it stays up for as long as uv and
+   * Restore raise this same overlay, and it stays up for as long as uv and
    * the OCP verification take.
    *
    * textContent rather than innerText, because the splash is hidden by the time
