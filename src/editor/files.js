@@ -290,7 +290,13 @@ export async function selectTab(key) {
   // thing typed went nowhere.
   focusEditor();
   refreshTabs();
-  await checkActiveFileChanged();
+  // Not awaited, deliberately. Choosing a tab is a keystroke away from being
+  // typed into, and making it wait on a filesystem stat put an await between
+  // the caret arriving and the tab switch finishing - which is timing the
+  // editor should not have to care about. The question is asked either way;
+  // its answer arrives when it arrives, exactly as it does on window focus.
+  checkActiveFileChanged()
+    .catch((error) => log.warn("Could not check the file on disk:", error));
   await revealInTree(getCurrentFile());
   syncKernelDirectory();
   await saveWorkspace();
