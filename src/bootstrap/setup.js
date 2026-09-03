@@ -179,10 +179,11 @@ export async function restoreEnvironment(onLine) {
   await saveLocalPaths({});
   await saveCustomPackages("");
 
-  const code = await runUvSync(["sync"], envRoot, { onLine }, []);
+  const { code, changed } = await syncNoticingChanges(["sync"], envRoot, onLine, []);
   if (code !== 0) {
     throw new Error(`uv sync failed with exit code ${code}`);
   }
+  await verifiedAfterChange(envRoot, changed);
 }
 
 async function runUv(args, envRoot, { onLine }) {
@@ -220,16 +221,18 @@ async function runUv(args, envRoot, { onLine }) {
 async function verifyNativeLibraries(python, { changed = false } = {}) {
   setStatus(
     NL_OS === "Darwin"
-      ? "macOS is verifying the OCP libraries — this happens once, and takes a minute…"
+      ? "macOS is verifying the OCP libraries — this happens once, and takes a minute or two…"
       : "Preparing the CAD libraries — this happens once…",
   );
-  appendLog("Loading OCP for the first time…");
 
   const started = Date.now();
-  // build123d rather than OCP alone: it pulls in the OCP submodules that are
-  // actually used, so the verification covers the libraries that matter.
+  // A file rather than `-c`, because it says three things before it says
+  // nothing for a minute: each import announces itself, so a splash that is
+  // going to sit still for a hundred seconds says which of the three it is
+  // sitting on. See sidecar/verify_imports.py for the measurements behind the
+  // numbers it prints, and for why cadquery is only attempted when it is there.
   const code = await run(
-    `${quote(python)} -c ${quote("import OCP; import build123d")}`,
+    `${quote(python)} ${quote(`${await appDir()}/sidecar/verify_imports.py`)}`,
     { onLine: appendLog },
   );
   const seconds = ((Date.now() - started) / 1000).toFixed(1);
@@ -297,21 +300,59 @@ function runUvSync(args, envRoot, { onLine }, checkouts) {
  * @returns {Promise<{code: number, changed: boolean}>} whether uv moved anything
  */
 async function syncSelection(envRoot, onLine) {
-  // uv says so itself: "Installed 3 packages", "Uninstalled 1 package",
-  // "Prepared 2 packages" - against "Checked 77 packages", which is the
-  // no-op. Read from the output rather than diffed out of the lock, because
-  // what matters is whether the *installed* set moved, and a sync that only
-  // reconciles a venv to an unchanged lock still moves it.
+  return syncNoticingChanges(["sync"], envRoot, onLine, await checkouts(envRoot));
+}
+
+/**
+ * A sync that also says whether uv moved anything.
+ *
+ * uv says so itself: "Installed 3 packages", "Uninstalled 1 package",
+ * "Prepared 2 packages" - against "Checked 77 packages", which is the no-op.
+ * Read from the output rather than diffed out of the lock, because what matters
+ * is whether the *installed* set moved, and a sync that only reconciles a venv
+ * to an unchanged lock still moves it.
+ *
+ * Every route that changes the environment asks, because every one of them then
+ * has to decide whether to verify it can still import what the application
+ * needs - see verifiedAfterChange.
+ */
+async function syncNoticingChanges(args, envRoot, onLine, checkoutList) {
   let changed = false;
-  const code = await runUvSync(["sync"], envRoot, {
+  const code = await runUvSync(args, envRoot, {
     onLine: (line) => {
       if (/^(Installed|Uninstalled|Prepared) /.test(line)) {
         changed = true;
       }
       onLine(line);
     },
-  }, await checkouts(envRoot));
+  }, checkoutList);
   return { code, changed };
+}
+
+/**
+ * Load OCP again after a package change, on the splash the caller already has up.
+ *
+ * The same step a first start runs, and for the reason its own comment gives: it
+ * is the only thing that asks whether the environment can still *run* the
+ * application, and a package change is exactly when that stops being true. It
+ * used to run on startup alone, so an Upgrade or an Install that removed
+ * something left a working-looking dialog and a kernel that said `dead` at the
+ * next Run, with the traceback in a log nobody opens.
+ *
+ * It is also slow, and that is half the point. macOS re-verifies the OCCT
+ * libraries whenever they change - measured around thirty seconds, and longer
+ * again for a cadquery import - and that minute is paid either way. Paying it
+ * here, against a splash that says what it is doing, is a minute of progress
+ * rather than a minute of a kernel that appears to have hung.
+ *
+ * Only when uv moved something. An Install that changed nothing has nothing to
+ * re-verify, and spending the minute anyway would teach people not to press it.
+ */
+async function verifiedAfterChange(envRoot, changed) {
+  if (!changed) {
+    return;
+  }
+  await verifyNativeLibraries(venvPython(envRoot), { changed: true });
 }
 
 /**
@@ -506,10 +547,13 @@ export async function upgradePackages(onLine) {
     throw new Error(`uv lock failed with exit code ${lockCode}`);
   }
 
-  const syncCode = await runUvSync(["sync"], envRoot, { onLine }, await checkouts(envRoot));
+  const { code: syncCode, changed } = await syncNoticingChanges(
+    ["sync"], envRoot, onLine, await checkouts(envRoot),
+  );
   if (syncCode !== 0) {
     throw new Error(`uv sync failed with exit code ${syncCode}`);
   }
+  await verifiedAfterChange(envRoot, changed);
 }
 
 /**
@@ -538,23 +582,25 @@ export async function reinstallPackage(name, onLine) {
   // One sync, as everywhere else: it locks first if the source just written is
   // one the lock has not heard of, and reinstalls the named package either way.
   // No --upgrade, so this puts one package back without moving the others.
-  const code = await runUvSync(
+  const { code, changed } = await syncNoticingChanges(
     ["sync", "--reinstall-package", name],
     envRoot,
-    { onLine },
+    onLine,
     await checkouts(envRoot),
   );
   if (code !== 0) {
     throw new Error(`uv sync failed with exit code ${code}`);
   }
+  await verifiedAfterChange(envRoot, changed);
 }
 
 /** Re-sync after the package selection changed. Throws on failure. */
 export async function applyPackageSources(selection, onLine) {
   const { path: envRoot } = await resolveEnvRoot();
   await stageProjectFiles(envRoot);
-  const { code } = await syncSelection(envRoot, onLine);
+  const { code, changed } = await syncSelection(envRoot, onLine);
   if (code !== 0) {
     throw new Error(`uv failed with exit code ${code}`);
   }
+  await verifiedAfterChange(envRoot, changed);
 }
