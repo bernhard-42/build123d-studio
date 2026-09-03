@@ -520,3 +520,26 @@ test.describe("Settings reads the environment's pyproject.toml", () => {
       .toHaveValue("/Users/bernhard/Development/CAD/cadquery");
   });
 });
+
+test.describe("the splash these buttons raise", () => {
+  /**
+   * Which build is on screen, on the one screen that is up before anything else
+   * exists. The About dialog answers it too, and is behind a window that does
+   * not exist yet during a first run - so a report of "it stopped on the
+   * splash" could never say which version stopped.
+   *
+   * It matters most here rather than at startup: Install, Upgrade and
+   * Re-install raise this same overlay, and it stays up for as long as uv and
+   * the OCP verification take.
+   *
+   * textContent rather than innerText, because the splash is hidden by the time
+   * the application is ready and innerText answers "" for anything invisible.
+   */
+  test("says which build is running", async ({ page }) => {
+    await open(page, { files: FILES, settings: { workspace: WORKSPACE } });
+
+    const title = await page.locator(".splash-title").textContent();
+
+    expect(title).toMatch(/^build123d Studio \d+\.\d+\.\d+/);
+  });
+});

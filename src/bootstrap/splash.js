@@ -1,6 +1,7 @@
 import { clipboard } from "@neutralinojs/lib";
 
 import * as log from "../log.js";
+import { appVersion } from "../versions.js";
 
 // The splash overlay is the only UI during first-run environment setup, which
 // downloads roughly 500 MB and can take a couple of minutes. It shows uv's own
@@ -12,8 +13,16 @@ const MAX_LINES = 500;
 const splashEl = () => document.getElementById("splash");
 const statusEl = () => document.getElementById("splash-status");
 const logEl = () => document.getElementById("splash-log");
+const titleEl = () => document.querySelector(".splash-title");
 
 let lines = [];
+
+// Which build is on screen, said on the one screen that is up before anything
+// else exists. A first-run report is "it stopped on the splash", and until now
+// nothing on that screen answered "which version" - the About dialog is behind
+// a window that has not been built yet. Carries the .devN counter on a local
+// build, which is what tells two packages of one version apart.
+titleEl().textContent = `build123d Studio ${appVersion}`;
 
 // Copying out of the splash, which the native menu cannot do for us.
 //
