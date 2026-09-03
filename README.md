@@ -25,6 +25,8 @@ A desktop application running on macOS, Windows and Linux, for writing build123d
 
 - **Everything it writes is per-user**, and none of it goes into the application's own folder — so an installation can be read-only, and replacing it disturbs nothing. The environment lives in `~/Library/Application Support/build123d-studio/runtime` on macOS, `%LOCALAPPDATA%\build123d-studio\runtime` on Windows and `~/.local/share/build123d-studio/runtime` on Linux; the settings, snippets and logs sit beside it, in the roaming half of `AppData` on Windows. Uninstalling does not remove the environment; the path is in the About dialog and in the log. On a machine whose policy will not execute binaries out of a user-writable directory, `BUILD123D_STUDIO_ENV_ROOT` [puts the environment somewhere else](https://bernhard-42.github.io/ocp_viewer_docs/viewers/build123d_studio/first_run/#moving-the-environment).
 
+[CHANGELOG.md](CHANGELOG.md) says what changed in each release.
+
 ## Installation
 
 ### Download and verify

@@ -163,9 +163,29 @@ jobs:
       # machine, the less there is to go wrong there.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          sparse-checkout: FirstRun.md
+          sparse-checkout: |
+            FirstRun.md
+            CHANGELOG.md
           sparse-checkout-cone-mode: false
           filter: blob:none
+
+      # What changed, above how to verify what you downloaded. The newest
+      # section only - everything from the first "## " heading to the next -
+      # because a release page is about this release and the rest is one click
+      # away in the file.
+      #
+      # `test -s` is the guard, and it is here because the failure it catches
+      # has happened: action-gh-release publishes an empty body without
+      # complaining, which is what v0.4.2 shipped with when this job had no
+      # checkout at all. A release with no notes should fail the job instead.
+      - name: Build the release notes
+        run: |
+          set -euo pipefail
+          awk '/^## /{ n++ } n == 1' CHANGELOG.md > notes.md
+          printf '\n---\n\n' >> notes.md
+          cat FirstRun.md >> notes.md
+          test -s notes.md
+          head -3 notes.md
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -226,10 +246,11 @@ jobs:
           # link handed to anyone before someone remembers to press Publish is a
           # link that does not work.
           draft: false
-          # The notes are FirstRun.md, verbatim. Prose buried in this file is
-          # prose nobody edits - it went a week saying "Unsigned builds" after
-          # macOS builds started being signed - and a file at the top of the
-          # repository is reviewed like anything else. The checksums stay in
+          # The notes are this release's CHANGELOG section followed by
+          # FirstRun.md, both verbatim from the repository. Prose buried in this
+          # file is prose nobody edits - it went a week saying "Unsigned builds"
+          # after macOS builds started being signed - and a file at the top of
+          # the repository is reviewed like anything else. The checksums stay in
           # SHA256SUMS.txt, which is attached beside the packages and which the
           # notes tell the reader to compare against.
-          body_path: FirstRun.md
+          body_path: notes.md
