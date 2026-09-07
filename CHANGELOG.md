@@ -2,6 +2,10 @@
 
 What changed in each release, for the people using it. Anything not visible from the outside is in the git log.
 
+## 0.5.8 (2026-09-07)
+
+- **"This environment cannot import OCP or build123d" was sometimes a false alarm, and the advice under it made things worse.** With cadquery in the environment, the startup check imported everything successfully and then faulted on the way out — Windows corrupts the heap while unloading the OpenCascade libraries — and only the exit code was read, so a run that had done its whole job was reported as an environment that could import nothing. The prompt then offered **Restore**, which would have replaced a perfectly good configuration, local checkouts and all. The check now leaves without a teardown, and says which half of it succeeded: trouble with cadquery — which you add yourself, and which the application never imports — is written to the log and stops nothing.
+
 ## 0.5.7 (2026-09-07)
 
 - **A window whose link to the application has died says so again, and keeps saying it.** On Windows, waking from a long sleep breaks two connections at once: the one to the Python backend, which is redialled and comes back, and the one to the application itself, which cannot be. The second is the serious one — nothing can be saved, nothing logged, and the window cannot be closed — and the offer to reload, which is the only way out, was being wiped off the screen a second later by the backend's own recovery. What was left was a window that ran code perfectly, wrote nothing to its log, and could not be quit, with nothing on screen to explain it. Found on a machine that had been asleep for four days.

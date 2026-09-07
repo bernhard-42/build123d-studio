@@ -27,6 +27,16 @@ import { run, quote } from "../proc.js";
 import { acknowledge, appendLog, setStatus } from "./splash.js";
 import * as log from "../log.js";
 
+/**
+ * The line sidecar/verify_imports.py prints once OCP and build123d are in.
+ *
+ * Two copies of one string, which is the price of the check being a separate
+ * process: the alternative is a marker file, and a file is a second thing that
+ * can be stale. Both sides name each other in a comment, and the sidecar test
+ * asserts the script still prints it.
+ */
+const REQUIRED_READY = "OCP and build123d are ready";
+
 // Environment bootstrap.
 //
 // uv sync is run on every start, not just the first one: it is a no-op costing
@@ -231,11 +241,38 @@ async function verifyNativeLibraries(python, { changed = false } = {}) {
   // going to sit still for a hundred seconds says which of the three it is
   // sitting on. See sidecar/verify_imports.py for the measurements behind the
   // numbers it prints, and for why cadquery is only attempted when it is there.
+  //
+  // The line it prints once OCP and build123d are in is watched for, because
+  // the exit code alone cannot tell the two failures apart - and they need
+  // opposite answers. Missing OCP stops the backend; an unhappy cadquery is a
+  // package the user added and the application never touches.
+  let requiredReady = false;
   const code = await run(
     `${quote(python)} ${quote(`${await appDir()}/sidecar/verify_imports.py`)}`,
-    { onLine: appendLog },
+    {
+      onLine: (line) => {
+        if (line.includes(REQUIRED_READY)) {
+          requiredReady = true;
+        }
+        appendLog(line);
+      },
+    },
   );
   const seconds = ((Date.now() - started) / 1000).toFixed(1);
+
+  // Everything the application itself needs is in, and something after it was
+  // not. Logged rather than announced: the user is told what it means for them,
+  // which is nothing, and carrying on is the honest answer because the kernel
+  // will import exactly what this process just imported.
+  if (code !== 0 && requiredReady) {
+    log.warn(
+      `The import check exited ${code} after OCP and build123d were in;`
+        + " treating the environment as usable",
+    );
+    appendLog("cadquery did not finish cleanly; OCP and build123d are fine.");
+    log.info(`OCP verified in ${seconds}s`);
+    return;
+  }
 
   if (code !== 0) {
     // Not fatal, and not silent either. It used to warn into the log and carry

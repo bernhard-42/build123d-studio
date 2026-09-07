@@ -22,9 +22,31 @@ distinct chunks that are worth naming separately.
 cadquery only when it is there. It is not one of this application's own
 dependencies - a user adds it - and importing it when it is absent would turn a
 verification into a failure.
+
+**REQUIRED_READY is printed once the two that matter are in**, so the caller can
+tell "this environment cannot import OCP" from "the optional third one was
+unhappy". Without it every non-zero exit read as the former, and the message the
+user got named OCP and build123d whatever had actually gone wrong.
+
+**And the process leaves through os._exit**, which is the one place in this
+codebase that is right. Measured on gauss (Windows, 2026-09-07): with cadquery
+installed, all three imports succeed - faulthandler shows `cadquery imported ok`
+- and the interpreter then faults with 0xC0000374, heap corruption, in teardown
+with no Python frame on the stack. Unloading the OpenCascade DLL set corrupts
+the heap there. The caller reads the exit code, so a run that did its whole job
+was reported as an environment that cannot import anything. Three runs with
+os._exit: 0, 0, 0. There is nothing to clean up here - the process exists to
+warm a cache and say so - so skipping the teardown costs nothing and removes the
+only part of the run that has ever failed.
 """
 
 import importlib.util
+import os
+import sys
+
+# Printed when OCP and build123d are in. Matched by src/bootstrap/setup.js;
+# changing the text means changing it there.
+REQUIRED_READY = "OCP and build123d are ready"
 
 print("Importing OCP the first time (takes about 30 sec)", flush=True)
 import OCP  # noqa: E402, F401  - the import is the work being timed
@@ -32,6 +54,12 @@ import OCP  # noqa: E402, F401  - the import is the work being timed
 print("Importing build123d the first time (takes about 30 sec)", flush=True)
 import build123d  # noqa: E402, F401
 
+print(REQUIRED_READY, flush=True)
+
 if importlib.util.find_spec("cadquery") is not None:
     print("Importing cadquery the first time (takes about 60 sec)", flush=True)
     import cadquery  # noqa: E402, F401
+
+sys.stdout.flush()
+sys.stderr.flush()
+os._exit(0)
