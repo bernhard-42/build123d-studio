@@ -2,6 +2,18 @@
 
 What changed in each release, for the people using it. Anything not visible from the outside is in the git log.
 
+## 0.5.6 (2026-09-07)
+
+- **Run → Test File and Test Folder.** Pick a file or a folder and `pytest` runs over it, in a process of its own — the report arrives in the Run/Debug tab and the Stop beside it ends the run, exactly as Run File works. pytest is part of the environment from this release on. Settings → **Test** carries one switch, **Ignore warnings**, which adds `-W ignore` for a suite where the same deprecation is raised a hundred times and buries the summary.
+- **Restart Kernel now sits above Run File in the Run menu.** Everything above that line runs on the kernel and shares its namespace; everything below it runs in a process of its own and leaves nothing behind.
+- **About says how to reach the kernel from outside.** The connection file has a section of its own at the foot of the dialog, with the `jupyter-console --existing "…"` command to attach to the running kernel — and the warning that matters: leave that console with `Ctrl-D`, because a typed `exit` shuts the kernel down.
+- **Every path in About has a copy button**, and the values have the room the labels were wasting — the first column was sized as a share of the panel and spent 120 pixels on nothing. A path that wrapped over four lines and had to be selected by hand is now one click. The full package list moved to the very bottom, below everything anybody is meant to find by reading.
+- **About shows the OCP you actually have.** It only ever listed `cadquery-ocp-novtk`, so an environment with the VTK build — which is most of them — read "not installed" and never showed a version at all. Both are listed now, and `ocpsvg` has left the short list.
+- **Opening a file gives it the keyboard.** From the tree or from the menu, the file opened without a cursor in it: nothing is drawn while the editor does not have focus, so it looked ready to type into and was not.
+- **Dark mode moved to Settings → Application**, with the other settings that are about the application rather than about one pane.
+- **The shipped dependency lock matches what the release declares again.** The lock in 0.5.2 through 0.5.5 was the one resolved for 0.5.1: it predated both the OCP type stubs and the ocp-viewer-core floor those releases declared, so a fresh environment re-resolved over the network at its first start instead of beginning from the versions the release was tested with. The lock is now part of what a release commits, so it cannot fall behind again.
+- **A test run and a file run cannot collide.** Only one child process at a time, as before — asking for a test run while something is running now says so, rather than starting nothing and explaining nothing.
+
 ## 0.5.5 (2026-09-03)
 
 - **The kernel indicator says how much is waiting.** Pressing Run while a cell is running queues it, as in Jupyter — the indicator now reads `busy [+1]`, `busy [+2]` and counts back down. Until now nothing said so: the indicator already read `busy` and the console shows `In [n]` only when a run actually starts.
