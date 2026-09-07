@@ -12,11 +12,17 @@ import sys
 
 # Shown in this order. The left-hand name is what the dialog displays; the right
 # is the distribution as it appears on PyPI, which is not always the same as the
-# module you import - OCP in particular comes from a wheel called
-# cadquery-ocp-novtk, and knowing which one is installed matters when a version
-# looks wrong.
+# module you import.
+#
+# OCP is the case that needs both rows. `import OCP` is satisfied by either of
+# two wheels - cadquery-ocp, which carries VTK, and cadquery-ocp-novtk, which
+# does not - and which one an environment ended up with follows from what
+# build123d and cadquery resolved to rather than from anything declared here.
+# The one that is absent says "not installed", which is the answer to "why is
+# there no VTK in here" and to a version that looks wrong.
 PACKAGES = [
     ("build123d", "build123d"),
+    ("OCP (cadquery-ocp)", "cadquery-ocp"),
     ("OCP (cadquery-ocp-novtk)", "cadquery-ocp-novtk"),
     # The show pipeline this application draws through, and the one shared with
     # OCP CAD Viewer for VS Code, the standalone viewer and Jupyter CadQuery -
@@ -25,7 +31,6 @@ PACKAGES = [
     # this application imported a private function out of it.
     ("ocp_viewer_core", "ocp-viewer-core"),
     ("ocp_tessellate", "ocp_tessellate"),
-    ("ocpsvg", "ocpsvg"),
     ("ipykernel", "ipykernel"),
     ("jupyter_client", "jupyter_client"),
     ("jupyter_console", "jupyter_console"),
