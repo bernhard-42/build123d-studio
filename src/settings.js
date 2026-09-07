@@ -63,6 +63,7 @@ import {
   onStopBreakpointsOnly,
   onStopExpression,
 } from "./debug/settings.js";
+import { IGNORE_WARNINGS_KEY, ignoreWarnings } from "./run/settings.js";
 import { getSetting, setSetting } from "./store.js";
 import { os } from "@neutralinojs/lib";
 import * as ipc from "./ipc.js";
@@ -142,6 +143,7 @@ const TABS = [
   { id: "editor", label: "Editor" },
   { id: "viewer", label: "Viewer" },
   { id: "debugging", label: "Debugging" },
+  { id: "test", label: "Test" },
   { id: "shortcuts", label: "Shortcuts" },
   { id: "application", label: "Application" },
 ];
@@ -607,6 +609,24 @@ ${VIEWER_GROUPS.map(
           </label>
         </section>
 
+        <section class="settings-panel" data-panel="test" hidden>
+          <p class="info-note">
+            Run &rarr; Test File and Test Folder run <code>pytest</code> over what you
+            pick, in a process of its own - the same one Run File uses, so the output
+            arrives in the Run/Debug tab and Stop ends it.
+          </p>
+          <p class="info-note">
+            With this on the run is given <code>-W ignore</code>. Off, which is
+            pytest's own default, every warning your tests raise is printed - worth
+            seeing once, and worth switching off when a hundred tests each raise the
+            same deprecation and bury the summary.
+          </p>
+          <label class="settings-check">
+            <input type="checkbox" id="settings-test-ignore-warnings" />
+            <span>Ignore warnings</span>
+          </label>
+        </section>
+
         <section class="settings-panel" data-panel="application" hidden>
           <p class="settings-group">Appearance</p>
           <p class="info-note">
@@ -884,6 +904,7 @@ ${VIEWER_GROUPS.map(
   document.getElementById("settings-format-on-save").checked = formatOnSave();
   document.getElementById("settings-cell-actions").checked = cellActionsShown();
   document.getElementById("settings-just-my-code").checked = justMyCode();
+  document.getElementById("settings-test-ignore-warnings").checked = ignoreWarnings();
   document.getElementById("settings-on-stop").value = onStopExpression();
   document.getElementById("settings-on-stop-breakpoints").checked =
     onStopBreakpointsOnly();
@@ -992,6 +1013,13 @@ ${VIEWER_GROUPS.map(
     const template = document.getElementById("settings-new-template").value;
     if (template !== newFileTemplate()) {
       await setSetting(NEW_FILE_TEMPLATE_KEY, template);
+    }
+
+    // Read when a test run starts, so it applies to the next one and there is
+    // nothing to reconfigure in the one that is going.
+    const quiet = document.getElementById("settings-test-ignore-warnings").checked;
+    if (quiet !== ignoreWarnings()) {
+      await setSetting(IGNORE_WARNINGS_KEY, quiet);
     }
 
     // Read by the next session rather than the one running, which is honest:

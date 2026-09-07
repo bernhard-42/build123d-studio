@@ -216,3 +216,99 @@ test.describe("the toolbar's groups", () => {
     await expect(page.locator(".quick-input-widget")).toBeVisible();
   });
 });
+
+/* Run -> Test, which is the same process-of-its-own with a different argv.
+ *
+ * Both items ask where to look before they do anything, so what a test can hold
+ * is the pair: which chooser was raised, and what left for the sidecar
+ * afterwards. Everything downstream - the pane swap, Stop, the exit line - is
+ * Run File's and is covered above.
+ */
+
+const choose = (page, answer) =>
+  page.evaluate((target) => globalThis.__NEUTRALINO_STUB__.answerDialogWith(target), answer);
+
+const pick = (page, id) =>
+  page.evaluate(
+    (command) => globalThis.__NEUTRALINO_STUB__.emit("mainMenuItemClicked", { id: command }),
+    id,
+  );
+
+const called = (page, name) =>
+  page.evaluate(
+    (wanted) => globalThis.__NEUTRALINO_STUB__.calls().filter((call) => call.name === wanted),
+    name,
+  );
+
+test.describe("testing", () => {
+  test("Test Folder asks for a folder and runs pytest over what came back", async ({ page }) => {
+    const { sidecar } = await openApp(page);
+
+    await choose(page, `${PROJECT}/tests`);
+    await pick(page, "test.folder");
+
+    const frame = await sidecar.waitFor("run.tests");
+    expect(frame.path).toBe(`${PROJECT}/tests`);
+    // Off unless Settings says otherwise, which is pytest's own default.
+    expect(frame.ignoreWarnings).toBe(false);
+    expect((await called(page, "showFolderDialog")).length).toBe(1);
+  });
+
+  test("Test File asks for a file, and only for Python ones", async ({ page }) => {
+    const { sidecar } = await openApp(page);
+
+    // The open dialog answers with a list, as the real one does.
+    await choose(page, [`${PROJECT}/test_part.py`]);
+    await pick(page, "test.file");
+
+    const frame = await sidecar.waitFor("run.tests");
+    expect(frame.path).toBe(`${PROJECT}/test_part.py`);
+    const [dialog] = await called(page, "showOpenDialog");
+    expect(dialog.args[1].filters).toEqual([{ name: "Python", extensions: ["py"] }]);
+    // One path, because one run: the frame carries a single target.
+    expect(dialog.args[1].multiSelections).toBe(false);
+  });
+
+  test("cancelling the chooser runs nothing at all", async ({ page }) => {
+    const { sidecar } = await openApp(page);
+
+    // Nothing queued, so the stub answers as a cancel does.
+    await pick(page, "test.folder");
+    await page.waitForTimeout(300);
+
+    expect(sent(sidecar, "run.tests")).toEqual([]);
+  });
+
+  test("Ignore warnings in Settings reaches the run that starts next", async ({ page }) => {
+    // Read when the run starts rather than held by the sidecar: a run carrying
+    // its own arguments cannot be stale.
+    const { sidecar } = await open(page, {
+      files: FILES,
+      settings: { workspace: WORKSPACE, testIgnoreWarnings: true },
+    });
+
+    await choose(page, `${PROJECT}/tests`);
+    await pick(page, "test.folder");
+
+    expect((await sidecar.waitFor("run.tests")).ignoreWarnings).toBe(true);
+  });
+
+  test("and it will not start while something is already running", async ({ page }) => {
+    // One child at a time, and the sidecar would refuse anyway - said here so
+    // the answer arrives as a sentence rather than as a run that never began.
+    const { sidecar } = await openApp(page);
+    await startRun(page, sidecar);
+
+    await choose(page, `${PROJECT}/tests`);
+    await pick(page, "test.folder");
+
+    // A native message box rather than a panel in the page, like every other
+    // refusal here - so what a test can see is the call, not the DOM.
+    await expect.poll(async () => (await called(page, "showMessageBox")).length).toBeGreaterThan(0);
+    const [box] = await called(page, "showMessageBox");
+    expect(box.args[0]).toBe("Test Folder");
+    expect(sent(sidecar, "run.tests")).toEqual([]);
+    // And the chooser never opened: there was nothing to ask about.
+    expect(await called(page, "showFolderDialog")).toEqual([]);
+  });
+});

@@ -371,6 +371,7 @@ class Sidecar:
         # socket write, and the frontend sends one per step - so it goes inline,
         # where a step cannot queue behind the session that is starting.
         self.channel.on("run.start", self.on_run_start, lane=DEBUG)
+        self.channel.on("run.tests", self.on_run_tests, lane=DEBUG)
         self.channel.on("run.stop", self.on_run_stop, lane=DEBUG)
         self.channel.on("debug.start", self.on_debug_start, lane=DEBUG)
         self.channel.on("debug.stop", self.on_debug_stop, lane=DEBUG)
@@ -1298,6 +1299,30 @@ class Sidecar:
             self.channel.send("run.started", path=path)
         else:
             log(f"Run failed to start: {error}")
+            self.channel.send("run.failed", path=path, message=error)
+
+    def on_run_tests(self, message):
+        """Run pytest over a file or a folder, with no debugger attached.
+
+        The same environment and the same working directory as a run or a debug
+        session. The working directory in particular is the kernel's rather than
+        the path being tested: pytest finds its rootdir and its conftest.py from
+        the arguments it is given, and a run started somewhere else would read a
+        different pytest.ini from the one the project means.
+        """
+        if self._refusing("a run"):
+            return
+        path = message.get("path")
+        error = self.run.start_pytest(
+            path,
+            env=self.kernel.kernel_environment(),
+            cwd=self.kernel.working_dir,
+            ignore_warnings=message.get("ignoreWarnings") is True,
+        )
+        if error is None:
+            self.channel.send("run.started", path=path)
+        else:
+            log(f"Tests failed to start: {error}")
             self.channel.send("run.failed", path=path, message=error)
 
     def on_run_stop(self, _message):

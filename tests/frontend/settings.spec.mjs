@@ -144,6 +144,55 @@ test.describe("the tabs", () => {
   });
 });
 
+test.describe("the Test tab", () => {
+  const stored = (page) =>
+    page.evaluate(() =>
+      JSON.parse(
+        String(
+          globalThis.__NEUTRALINO_STUB__.wrote("/appdata/build123d-studio/settings.json") ?? "{}",
+        ),
+      ),
+    );
+
+  test("ignore warnings is off, which is pytest's own default", async ({ page }) => {
+    // A DeprecationWarning out of build123d or OCP is something the person
+    // running the suite should see at least once.
+    await openSettings(page);
+    await page.locator("#tab-test").click();
+
+    await expect(page.locator("#settings-test-ignore-warnings")).not.toBeChecked();
+  });
+
+  test("and it shows what settings.json already holds", async ({ page }) => {
+    await openSettings(page, { testIgnoreWarnings: true });
+    await page.locator("#tab-test").click();
+
+    await expect(page.locator("#settings-test-ignore-warnings")).toBeChecked();
+  });
+
+  test("turning it on is stored, and reaches the next test run as -W ignore", async ({ page }) => {
+    await openSettings(page);
+    await page.locator("#tab-test").click();
+
+    await page.locator("#settings-test-ignore-warnings").check();
+    await page.locator("#settings-apply").click();
+
+    await expect(page.locator("#settings-apply")).toBeHidden();
+    await expect.poll(() => stored(page)).toMatchObject({ testIgnoreWarnings: true });
+  });
+
+  test("and Apply pins nothing when it was not touched", async ({ page }) => {
+    // The same trap dark mode has: opening the dialog and pressing Apply must
+    // not write a default that was never chosen.
+    await openSettings(page);
+    await page.locator("#tab-test").click();
+    await page.locator("#settings-apply").click();
+
+    await expect(page.locator("#settings-apply")).toBeHidden();
+    expect(Object.hasOwn(await stored(page), "testIgnoreWarnings")).toBe(false);
+  });
+});
+
 test.describe("the Editor tab", () => {
   test("shows ruff's settings as they currently stand", async ({ page }) => {
     await openSettings(page, { formatLineLength: 100, formatOnSave: false });

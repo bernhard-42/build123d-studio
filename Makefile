@@ -120,17 +120,26 @@ else
 	@exit 1
 endif
 
-# Commits the three files bump touched and tags them. Pushing is deliberately
-# not here: the tag is what starts the release workflow, and that is a decision
-# rather than a build step.
+# Commits the files bump touched, and the lock beside them, and tags the lot.
+# Pushing is deliberately not here: the tag is what starts the release workflow,
+# and that is a decision rather than a build step.
 #
-# runtime/pyproject.toml is one of the three, and leaving it out is not
-# cosmetic: its version is the stamp the application compares against to decide
-# that the app and core_cad groups are out of date. A tag without it ships an
-# environment that never notices a new release.
+# runtime/pyproject.toml is one of them, and leaving it out is not cosmetic: its
+# version is the stamp the application compares against to decide that the app
+# and core_cad groups are out of date. A tag without it ships an environment
+# that never notices a new release.
+#
+# runtime/uv.lock is here for the other half of that. It carries the same stamp
+# and the resolved versions the pyproject describes, and it was left out until
+# 0.5.6 - so the lock shipped in 0.5.2 through 0.5.5 was the one resolved for
+# 0.5.1, without the OCP stubs or the ocp-viewer-core floor those releases
+# declared. uv then re-resolved at a new environment's first start, over the
+# network, instead of starting from the versions the release was tested with.
+# Run `uv lock` in runtime/ after `make bump`, before this.
 release:
-	@git diff --quiet package.json neutralino.config.json runtime/pyproject.toml || \
-	  git commit -m "Version $(VERSION)" package.json neutralino.config.json runtime/pyproject.toml
+	@git diff --quiet package.json neutralino.config.json runtime/pyproject.toml runtime/uv.lock || \
+	  git commit -m "Version $(VERSION)" package.json neutralino.config.json \
+	    runtime/pyproject.toml runtime/uv.lock
 	git tag -a v$(VERSION) -m "Version $(VERSION)"
 	@echo
 	@echo "Tagged v$(VERSION). To release it:"

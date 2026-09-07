@@ -1,4 +1,4 @@
-"""Running a file from disk, against real processes.
+"""Running a file - or a folder of tests - from disk, against real processes.
 
 The claims worth holding are the ones that separate this from Run All: the
 process is the application's own interpreter, its output arrives while it runs
@@ -9,6 +9,7 @@ Real subprocesses rather than fakes, because every one of those is a statement
 about how Popen behaves - a fake would agree with whatever this file assumed.
 """
 
+import importlib.util
 import os
 import sys
 import tempfile
@@ -118,6 +119,116 @@ class RunSessionTest(unittest.TestCase):
         text = self.run_and_wait("import os\nprint('CWD', os.getcwd())\n")
         self.assertIn(os.path.realpath(self.directory.name), os.path.realpath(
             text.split("CWD", 1)[1].strip()))
+
+
+class PytestTest(RunSessionTest):
+    """Run -> Test, which is the same three lines with a different argv.
+
+    Inherits the fixture rather than repeating it, because the claims that
+    matter here are the ones about the argv: everything downstream - one child
+    at a time, output while it runs, Stop, the exit code - is the file case,
+    already covered above and shared by construction.
+    """
+
+    def folder_with_a_test(self, source):
+        folder = os.path.join(self.directory.name, "tests")
+        os.makedirs(folder, exist_ok=True)
+        with open(os.path.join(folder, "test_it.py"), "w", encoding="utf-8") as handle:
+            handle.write(source)
+        return folder
+
+    def test_a_folder_that_is_not_there_is_refused_before_anything_is_spawned(self):
+        error = self.session.start_pytest(
+            os.path.join(self.directory.name, "nope"),
+            env=dict(os.environ),
+            cwd=self.directory.name,
+        )
+        self.assertIn("is not there", error)
+        self.assertFalse(self.session.alive())
+
+    def test_a_file_is_taken_too_because_Test_File_is_a_menu_item(self):
+        # One check for both items rather than isfile and isdir separately:
+        # pytest takes either, and the two differ only in which chooser the
+        # frontend raised.
+        error = self.session.start_pytest(
+            self.write("def test_ok():\n    assert True\n"),
+            env=dict(os.environ),
+            cwd=self.directory.name,
+        )
+        self.assertIsNone(error)
+
+    @unittest.skipUnless(
+        importlib.util.find_spec("pytest") is not None,
+        "pytest is not in this environment yet - it is declared in runtime/pyproject.toml "
+        "and arrives with the next Update",
+    )
+    def test_it_runs_pytest_over_the_folder_and_reports_the_result(self):
+        folder = self.folder_with_a_test("def test_two():\n    assert 1 + 1 == 2\n")
+        self.assertIsNone(self.session.start_pytest(
+            folder, env=dict(os.environ), cwd=self.directory.name,
+        ))
+        self.assertTrue(self.exited.wait(60), "the test run never reported an exit")
+        text = "".join(self.output)
+        self.assertIn("1 passed", text)
+        # Exit 0 is what the frontend turns into "[finished]"; pytest's own
+        # non-zero codes are how a failing suite reaches the same pane as a
+        # traceback does.
+        self.assertEqual(self.exits, [0])
+
+    @unittest.skipUnless(
+        importlib.util.find_spec("pytest") is not None,
+        "pytest is not in this environment yet",
+    )
+    def test_a_failing_test_exits_non_zero_with_its_report(self):
+        folder = self.folder_with_a_test("def test_no():\n    assert 1 == 2\n")
+        self.assertIsNone(self.session.start_pytest(
+            folder, env=dict(os.environ), cwd=self.directory.name,
+        ))
+        self.assertTrue(self.exited.wait(60), "the test run never reported an exit")
+        self.assertIn("1 failed", "".join(self.output))
+        self.assertEqual(self.exits, [1])
+
+    @unittest.skipUnless(
+        importlib.util.find_spec("pytest") is not None,
+        "pytest is not in this environment yet",
+    )
+    def test_ignore_warnings_is_off_unless_settings_asks_for_it(self):
+        # The observable difference, rather than the argv: pytest prints a
+        # warnings summary when a test raises one, and -W ignore is the switch
+        # in Settings -> Test that takes it away.
+        folder = self.folder_with_a_test(
+            "import warnings\n\n\n"
+            "def test_warns():\n"
+            "    warnings.warn('OLD', DeprecationWarning)\n"
+        )
+        self.assertIsNone(self.session.start_pytest(
+            folder, env=dict(os.environ), cwd=self.directory.name,
+        ))
+        self.assertTrue(self.exited.wait(60), "the test run never reported an exit")
+        self.assertIn("warnings summary", "".join(self.output))
+
+    @unittest.skipUnless(
+        importlib.util.find_spec("pytest") is not None,
+        "pytest is not in this environment yet",
+    )
+    def test_and_with_it_on_the_warnings_are_gone(self):
+        folder = self.folder_with_a_test(
+            "import warnings\n\n\n"
+            "def test_warns():\n"
+            "    warnings.warn('OLD', DeprecationWarning)\n"
+        )
+        self.assertIsNone(self.session.start_pytest(
+            folder,
+            env=dict(os.environ),
+            cwd=self.directory.name,
+            ignore_warnings=True,
+        ))
+        self.assertTrue(self.exited.wait(60), "the test run never reported an exit")
+        text = "".join(self.output)
+        self.assertNotIn("warnings summary", text)
+        # Still ran, which is the half that would make the assertion above true
+        # for the wrong reason.
+        self.assertIn("1 passed", text)
 
 
 if __name__ == "__main__":

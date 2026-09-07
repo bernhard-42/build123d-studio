@@ -1,4 +1,4 @@
-"""Run a file from disk, in a process of its own, with no debugger in it.
+"""Run a file - or a folder of tests - in a process of its own, with no debugger.
 
 The other half of the two worlds the debugger established. Run All sends the
 buffer's text to the kernel and leaves its names in the namespace the console
@@ -15,6 +15,12 @@ kill, which is short enough to read in one go and has no protocol to get wrong.
 What is shared is the part that must not diverge: the interpreter, from
 debug_python, and the environment, which is the kernel's - so a `show()` in the
 file reaches the same viewer, exactly as it does from a paused frame.
+
+pytest is the same three lines with a different argv, which is why it lives here
+rather than in a module of its own: one child at a time, one output stream, one
+Stop. What it is *not* is a test framework this application knows anything
+about - there is no result parsing, no tree of tests and no green ticks. pytest
+prints its own report, and the report is the feature.
 """
 
 import os
@@ -25,7 +31,7 @@ from channel import log
 
 
 class RunSession:
-    """One running file. At most one at a time, like a debug session."""
+    """One running child - a file or a test run. At most one, like a debug session."""
 
     def __init__(self, python, supervisor, on_output, on_exit):
         self._python = python
@@ -43,21 +49,59 @@ class RunSession:
         Does not block on anything: unlike the debugger there is nobody to dial
         back, so the process is running the moment Popen returns.
         """
-        if self.alive():
-            return "something is already running"
         if not os.path.isfile(path):
             return f"{path} is not a file"
+        return self._spawn([self._python, "-u", path], env, cwd, path)
+
+    def start_pytest(self, target, env, cwd, ignore_warnings=False):
+        """Run pytest over a file or a folder. Returns an error string, or None.
+
+        The same process-of-its-own a file gets, for the same reasons: it dies
+        with the application, its output arrives while it runs, and it leaves
+        nothing in the namespace the console shares. `-m pytest` rather than the
+        `pytest` script beside the interpreter, because the two differ on
+        Windows - the script is a launcher stub - and because the module form
+        cannot pick up a pytest from somewhere else on PATH.
+
+        One check for both menu items rather than isfile and isdir separately:
+        pytest takes either, the two items differ only in which chooser was
+        raised, and what this needs to refuse is a path that is not there at
+        all - a folder deleted since it was last tested, or one on a volume
+        that has gone.
+
+        `-W ignore` comes from Settings -> Test and is passed per run rather
+        than read here: the sidecar has no view of settings.json, and a run
+        carrying its own arguments is one less thing that can be stale.
+        """
+        if not os.path.exists(target):
+            return f"{target} is not there"
+        arguments = [self._python, "-u", "-m", "pytest"]
+        if ignore_warnings is True:
+            # Before the target, because everything after a path is still an
+            # option to pytest but reads as an argument to a person.
+            arguments.extend(["-W", "ignore"])
+        arguments.append(target)
+        return self._spawn(arguments, env, cwd, f"pytest {target}")
+
+    def _spawn(self, command, env, cwd, what):
+        """Start one command under the supervisor. Returns an error, or None.
+
+        `command` is what the supervisor is asked to run; `what` is the sentence
+        for the log, which is the only place the two callers differ afterwards.
+        """
+        if self.alive():
+            return "something is already running"
 
         self._stopping.clear()
         try:
             self._process = subprocess.Popen(
-                # Through the supervisor, which is what makes the script die
-                # with us. It runs the file as plain `python -u <file>` in a
-                # process of its own - -u so output arrives while it runs rather
-                # than in a lump at the end, because a script printing its
-                # progress is the ordinary case and block buffering makes every
-                # one of them look hung until it finishes.
-                [self._python, self._supervisor, self._python, "-u", path],
+                # Through the supervisor, which is what makes the child die with
+                # us. -u is in every command it is given, so output arrives
+                # while it runs rather than in a lump at the end: a script
+                # printing its progress is the ordinary case, and block
+                # buffering makes every one of them look hung until it
+                # finishes - which is truer still of a test run.
+                [self._python, self._supervisor, *command],
                 env=env,
                 cwd=cwd,
                 # A pipe rather than DEVNULL, and never written to. It is the
@@ -72,7 +116,7 @@ class RunSession:
         except OSError as exc:
             return f"could not start it: {exc}"
 
-        log(f"Running {path}")
+        log(f"Running {what}")
         threading.Thread(target=self._read_output, name="run-out", daemon=True).start()
         threading.Thread(target=self._watch_exit, name="run-exit", daemon=True).start()
         return None

@@ -15,6 +15,8 @@
 // not state, and a show() from the run reaches the viewer already on screen
 // because the process is given the kernel's environment.
 
+import { os } from "@neutralinojs/lib";
+
 import {
   applyPanelState,
   clearDebugConsole,
@@ -22,10 +24,12 @@ import {
   showConsolePanel,
 } from "../debug/console.js";
 import { isDebugging } from "../debug/session.js";
+import { afterNativeDialog, bounceActivation } from "../nativedialog.js";
+import { currentFolder, saveAll, saveFile } from "../editor/files.js";
 import { getCurrentFile } from "../editor/monaco.js";
+import { ignoreWarnings } from "./settings.js";
 import { notifyFailure } from "../confirm.js";
 import { refreshMenu } from "../menubar.js";
-import { saveFile } from "../editor/files.js";
 import * as ipc from "../ipc.js";
 import * as log from "../log.js";
 
@@ -102,6 +106,78 @@ export async function toggleRunFile() {
   announce(true);
   log.info("Running", path);
   ipc.send("run.start", { path });
+}
+
+// Where the chooser starts next time, so a second run does not begin at the
+// project root again. Not remembered across sessions: a test path belongs to
+// the project that is open, and one from yesterday's project is a worse
+// starting point than the folder this one is in.
+let lastTested = null;
+
+/**
+ * Shared by both Test items: everything except which chooser is raised.
+ *
+ * The run itself is Run File's - the same `running` state, so the Stop in the
+ * tab row means this too; the same output pane; the same swap of the panes
+ * around it. What differs is the command the supervisor is given, and that it
+ * is a path somebody picked rather than the buffer on screen.
+ */
+async function runPytestOn(what, choose) {
+  if (running) {
+    // Deliberately not a toggle, unlike Run File. "Test File" that sometimes
+    // means Stop, over a run that may not be a test run at all, is a menu item
+    // nobody can predict - and Stop is in the tab row, where it says so.
+    await notifyFailure(what, new Error("Something is already running. Stop it first."));
+    return;
+  }
+  if (isDebugging()) {
+    await notifyFailure(what, new Error("Stop the debug session first."));
+    return;
+  }
+
+  // Everything, not just the file on screen: pytest reads from disk, and the
+  // test somebody just edited is the one they mean to run. Run File saves one
+  // buffer because it runs one file.
+  if (!(await saveAll())) {
+    return;
+  }
+
+  const chosen = await choose();
+  afterNativeDialog();
+  if (NL_OS === "Windows") {
+    // The folder chooser is the one that leaves the keyboard at the frame -
+    // see bounceActivation. Harmless after the file chooser, which does not.
+    await bounceActivation();
+  }
+  if (typeof chosen !== "string" || chosen === "") {
+    return;
+  }
+  lastTested = chosen;
+
+  clearDebugConsole();
+  announce(true);
+  log.info("Testing", chosen);
+  ipc.send("run.tests", { path: chosen, ignoreWarnings: ignoreWarnings() });
+}
+
+/** Run pytest over one file. */
+export async function testFile() {
+  await runPytestOn("Test File", async () => {
+    const entries = await os.showOpenDialog("Select the file to test", {
+      defaultPath: lastTested ?? currentFolder() ?? undefined,
+      filters: [{ name: "Python", extensions: ["py"] }],
+      multiSelections: false,
+    });
+    return entries.length === 1 ? entries[0] : "";
+  });
+}
+
+/** Run pytest over one folder. */
+export async function testFolder() {
+  await runPytestOn("Test Folder", () =>
+    os.showFolderDialog("Select the folder to test", {
+      defaultPath: lastTested ?? currentFolder() ?? undefined,
+    }));
 }
 
 /** Subscribe to what the sidecar says about the run. */

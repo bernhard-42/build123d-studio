@@ -134,23 +134,73 @@ test("Run is built from the keymap, so the two cannot drift", () => {
   assert.deepEqual(items.map((entry) => entry.text), RUN_COMMANDS.map((entry) => entry.label));
 });
 
-test("running part of a file, all of it, and debugging it are three groups", () => {
-  // The only thing a menu can say about which items belong together. Nine flat
-  // entries say nothing.
-  const debugging = [
+test("what runs on the kernel is separated from what runs beside it", () => {
+  // The only thing a menu can say about which items belong together. Eleven
+  // flat entries say nothing.
+  //
+  // The line under Restart Kernel is the one that carries meaning: everything
+  // above it runs in the kernel and shares its namespace, everything below it
+  // runs in a process of its own and leaves nothing behind. The keymap lists
+  // these in a different order, which is exactly why the groups are a table
+  // rather than a sort.
+  const rest = [
+    { id: "kernel.restart", label: "Restart Kernel" },
     { id: "debug.start", label: "Debug File" },
     { id: "debug.stepOver", label: "Step Over" },
     { id: "debug.continue", label: "Continue" },
   ];
-  const run = submenu(menu("Linux", { runCommands: [...RUN_COMMANDS, ...debugging] }), "menu.run");
+  const run = submenu(menu("Linux", { runCommands: [...RUN_COMMANDS, ...rest] }), "menu.run");
 
   assert.deepEqual(run.map((entry) => entry.id ?? "-"), [
     "run.cell", "run.cell.stay", "run.selectionOrLine",
+    "-",
+    "kernel.restart",
     "-",
     "run.file",
     "-",
     "debug.start", "debug.stepOver", "debug.continue",
   ]);
+});
+
+const TESTING = [
+  { id: "test.file", label: "Test File" },
+  { id: "test.folder", label: "Test Folder" },
+];
+
+test("testing is a menu of its own, in the order the table gives", () => {
+  // Not two more entries under Run: nothing about a suite starts from the
+  // buffer on screen, and both items ask where to look before they do
+  // anything.
+  const built = menu("Linux", { runCommands: [...RUN_COMMANDS, ...TESTING] });
+
+  assert.deepEqual(submenu(built, "menu.test").map((entry) => entry.id),
+                   ["test.file", "test.folder"]);
+  assert.deepEqual(submenu(built, "menu.test").map((entry) => entry.text),
+                   ["Test File", "Test Folder"]);
+});
+
+test("and they are kept out of Run, which appends what its groups do not name", () => {
+  // runGroups appends any command the groups miss, so that a new Run command
+  // cannot silently vanish. These two are named elsewhere and must not be
+  // caught by that.
+  const run = submenu(menu("Linux", { runCommands: [...RUN_COMMANDS, ...TESTING] }), "menu.run");
+
+  assert.equal(run.some((entry) => entry.id === "test.file"), false);
+  assert.equal(run.some((entry) => entry.id === "test.folder"), false);
+});
+
+test("a keymap with no test commands gets no Test menu, rather than an empty one", () => {
+  const built = menu("Linux");
+
+  assert.equal(built.some((entry) => entry.id === "menu.test"), false);
+});
+
+test("Test sits between Run and Help", () => {
+  const ids = menu("Linux", { runCommands: [...RUN_COMMANDS, ...TESTING] })
+    .map((entry) => entry.id);
+
+  assert.ok(ids.indexOf("menu.test") > ids.indexOf("menu.run"));
+  assert.ok(ids.indexOf("menu.test") < ids.indexOf("menu.help"));
 });
 
 test("a command the groups do not mention is appended rather than dropped", () => {

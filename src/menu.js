@@ -159,17 +159,30 @@ function item(id, text, { platform, shortcut, enabled = true, role = false }) {
 }
 
 // The Run menu's shape, which is not the order the keymap happens to list its
-// commands in. Three ideas, separated: run part of this file, run the whole of
-// it, debug it. Grouping is the only thing a menu can say about which items
-// belong together, and this one would otherwise be nine flat entries.
+// commands in. Four ideas, separated: run part of this file on the kernel, run
+// it by markers, the kernel itself, then the things that run in a process of
+// their own - a file, a test folder, a debug session. Grouping is the only
+// thing a menu can say about which items belong together, and this one would
+// otherwise be eleven flat entries.
+//
+// Restart Kernel sits above Run File rather than below it because everything
+// over the line runs *on the kernel* and everything under it does not.
 const RUN_GROUPS = [
   ["run.cell", "run.cell.stay", "run.selectionOrLine", "run.all"],
   ["run.cellAbove", "run.allAbove", "run.allBelow"],
-  ["run.file"],
   ["kernel.restart"],
+  ["run.file"],
   ["debug.start", "debug.stepOver", "debug.stepInto", "debug.stepOut", "debug.continue",
    "debug.restart", "debug.stop"],
 ];
+
+// The Test menu, which is a menu rather than two more entries under Run because
+// running a suite is a different question from running the file on screen -
+// nothing about it starts from the buffer, and both items ask where to look.
+// Listed here so runGroups knows to leave them alone: its fallback appends any
+// command the groups do not mention, which is what keeps a new Run command from
+// vanishing and would otherwise put these two in the wrong menu.
+const TEST_ITEMS = ["test.file", "test.folder"];
 
 /**
  * Build the Run menu from the keymap, in groups.
@@ -179,7 +192,11 @@ const RUN_GROUPS = [
  * costs nothing to prevent is a new command that silently never appears.
  */
 function runGroups(runCommands, at) {
-  const byId = new Map(runCommands.map((command) => [command.id, command]));
+  const byId = new Map(
+    runCommands
+      .filter((command) => !TEST_ITEMS.includes(command.id))
+      .map((command) => [command.id, command]),
+  );
   const items = [];
   for (const group of RUN_GROUPS) {
     const present = group.filter((id) => byId.has(id));
@@ -218,6 +235,10 @@ export function buildMenu({
   const at = (id, text, extra = {}) =>
     item(id, text, { platform, shortcut: chordFor(id), enabled: isEnabled(id), ...extra });
   const mac = platform === "Darwin";
+  const testItems = TEST_ITEMS
+    .map((id) => runCommands.find((command) => command.id === id))
+    .filter((command) => command !== undefined)
+    .map((command) => at(command.id, command.label));
 
   // On macOS the first entry becomes the application menu - it takes the app's
   // name whatever this says, and it swallows whatever items are in it. Observed
@@ -290,6 +311,10 @@ export function buildMenu({
       text: "Run",
       menuItems: runGroups(runCommands, at),
     },
+    // Omitted rather than empty when the keymap has neither: a menu with no
+    // items reads as a broken menu, and the shape is asserted from fixtures
+    // that carry only the commands a test is about.
+    ...(testItems.length === 0 ? [] : [{ id: "menu.test", text: "Test", menuItems: testItems }]),
     ...(mac ? [] : [helpMenu]),
   ];
 }

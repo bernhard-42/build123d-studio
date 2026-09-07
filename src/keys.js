@@ -192,6 +192,20 @@ export const COMMANDS = [
     chords: ["ctrl+f5"],
   },
   {
+    id: "test.file",
+    label: "Test File",
+    // No chords by default. Both ask where to look before they do anything, so
+    // they are deliberate acts rather than ones anybody repeats from the
+    // keyboard; the shortcut editor will bind them for whoever runs the suite
+    // all day. They are in this list, rather than menu-only, so that it can.
+    chords: [],
+  },
+  {
+    id: "test.folder",
+    label: "Test Folder",
+    chords: [],
+  },
+  {
     id: "kernel.restart",
     label: "Restart Kernel",
     // Shift-Alt-Cmd-R, and Shift-Alt-Ctrl-R off macOS. Four keys because the

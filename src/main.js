@@ -96,7 +96,7 @@ import { appendBackendLine, showConsolePanel } from "./debug/console.js";
 import { anythingUnwell, record as recordHealth, reset as resetHealth } from "./health.js";
 import * as log from "./log.js";
 import { guardAgainstReload, suppressNativeContextMenu } from "./reload.js";
-import { initRunFile, toggleRunFile } from "./run/file.js";
+import { initRunFile, testFile, testFolder, toggleRunFile } from "./run/file.js";
 import { restoreWindow, saveWindow, watchWindow } from "./windowstate.js";
 
 init();
@@ -673,6 +673,8 @@ async function main() {
     "run.allAbove": () => runAllAbove(),
     "run.allBelow": () => runAllBelow(),
     "run.file": () => void toggleRunFile(),
+    "test.file": () => void testFile(),
+    "test.folder": () => void testFolder(),
     "kernel.restart": () => void restartKernel(),
     "debug.start": () => withMenu(toggleDebugging),
     "debug.restart": () => stepAction("restart"),
