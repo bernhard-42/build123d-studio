@@ -2,6 +2,10 @@
 
 What changed in each release, for the people using it. Anything not visible from the outside is in the git log.
 
+## 0.5.7 (2026-09-07)
+
+- **A window whose link to the application has died says so again, and keeps saying it.** On Windows, waking from a long sleep breaks two connections at once: the one to the Python backend, which is redialled and comes back, and the one to the application itself, which cannot be. The second is the serious one — nothing can be saved, nothing logged, and the window cannot be closed — and the offer to reload, which is the only way out, was being wiped off the screen a second later by the backend's own recovery. What was left was a window that ran code perfectly, wrote nothing to its log, and could not be quit, with nothing on screen to explain it. Found on a machine that had been asleep for four days.
+
 ## 0.5.6 (2026-09-07)
 
 - **Run → Test File and Test Folder.** Pick a file or a folder and `pytest` runs over it, in a process of its own — the report arrives in the Run/Debug tab and the Stop beside it ends the run, exactly as Run File works. pytest is part of the environment from this release on. Settings → **Test** carries one switch, **Ignore warnings**, which adds `-W ignore` for a suite where the same deprecation is raised a hundred times and buries the summary.

@@ -127,6 +127,29 @@ test.describe("the link stops answering without closing", () => {
     expect(await bannerText(page).innerText()).toContain("lost its link");
     await expect(page.locator("#backend-banner-restart")).toHaveText("Reload window");
   });
+
+  test("and the sidecar coming back does not take that offer away", async ({ page }) => {
+    // Both sockets break on the same wake, and they are repaired by different
+    // parties: the sidecar's is redialled and announces itself, Neutralino's
+    // cannot be. Measured on gauss after a four-day suspend - the reload offer
+    // was raised and then wiped by the sidecar's own recovery, leaving a window
+    // that worked perfectly, logged nothing, and could not be quit.
+    test.setTimeout(120000);
+    const { sidecar } = await openApp(page);
+
+    await page.evaluate(() => globalThis.__NEUTRALINO_STUB__.goSilent());
+    await expect(banner(page)).toBeVisible({ timeout: 60000 });
+
+    // The other half of the same wake, arriving a few seconds later.
+    sidecar.drop(1006);
+    await expect.poll(() => sidecar.connections, { timeout: 30000 }).toBeGreaterThan(1);
+
+    // Nothing about the sidecar returning repairs the link to the window, so
+    // the only way out must still be on screen.
+    await expect(banner(page)).toBeVisible();
+    expect(await bannerText(page).innerText()).toContain("lost its link");
+    await expect(page.locator("#backend-banner-restart")).toHaveText("Reload window");
+  });
 });
 
 test.describe("work typed after the link died", () => {

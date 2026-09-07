@@ -359,14 +359,6 @@ function installBackendRecovery(console_) {
   );
   ipc.on("sidecar.disconnected", () => show("The Python backend disconnected.", restartBackend));
 
-  // The socket came back and the sidecar was there all along - a resumed
-  // machine, not a dead backend. Nothing was lost, so nothing needs saying
-  // beyond taking the banner away if the earlier attempts had already raised
-  // one.
-  ipc.on("sidecar.resumed", () => {
-    banner.hidden = true;
-  });
-
   /**
    * The link to Neutralino itself, which is not the sidecar's.
    *
@@ -389,6 +381,24 @@ function installBackendRecovery(console_) {
       await new Promise(() => {});
     },
   };
+
+  // The socket came back and the sidecar was there all along - a resumed
+  // machine, not a dead backend. Nothing was lost, so nothing needs saying
+  // beyond taking the banner away if the earlier attempts had already raised
+  // one.
+  //
+  // Only the banner this owns, and that is not a nicety. Both sockets break on
+  // the same wake and only one of them can be repaired: this handler used to
+  // hide whatever was on screen, so on Windows it wiped the reload offer that
+  // the dead link to Neutralino had raised a second or two earlier. Measured on
+  // gauss after a four-day suspend - a window that ran code perfectly, wrote no
+  // log, and could not be quit, with nothing on screen to say why.
+  ipc.on("sidecar.resumed", () => {
+    if (recovery === reloadWindow) {
+      return;
+    }
+    banner.hidden = true;
+  });
 
   const linkLost = () => {
     log.error("The link to the application is not answering; offering a reload");
