@@ -1407,8 +1407,15 @@ html body {
   vertical-align: top;
 }
 
+/* Sized to its widest label rather than to a share of the panel. Measured in
+   the engine, with the 113 packages a real environment holds: the longest label
+   in the whole dialog is "ipython_pygments_lexers" at 145px, and 42% of a 630px
+   table gave the column 265px - 120px of empty space taken from the values,
+   which are the paths this dialog exists to hand over. 27% leaves headroom for
+   a longer name in somebody else's environment; anything longer still wraps
+   rather than overflowing. */
 .info-label {
-  width: 42%;
+  width: 27%;
   padding-right: 12px !important;
   color: var(--fg-dim);
 }
@@ -1419,6 +1426,24 @@ html body {
   font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   overflow-wrap: anywhere;
   user-select: text;
+}
+
+/* The per-path copy button. Small and quiet: it sits at the end of a value
+   inside a table row, so a toolbar button's 30x26 would set the row height and
+   pull the eye off the path it belongs to. It borrows .btn for the hover and
+   for .copied, and gives back the border and the background until then. */
+.info-copy {
+  width: 18px;
+  height: 16px;
+  margin-left: 6px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--fg-dim);
+  vertical-align: text-bottom;
+}
+
+.info-copy .icon {
+  font-size: 13px;
 }
 
 .btn.copied {

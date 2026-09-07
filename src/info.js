@@ -43,7 +43,7 @@ async function logRows() {
   // libraries inside it printed, and what the measurement backend said. Each is
   // named only when it exists, for the same reason the rotated one is - a path
   // to a file nobody wrote sends the reader looking for it.
-  const rows = [row("Log", current)];
+  const rows = [pathRow("Log", current)];
   for (const [label, path] of [
     ["Browser console", log.consolePath()],
     ["Measurement backend", log.backendPath()],
@@ -53,7 +53,7 @@ async function logRows() {
     }
     try {
       await filesystem.getStats(path);
-      rows.push(row(label, path));
+      rows.push(pathRow(label, path));
     } catch {
       // Nothing has been written to it in this installation.
     }
@@ -62,7 +62,7 @@ async function logRows() {
   const previous = `${current}.1`;
   try {
     await filesystem.getStats(previous);
-    rows.push(row("Previous log", previous));
+    rows.push(pathRow("Previous log", previous));
   } catch {
     // Never rotated, which is the common case.
   }
@@ -93,6 +93,20 @@ function row(label, value) {
     label,
     value: value === undefined || value === null ? "unknown" : String(value),
   };
+}
+
+/**
+ * A row whose value is a path, which gets a copy button of its own.
+ *
+ * Only paths get one. The header's Copy already yields the whole dialog as
+ * text, which is what a bug report wants; what it does not give is one path on
+ * the clipboard, and a path is the thing here that gets pasted into a shell.
+ * Hand-selecting one that wraps across three lines is the part people get
+ * wrong - and on macOS and Windows it contains spaces, so a half-selection
+ * fails somewhere further along rather than at once.
+ */
+function pathRow(label, value) {
+  return { ...row(label, value), copy: true };
 }
 
 // How long the About dialog waits for the sidecar's answer. Long enough for a
@@ -152,7 +166,7 @@ async function gather() {
       + "everything, which downloads again. It is not removed when the "
       + "application is deleted.",
     rows: [
-      row("Location", envRoot),
+      pathRow("Location", envRoot),
       // Only when something redirected it. A report that says the environment
       // is somewhere unexpected is otherwise a question nobody can settle:
       // this is the difference between a machine policy and a typo.
@@ -165,7 +179,6 @@ async function gather() {
           ? `${info.info.python} (${info.info.implementation})`
           : "starting…",
       ),
-      row("Kernel connection file", info?.info?.connectionFile ?? "starting…"),
     ],
   });
 
@@ -185,16 +198,8 @@ async function gather() {
     });
   }
 
-  if (info?.info?.allPackages) {
-    const all = info.info.allPackages;
-    sections.push({
-      title: `All installed packages (${all.length})`,
-      rows: all.map((p) => row(p.name, p.version)),
-    });
-  }
-
-  // Last, because it is what a bug report is told to fetch rather than
-  // something anybody reads while looking at versions.
+  // Below the versions, because it is what a bug report is told to fetch rather
+  // than something anybody reads while looking at them.
   //
   // The files live outside the environment rather than inside it - beside it on
   // macOS and Linux, and in the roaming half of AppData on Windows, where the
@@ -215,8 +220,59 @@ async function gather() {
     title: "Snippets",
     note: "VS Code's .code-snippets format, comments and all. Read at startup "
       + "and when Settings is applied.",
-    rows: [row("File", snippetsPath(await appDataDir()))],
+    rows: [pathRow("File", snippetsPath(await appDataDir()))],
   });
+
+  // On its own, because it is the only section that asks the reader to do
+  // something rather than to read something - and because the note is what the
+  // row is for. It sat inside "Python environment" as a bare path, which named
+  // the file without saying that anything could be done with it.
+  //
+  // Last of the sections anybody reads. Only the full package list follows,
+  // and that is a hundred rows nobody scrolls past on purpose.
+  //
+  // The double quotes in the command are not decoration. This path contains
+  // spaces on macOS and Windows both, so an unquoted --existing is read as
+  // several arguments and jupyter-console goes looking for a kernel it will
+  // not find.
+  //
+  // Ctrl-D rather than exit, and the difference is the kernel: a typed exit is
+  // executed *by* the kernel, which answers with an ask_exit payload carrying
+  // keepkernel=False, and jupyter_console then sends a shutdown - measured
+  // against a live kernel, not inferred from the flags. Ctrl-D reaches
+  // ask_exit() directly and leaves it running. --no-confirm-exit does not
+  // change this; it only drops the confirmation on Ctrl-D.
+  //
+  // And the reader installs their own jupyter-console rather than being sent
+  // to the one inside .venv. The environment is Settings' to manage: a path
+  // into it in the About dialog is an invitation to run things from it, and
+  // the next question after "where is the binary" is "can I pip install into
+  // this".
+  sections.push({
+    title: "Kernel connection",
+    note:
+      'Use \'jupyter-console --existing "<Kernel connection file>"\' to connect '
+      + "to the kernel from outside of build123d Studio. To leave the external "
+      + 'console, do not type "exit" but use Ctrl-D. Note, you need to install '
+      + "jupyter-console outside of build123d Studio.",
+    rows: [
+      typeof info?.info?.connectionFile === "string"
+        ? pathRow("Kernel connection file", info.info.connectionFile)
+        : row("Kernel connection file", "starting…"),
+    ],
+  });
+
+  // Genuinely last: ninety to a hundred and thirty rows, wanted only when a
+  // support answer asks for an exact version of something that is not in the
+  // short list above. Anything a reader is meant to find by scrolling has to
+  // come before it, or it is behind a wall of alphabetised packages.
+  if (info?.info?.allPackages) {
+    const all = info.info.allPackages;
+    sections.push({
+      title: `All installed packages (${all.length})`,
+      rows: all.map((p) => row(p.name, p.version)),
+    });
+  }
 
   return sections;
 }
@@ -239,11 +295,21 @@ function render(sections) {
   return sections
     .map((section) => {
       const rows = section.rows
-        .map(
-          (r) =>
+        .map((r) => {
+          // The value is carried in the attribute rather than read back out of
+          // the cell, because the cell also holds the button - and a path that
+          // wrapped would come back with the layout's line breaks in it.
+          const copy =
+            r.copy === true
+              ? `<button type="button" class="btn info-copy" title="Copy to clipboard"`
+                + ` data-copy="${escapeHtml(r.value)}">`
+                + `<span class="icon icon-copy"></span></button>`
+              : "";
+          return (
             `<tr><td class="info-label">${escapeHtml(r.label)}</td>` +
-            `<td class="info-value">${escapeHtml(r.value)}</td></tr>`,
-        )
+            `<td class="info-value">${escapeHtml(r.value)}${copy}</td></tr>`
+          );
+        })
         .join("");
       const note =
         section.note === undefined
@@ -293,7 +359,25 @@ export async function showInfo() {
   document.addEventListener("keydown", onKeyDown);
 
   const sections = await gather();
-  document.getElementById("info-body").innerHTML = render(sections);
+  const body = document.getElementById("info-body");
+  body.innerHTML = render(sections);
+
+  // Delegated, so it survives the innerHTML above and needs no per-row wiring.
+  body.addEventListener("click", async (event) => {
+    // A click that lands on the glyph inside the button, on the button itself,
+    // or on the row around it - only the first two are a copy.
+    const button = event.target.closest?.(".info-copy") ?? null;
+    if (button === null) {
+      return;
+    }
+    try {
+      await clipboard.writeText(button.dataset.copy);
+      button.classList.add("copied");
+      setTimeout(() => button.classList.remove("copied"), 1200);
+    } catch (error) {
+      log.warn("Could not copy to the clipboard:", error);
+    }
+  });
 
   document.getElementById("info-copy").addEventListener("click", async () => {
     try {
