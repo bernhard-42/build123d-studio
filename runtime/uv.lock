@@ -71,7 +71,7 @@ wheels = [
 
 [[package]]
 name = "build123d-studio-runtime"
-version = "0.5.6"
+version = "0.5.7"
 source = { virtual = "." }
 
 [package.dev-dependencies]
