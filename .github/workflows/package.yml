@@ -165,14 +165,21 @@ jobs:
         with:
           sparse-checkout: |
             FirstRun.md
-            CHANGELOG.md
           sparse-checkout-cone-mode: false
           filter: blob:none
 
-      # What changed, above how to verify what you downloaded. The newest
-      # section only - everything from the first "## " heading to the next -
-      # because a release page is about this release and the rest is one click
-      # away in the file.
+      # A link to what changed, above how to verify what you downloaded.
+      #
+      # The newest section of CHANGELOG.md used to be pasted in here. It was
+      # dropped because of what it does to the writing: a release whose own
+      # section is two lines looks thin on the page next to one with nine, and
+      # the pull is then to write the section for the announcement rather than
+      # for the release - listing what earlier releases already shipped. The
+      # changelog is per-release and stays that way; the page links to it.
+      #
+      # Pinned to the tag rather than to the default branch, so the link keeps
+      # saying what it said on the day - a reader coming back to an old release
+      # gets that release's file, not whatever the changelog has become since.
       #
       # `test -s` is the guard, and it is here because the failure it catches
       # has happened: action-gh-release publishes an empty body without
@@ -181,7 +188,8 @@ jobs:
       - name: Build the release notes
         run: |
           set -euo pipefail
-          awk '/^## /{ n++ } n == 1' CHANGELOG.md > notes.md
+          printf 'What changed in this release: [CHANGELOG.md](%s/blob/%s/CHANGELOG.md)\n' \
+            "${{ github.server_url }}/${{ github.repository }}" "${{ github.ref_name }}" > notes.md
           printf '\n---\n\n' >> notes.md
           cat FirstRun.md >> notes.md
           test -s notes.md
