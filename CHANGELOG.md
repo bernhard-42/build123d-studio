@@ -4,6 +4,8 @@ What changed in each release, for the people using it. Anything not visible from
 
 ## 0.5.8 (2026-09-07)
 
+- **The toolbar no longer hides its own buttons when the window is narrow.** Too narrow to fit them all, the row scrolls — and the scrollbar was drawn across the bottom of it, covering half of every button. There is no scrollbar now, and the row can be dragged sideways with the mouse, which is what most people try first. Shift-wheel still works.
+
 - **three-cad-viewer 5.0.5**, with the fixes made in it since 5.0.4.
 
 - **"This environment cannot import OCP or build123d" was sometimes a false alarm, and the advice under it made things worse.** With cadquery in the environment, the startup check imported everything successfully and then faulted on the way out — Windows corrupts the heap while unloading the OpenCascade libraries — and only the exit code was read, so a run that had done its whole job was reported as an environment that could import nothing. The prompt then offered **Restore**, which would have replaced a perfectly good configuration, local checkouts and all. The check now leaves without a teardown, and says which half of it succeeded: trouble with cadquery — which you add yourself, and which the application never imports — is written to the log and stops nothing.

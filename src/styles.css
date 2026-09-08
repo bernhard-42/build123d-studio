@@ -176,6 +176,22 @@ body {
 
    Narrow panes scroll it sideways rather than wrapping, which would cost the
    very vertical space this arrangement is meant to save. */
+/* A row of 26px buttons that scrolls when the window is too narrow for it, with
+   no scrollbar drawn at all.
+
+   Thinning it was tried first and does not hold. `scrollbar-width: thin` and a
+   4px `::-webkit-scrollbar` are both honoured by WebKit on macOS - measured, a
+   1px lane and the buttons untouched - and neither is honoured by the GTK build
+   or by WebView2, which draw their own bar across the bottom of the row and
+   cover half of every button. The alternative was reserving a lane for the
+   worst case, which is about 13px of extra height on every platform,
+   permanently, for a bar that is only drawn while scrolling.
+
+   Nothing is lost by hiding it: the row still scrolls with a wheel, a trackpad
+   or a drag, and every button in it is also a menu item with a shortcut. What
+   is given up is the hint that there is more to the right - a fade at the edge
+   would need a wrapper element, because a background shadow is painted behind
+   the buttons, which are opaque, and cannot be seen. */
 .toolbar {
   display: flex;
   flex: 0 0 auto;
@@ -186,16 +202,20 @@ body {
   background: var(--bg);
   overflow-x: auto;
   overflow-y: hidden;
-  scrollbar-width: thin;
+  scrollbar-width: none;
 }
 
 .toolbar::-webkit-scrollbar {
-  height: 4px;
+  display: none;
 }
 
-.toolbar::-webkit-scrollbar-thumb {
-  border-radius: 2px;
-  background: var(--border);
+/* While a drag is under way. The cursor is the only thing on screen that says
+   this row can be dragged, and it is deliberately not shown on hover: the row
+   is only draggable when it overflows, and a grab cursor over a button that is
+   about to be clicked reads as the wrong affordance. */
+.toolbar.dragging {
+  cursor: grabbing;
+  user-select: none;
 }
 
 /* Buttons must not be squeezed by the scroll container - but the spacer must

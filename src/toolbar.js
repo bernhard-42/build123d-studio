@@ -18,6 +18,7 @@ import { onDebugChange } from "./debug/session.js";
 import { showConsolePanel } from "./debug/console.js";
 import { anythingUnwell, onHealthChange, summary, worstState } from "./health.js";
 import * as ipc from "./ipc.js";
+import { enableDragScroll } from "./dragscroll.js";
 import { showInfo } from "./info.js";
 import { showSettings } from "./settings.js";
 import * as log from "./log.js";
@@ -343,6 +344,10 @@ export function restartKernel() {
 }
 
 export function initToolbar() {
+  // Dragging the row sideways, because it scrolls with no scrollbar when the
+  // window is too narrow and Shift-wheel is not something anybody guesses.
+  enableDragScroll(document.querySelector(".toolbar"));
+
   // The title has to follow the buffer, not only the explicit actions below: a
   // keystroke makes it dirty and a successful save makes it clean again, and
   // neither goes through a button. Fired on the transition rather than on every
