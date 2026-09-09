@@ -324,11 +324,44 @@ function lockedDependenciesOf(lock, pkg) {
   return deps === null ? [] : [...deps[1].matchAll(/name = "([^"]+)"/g)].map((m) => m[1]);
 }
 
+// What the core declares and this application cannot reach. uv installs these
+// anyway - they are the core's own requirements - but declaring them here would
+// claim Upgrade should move them, and Upgrade exists to deliver fixes to what
+// the viewer draws. Each is named with the path that would have to exist for it
+// to matter, so this is a decision rather than a shrug, and adding to it means
+// arguing for the entry.
+const UNREACHABLE = {
+  questionary:
+    "imported lazily inside choose_port() in ocp_viewer_core/websocket.py - a "
+    + "module this application never imports - and below a branch that only runs "
+    + "outside a Jupyter kernel. Studio's kernel is ipykernel, so even from "
+    + "inside that function it takes the input() path.",
+};
+
+test("and an exemption that is no longer a dependency is itself stale", () => {
+  // The list above is the same kind of hand-kept thing the test below exists to
+  // police, so it is policed too: a name the core has stopped depending on is a
+  // sentence in the file that has stopped being true.
+  const lock = readFileSync(new URL("../../runtime/uv.lock", import.meta.url), "utf8");
+  const dependencies = lockedDependenciesOf(lock, "ocp-viewer-core");
+
+  for (const exempt of Object.keys(UNREACHABLE)) {
+    assert.ok(
+      dependencies.includes(exempt),
+      `${exempt} is exempted from the check below but ocp-viewer-core no longer `
+        + "depends on it - delete the exemption",
+    );
+  }
+});
+
 test("every dependency of ocp-viewer-core is declared, so an upgrade reaches it", () => {
   const lock = readFileSync(new URL("../../runtime/uv.lock", import.meta.url), "utf8");
   const pyproject = readFileSync(new URL("../../runtime/pyproject.toml", import.meta.url), "utf8");
 
   for (const dependency of lockedDependenciesOf(lock, "ocp-viewer-core")) {
+    if (Object.hasOwn(UNREACHABLE, dependency)) {
+      continue;
+    }
     // Declared with a range, bare, or pinned exactly - the last being reachable
     // by being deliberately immovable rather than by being upgradable.
     const declared = new RegExp(`^\\s*"${dependency}(?:[><=~,! ].*)?",?\\s*$`, "m").test(pyproject);

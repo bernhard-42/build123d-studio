@@ -71,7 +71,7 @@ wheels = [
 
 [[package]]
 name = "build123d-studio-runtime"
-version = "0.6.0"
+version = "0.6.1"
 source = { virtual = "." }
 
 [package.dev-dependencies]
@@ -121,7 +121,7 @@ core-cad = [
     { name = "build123d", specifier = ">=0.11.1" },
     { name = "cadquery-ocp-stubs", specifier = ">=7.9.3,<7.10" },
     { name = "ocp-tessellate" },
-    { name = "ocp-viewer-core", specifier = ">=1.0.5,<1.1.0" },
+    { name = "ocp-viewer-core", specifier = ">=1.0.7,<1.1.0" },
     { name = "pillow" },
     { name = "threejs-materials" },
 ]
@@ -666,17 +666,19 @@ wheels = [
 
 [[package]]
 name = "ocp-viewer-core"
-version = "1.0.5"
+version = "1.0.7"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "ocp-tessellate" },
     { name = "orjson" },
     { name = "pillow" },
+    { name = "questionary" },
     { name = "threejs-materials" },
+    { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/79/af/679be3f05e6eb19f607a50f0588c72ec968d0eab374698678852acd7630c/ocp_viewer_core-1.0.5.tar.gz", hash = "sha256:fc1f2460d3e67446f66c0ac27a5d6db74aad2ce483b9c22165b9b748d44440e9", size = 111051, upload-time = "2026-09-02T13:08:06.68Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/0e/8f/45c6d82f8837883de70c9ae2a2a1fd1e4adb29c4a375007c21d1e99aad89/ocp_viewer_core-1.0.7.tar.gz", hash = "sha256:5c95921fd227adf0038443314e9260ff7f0bca60da29351d76ef797b0c222931", size = 113135, upload-time = "2026-09-09T15:54:14.327Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/b7/fa/764e3cc3945cc2dd7a17229640ad2375b8111eb66eb7d7446d418957c967/ocp_viewer_core-1.0.5-py3-none-any.whl", hash = "sha256:0f5509c4bfef13a44499ecf28199d9056d157952a4353fa410cb03e8523a037b", size = 114598, upload-time = "2026-09-02T13:08:05.409Z" },
+    { url = "https://files.pythonhosted.org/packages/75/23/94e9024f2dcffbcae98d5bc565264e4d61272fe64bc68ddc869ad028f6ed/ocp_viewer_core-1.0.7-py3-none-any.whl", hash = "sha256:c2fd34c7bff75920ee6e178152d31aa0861d8de1622f3f276c70e6ab148b0c49", size = 116129, upload-time = "2026-09-09T15:54:13.125Z" },
 ]
 
 [[package]]
@@ -965,6 +967,18 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/c4/59/a5f38970f9bf07cee96128de79590bb354917914a9be11272cfc7ff26af0/pyzmq-27.1.0-cp314-cp314t-win32.whl", hash = "sha256:1f0b2a577fd770aa6f053211a55d1c47901f4d537389a034c690291485e5fe92", size = 587472, upload-time = "2025-09-08T23:08:58.18Z" },
     { url = "https://files.pythonhosted.org/packages/70/d8/78b1bad170f93fcf5e3536e70e8fadac55030002275c9a29e8f5719185de/pyzmq-27.1.0-cp314-cp314t-win_amd64.whl", hash = "sha256:19c9468ae0437f8074af379e986c5d3d7d7bfe033506af442e8c879732bedbe0", size = 661401, upload-time = "2025-09-08T23:08:59.802Z" },
     { url = "https://files.pythonhosted.org/packages/81/d6/4bfbb40c9a0b42fc53c7cf442f6385db70b40f74a783130c5d0a5aa62228/pyzmq-27.1.0-cp314-cp314t-win_arm64.whl", hash = "sha256:dc5dbf68a7857b59473f7df42650c621d7e8923fb03fa74a526890f4d33cc4d7", size = 575170, upload-time = "2025-09-08T23:09:01.418Z" },
+]
+
+[[package]]
+name = "questionary"
+version = "2.1.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "prompt-toolkit" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/f6/45/eafb0bba0f9988f6a2520f9ca2df2c82ddfa8d67c95d6625452e97b204a5/questionary-2.1.1.tar.gz", hash = "sha256:3d7e980292bb0107abaa79c68dd3eee3c561b83a0f89ae482860b181c8bd412d", size = 25845, upload-time = "2025-08-28T19:00:20.851Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/3c/26/1062c7ec1b053db9e499b4d2d5bc231743201b74051c973dadeac80a8f43/questionary-2.1.1-py3-none-any.whl", hash = "sha256:a51af13f345f1cdea62347589fbb6df3b290306ab8930713bfae4d475a7d4a59", size = 36753, upload-time = "2025-08-28T19:00:19.56Z" },
 ]
 
 [[package]]

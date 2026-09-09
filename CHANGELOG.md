@@ -2,6 +2,11 @@
 
 What changed in each release, for the people using it. Anything not visible from the outside is in the git log.
 
+## 0.6.1 (2026-09-09)
+
+- **A stored viewer setting takes effect again when it shares a name with a built-in default.** Fixed in ocp-viewer-core 1.0.6, which this release moves to (1.0.7).
+- **The native tessellator can be turned on and off from the kernel**, as it can in the other three viewers: `enable_native_tessellator()`, `disable_native_tessellator()` and `is_native_tessellator_enabled()` are importable from `build123d_studio`. They need the `ocp_addons` accelerator to be installed; without it, enabling says so rather than failing quietly. `NATIVE_TESSELLATOR=1` in the environment is honoured here now too. Nothing is printed when it is on — ask `is_native_tessellator_enabled()`.
+
 ## 0.6.0 (2026-09-08)
 
 - **The toolbar no longer hides its own buttons when the window is narrow.** Too narrow to fit them all, the row scrolls — and the scrollbar was drawn across the bottom of it, covering half of every button. There is no scrollbar now, and the row can be dragged sideways with the mouse, which is what most people try first. Shift-wheel still works.

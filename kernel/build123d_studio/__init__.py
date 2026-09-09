@@ -18,7 +18,6 @@ The names below are bound methods off one `Viewer` and one `Config`, never
 working completion in the editor.
 """
 
-from ocp_tessellate.cad_objects import ImageFace
 from ocp_viewer_core.colors import (
     BaseColorMap,
     ColorMap,
@@ -54,14 +53,37 @@ from ocp_viewer_core.config import (
     UiTab,
 )
 from ocp_viewer_core.show import Viewer, ignore_camera_warnings, none_filter
+from ocp_viewer_core.tessellator import (
+    ImageFace,
+    disable_native_tessellator,
+    enable_native_tessellator,
+    init_native_tessellator,
+    is_native_tessellator_enabled,
+)
 
 from .comms import StudioComms
 from .transport import NotConnected
+
+# `NATIVE_TESSELLATOR=1` in the environment turns the ocp_addons accelerator on,
+# and it does nothing at all unless somebody applies it - which is what this
+# call is. The other three viewers make it here too, so a script that sets the
+# variable behaves the same in all four.
+#
+# Deliberately silent, where the others print a line saying the accelerator is
+# on. Their import happens when the user writes it; this package is imported by
+# the kernel's warm-up, before anything has been asked for, so a banner would
+# land in the console at every start and every restart, unbidden. Whether the
+# accelerator is on is a question `is_native_tessellator_enabled()` answers.
+init_native_tessellator()
 
 __all__ = [
     "Animation",
     "AnalysisTool",
     "ImageFace",
+    "disable_native_tessellator",
+    "enable_native_tessellator",
+    "init_native_tessellator",
+    "is_native_tessellator_enabled",
     "select_edge",
     "select_edges",
     "select_face",
