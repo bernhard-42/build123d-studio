@@ -1,6 +1,6 @@
 {
   "name": "build123d-studio",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "description": "A standalone build123d IDE: Monaco, three-cad-viewer, Jupyter console and variable explorer",
   "license": "Apache-2.0",
   "type": "module",
@@ -30,8 +30,8 @@
     "@xterm/xterm": "6.0.0",
     "jsonc-parser": "3.3.1",
     "monaco-editor": "0.56.0",
-    "ocp-viewer-core": "1.0.3",
-    "three-cad-viewer": "5.0.5"
+    "ocp-viewer-core": "1.0.4",
+    "three-cad-viewer": "5.0.6"
   },
   "devDependencies": {
     "@neutralinojs/neu": "11.7.2",

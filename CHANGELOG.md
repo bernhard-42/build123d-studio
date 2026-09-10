@@ -2,6 +2,11 @@
 
 What changed in each release, for the people using it. Anything not visible from the outside is in the git log.
 
+## 0.6.2 (2026-09-10)
+
+- **The viewer lays itself out properly when its pane changes size.** A resize sized only the canvas, leaving the toolbar and the tree at the width they had; and turning glass mode off at runtime re-derived the geometry from the width it had just replaced, so the viewer grew by the tree's width and overflowed the pane until something else happened to resize it. Both matter here more than elsewhere, because every Run moves the panes. three-cad-viewer 5.0.6 and ocp-viewer-core 1.0.4 on the JavaScript side.
+- **The environment stops carrying a package it can never run.** ocp-viewer-core 1.0.8 moves `questionary` into a `cli` extra: its one use is a prompt reached only outside a Jupyter kernel, and Studio never imports the module it lives in.
+
 ## 0.6.1 (2026-09-09)
 
 - **A stored viewer setting takes effect again when it shares a name with a built-in default.** Fixed in ocp-viewer-core 1.0.6, which this release moves to (1.0.7).
