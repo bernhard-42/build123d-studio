@@ -43,3 +43,5 @@ __pycache__/
 tests/frontend/build/
 test-results/
 playwright-report/
+reviews
+ROADMAP.md
