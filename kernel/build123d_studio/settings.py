@@ -20,10 +20,15 @@ VS Code's does, and the defaults are read from `viewer_defaults.json` beside
 this file. That file is the one source for both halves of the application: the
 Settings dialog draws its controls from it, and this assembles the answer from
 it, so 36 numbers are written down once.
+
+One of those settings differs by platform, and the file says so rather than
+either half computing it: `modifier_keys` holds a map per platform. See
+`platform_defaults` below for which, and why.
 """
 
 import json
 import os
+import sys
 
 DEFAULTS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "viewer_defaults.json")
 
@@ -46,9 +51,50 @@ def _read_json(path, fallback):
     return value if isinstance(value, type(fallback)) else fallback
 
 
-def defaults():
-    """What the viewer does when nothing has been set."""
-    return _read_json(DEFAULTS_FILE, {})
+# Settings whose default is not one value but one per platform. The file holds
+# `{"macOS": ..., "default": ...}` for each, and `defaults()` picks.
+PLATFORM_DEPENDENT = ("modifier_keys",)
+
+
+def platform_defaults(values, platform):
+    """Resolve the per-platform settings for one platform.
+
+    Only `modifier_keys` so far, and the reason is `metaKey`. three-cad-viewer
+    spends the `meta` role on locking vertical rotation, on hide, and on
+    isolate, and `metaKey` is Cmd on macOS but the Win/Super key everywhere
+    else - where the desktop keeps it: Start menu, window snapping, moving a
+    window. Those chords never reach the page, so off macOS the `meta` role has
+    to be the Alt key.
+
+    Which leaves the `alt` role with the key nobody can press, and that is
+    affordable rather than merely tolerable: the renderer does nothing with it.
+    Its branch in `handlePick` is byte-for-byte the no-modifier branch, carrying
+    the comment "same as else branch to make typscript happy"
+    (three-cad-viewer 5.0.6). Conflating it with Alt instead would be worse - if
+    a later version gives the role a meaning, an unreachable key fails cleanly
+    where a shared one fires two things at once.
+
+    So this is worth re-reading whenever three-cad-viewer moves.
+    """
+    resolved = dict(values)
+    for key in PLATFORM_DEPENDENT:
+        choice = resolved.get(key)
+        if isinstance(choice, dict) and "default" in choice:
+            # "macOS" in the file, because that is the name a person reading it
+            # knows; `sys.platform` says "darwin", which is the kernel's name
+            # for it and nobody else's.
+            resolved[key] = choice["macOS"] if platform == "darwin" else choice["default"]
+    return resolved
+
+
+def defaults(platform=None):
+    """What the viewer does when nothing has been set, on this platform.
+
+    The platform is a parameter so that it can be asserted rather than only
+    observed; nothing in the application passes it.
+    """
+    values = _read_json(DEFAULTS_FILE, {})
+    return platform_defaults(values, sys.platform if platform is None else platform)
 
 
 def stored(path=None):

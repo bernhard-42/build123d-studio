@@ -132,9 +132,44 @@ export const GROUPS = [
 // Each entry takes its default from the shared file, rather than carrying one.
 // A key the file does not know would otherwise be a control with no default,
 // silently storing whatever was typed into it; the schema test refuses that.
+/**
+ * Settings whose default is one map per platform rather than one value.
+ *
+ * `modifier_keys` is the only one, and the reason is `metaKey`: Cmd on macOS,
+ * the Win/Super key everywhere else, where the desktop keeps it for the Start
+ * menu and window management, so those chords never reach the page. The file
+ * holds both maps and this picks - see `platform_defaults` in
+ * kernel/build123d_studio/settings.py, which makes the same choice for the
+ * answer a show carries, and carries the full reasoning.
+ */
+const PLATFORM_DEPENDENT = new Set(["modifier_keys"]);
+
+/**
+ * The default for one key on one platform.
+ *
+ * `os` is what `NL_OS` says - "Darwin", "Windows" or "Linux". Taken as an
+ * argument rather than read here, so a test can ask for a platform it is not
+ * running on; the module below passes the real one.
+ */
+export function defaultFor(key, os) {
+  const value = DEFAULTS[key];
+  if (!PLATFORM_DEPENDENT.has(key)) {
+    return value;
+  }
+  // "macOS" is the file's spelling, for whoever opens it; "Darwin" is what
+  // NL_OS reports, which is the platform's own name for itself.
+  return os === "Darwin" ? value.macOS : value.default;
+}
+
+// Under node - the tests, and the schema check above all - there is no NL_OS.
+// macOS is the answer there because the file is written in its terms and the
+// dialog's own tests compare against it; what the swap does is asserted
+// directly against defaultFor instead.
+const CURRENT_OS = typeof NL_OS === "string" ? NL_OS : "Darwin";
+
 for (const group of GROUPS) {
   for (const setting of group.settings) {
-    setting.default = DEFAULTS[setting.key];
+    setting.default = defaultFor(setting.key, CURRENT_OS);
   }
 }
 

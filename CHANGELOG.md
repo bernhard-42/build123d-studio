@@ -2,6 +2,10 @@
 
 What changed in each release, for the people using it. Anything not visible from the outside is in the git log.
 
+## 0.6.3 (2026-09-14)
+
+- **The viewer's modifier chords work on Windows and Linux.** Locking vertical rotation, hiding and isolating are the `meta` role in three-cad-viewer, and `meta` was the Win/Super key everywhere except macOS — a key the desktop keeps for itself, so those chords never reached the viewer at all. They are the **Alt** key there now. macOS is unchanged: `meta` is Cmd, as it was. The default shown in Settings → Viewer → Modifier keys follows the platform too, so what the dialog calls "unset" is what the viewer is actually given.
+
 ## 0.6.2 (2026-09-10)
 
 - **The viewer lays itself out properly when its pane changes size.** A resize sized only the canvas, leaving the toolbar and the tree at the width they had; and turning glass mode off at runtime re-derived the geometry from the width it had just replaced, so the viewer grew by the tree's width and overflowed the pane until something else happened to resize it. Both matter here more than elsewhere, because every Run moves the panes. three-cad-viewer 5.0.6 and ocp-viewer-core 1.0.4 on the JavaScript side.

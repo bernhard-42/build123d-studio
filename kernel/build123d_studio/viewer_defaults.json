@@ -12,10 +12,18 @@
   "zoom_speed": 1,
   "pan_speed": 1,
   "modifier_keys": {
-    "shift": "shiftKey",
-    "ctrl": "ctrlKey",
-    "meta": "metaKey",
-    "alt": "altKey"
+    "macOS": {
+      "shift": "shiftKey",
+      "ctrl": "ctrlKey",
+      "meta": "metaKey",
+      "alt": "altKey"
+    },
+    "default": {
+      "shift": "shiftKey",
+      "ctrl": "ctrlKey",
+      "meta": "altKey",
+      "alt": "metaKey"
+    }
   },
   "axes": false,
   "axes0": true,

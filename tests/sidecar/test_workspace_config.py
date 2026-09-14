@@ -58,6 +58,43 @@ class WorkspaceConfigTest(unittest.TestCase):
         self.assertEqual(config["reset_camera"], "KEEP")
         self.assertEqual(config["tree_width"], 240)
 
+    def test_the_modifier_keys_depend_on_the_platform(self):
+        """`metaKey` is Cmd on macOS and the unusable Win key everywhere else.
+
+        Off macOS the `meta` role - rotate-lock, hide, isolate - has to be the
+        Alt key, or those three chords never reach the page at all.
+        """
+        mac = settings.defaults(platform="darwin")["modifier_keys"]
+        self.assertEqual(mac["meta"], "metaKey")
+        self.assertEqual(mac["alt"], "altKey")
+
+        for platform in ("win32", "linux"):
+            keys = settings.defaults(platform=platform)["modifier_keys"]
+            self.assertEqual(keys["meta"], "altKey", platform)
+            # The role nobody can press. Affordable because the renderer does
+            # nothing with it - see platform_defaults for the receipt.
+            self.assertEqual(keys["alt"], "metaKey", platform)
+
+    def test_every_platform_gets_the_same_four_roles(self):
+        # A resolved map with a missing or extra role is a key three-cad-viewer
+        # either ignores or never hears about, and neither says so.
+        roles = {"shift", "ctrl", "meta", "alt"}
+        for platform in ("darwin", "win32", "linux"):
+            self.assertEqual(set(settings.defaults(platform=platform)["modifier_keys"]), roles)
+
+    def test_the_answer_carries_the_resolved_map_not_the_platform_table(self):
+        # What goes on the wire is one keymap. If the table itself leaked, the
+        # renderer would be handed {"macOS": ..., "default": ...} and would
+        # quietly keep whatever it already had.
+        config = settings.workspace_config(path="/nonexistent")
+        self.assertEqual(set(config["modifier_keys"]), {"shift", "ctrl", "meta", "alt"})
+
+    def test_an_unresolvable_platform_falls_back_rather_than_raising(self):
+        # sys.platform is whatever the interpreter says; an unknown one is not
+        # a reason to fail a show.
+        keys = settings.defaults(platform="freebsd14")["modifier_keys"]
+        self.assertEqual(keys["meta"], "altKey")
+
     def test_a_stored_value_replaces_its_default(self):
         path = self.settings_file({"viewer": {"ticks": 10, "ortho": False}})
         config = settings.workspace_config(path=path)

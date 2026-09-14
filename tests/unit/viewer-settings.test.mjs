@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { readFileSync } from "node:fs";
 
 import {
   GROUPS,
   SETTINGS,
+  defaultFor,
   defaults,
   parseValue,
   settingFor,
@@ -58,6 +60,40 @@ test("only what differs from the default is stored", () => {
 
 test("an unknown key is dropped rather than stored", () => {
   assert.deepEqual(toStore({ nonsense: 1, axes: true }), { axes: true });
+});
+
+test("the modifier keys depend on the platform", () => {
+  // `metaKey` is Cmd on macOS and the Win/Super key everywhere else, where the
+  // desktop keeps it - Start menu, snapping, moving a window - so a chord on it
+  // never reaches the page. Off macOS the `meta` role, which three-cad-viewer
+  // spends on rotate-lock, hide and isolate, has to be the Alt key.
+  assert.deepEqual(defaultFor("modifier_keys", "Darwin"), {
+    shift: "shiftKey", ctrl: "ctrlKey", meta: "metaKey", alt: "altKey",
+  });
+  for (const os of ["Windows", "Linux"]) {
+    assert.deepEqual(defaultFor("modifier_keys", os), {
+      shift: "shiftKey", ctrl: "ctrlKey", meta: "altKey", alt: "metaKey",
+    }, os);
+  }
+});
+
+test("and the dialog and the kernel agree about which map that is", () => {
+  // Two halves, two languages, one file. They resolve it separately, so what
+  // keeps them together is that the file holds both maps rather than either
+  // side computing one - and that this asserts the shape the other half reads.
+  const table = JSON.parse(
+    readFileSync(new URL("../../kernel/build123d_studio/viewer_defaults.json", import.meta.url)),
+  ).modifier_keys;
+
+  assert.deepEqual(Object.keys(table).sort(), ["default", "macOS"]);
+  assert.deepEqual(defaultFor("modifier_keys", "Darwin"), table.macOS);
+  assert.deepEqual(defaultFor("modifier_keys", "Linux"), table.default);
+});
+
+test("a setting that does not depend on the platform is the same on all of them", () => {
+  for (const os of ["Darwin", "Windows", "Linux"]) {
+    assert.equal(defaultFor("ortho", os), true, os);
+  }
 });
 
 test("the keymap compares by value, not by identity", () => {
