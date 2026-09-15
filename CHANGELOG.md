@@ -2,6 +2,10 @@
 
 What changed in each release, for the people using it. Anything not visible from the outside is in the git log.
 
+## 0.6.4 (2026-09-15)
+
+- **ocp-tessellate 3.5.3 and ocp-viewer-core 1.0.13.** From the tessellator: an STL import no longer shows as an empty placeholder vertex; build123d's `BuildSheet` and the result of `ShapeList.group_by` convert instead of being skipped; a builder shown from inside its own context before it has any geometry no longer raises; a cadquery sketch that is all construction geometry shows. From the core: `show(orbit_control=True)` and `show(up="Y")` apply to that call alone, `reset_defaults(port=…)` resets the viewer it names, `push_object(…, update=True)` adds a name it has not seen, and the imports work under cadquery-ocp 8.
+
 ## 0.6.3 (2026-09-14)
 
 - **The viewer's modifier chords work on Windows and Linux.** Locking vertical rotation, hiding and isolating are the `meta` role in three-cad-viewer, and `meta` was the Win/Super key everywhere except macOS — a key the desktop keeps for itself, so those chords never reached the viewer at all. They are the **Alt** key there now. macOS is unchanged: `meta` is Cmd, as it was. The default shown in Settings → Viewer → Modifier keys follows the platform too, so what the dialog calls "unset" is what the viewer is actually given.

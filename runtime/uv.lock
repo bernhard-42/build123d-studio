@@ -71,7 +71,7 @@ wheels = [
 
 [[package]]
 name = "build123d-studio-runtime"
-version = "0.6.3"
+version = "0.6.4"
 source = { virtual = "." }
 
 [package.dev-dependencies]
@@ -121,7 +121,7 @@ core-cad = [
     { name = "build123d", specifier = ">=0.11.1" },
     { name = "cadquery-ocp-stubs", specifier = ">=7.9.3,<7.10" },
     { name = "ocp-tessellate" },
-    { name = "ocp-viewer-core", specifier = ">=1.0.8,<1.1.0" },
+    { name = "ocp-viewer-core", specifier = ">=1.0.13,<1.1.0" },
     { name = "pillow" },
     { name = "threejs-materials" },
 ]
@@ -650,7 +650,7 @@ wheels = [
 
 [[package]]
 name = "ocp-tessellate"
-version = "3.5.0"
+version = "3.5.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cachetools" },
@@ -659,14 +659,14 @@ dependencies = [
     { name = "typing-extensions" },
     { name = "webcolors" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/02/8c/359cadedd313ccb804120b031fb4a8780b448064615d1f9c0298bb0c272d/ocp_tessellate-3.5.0.tar.gz", hash = "sha256:e80a2c6c44d452a3540258566de6f19437b9d3727ef81bde57a5d4984edca35f", size = 85853, upload-time = "2026-08-19T13:09:18.136Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ef/59/f5affe69a54587413b03b22020b0353fba1b4aeb3a281912eb6eaeef9347/ocp_tessellate-3.5.3.tar.gz", hash = "sha256:3f627da7099cd078081432b26db179b7f225241d1ca9474ce959e714f6cac564", size = 88317, upload-time = "2026-09-15T15:51:54.35Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/16/b1/5503aba90c4b32df2f872788966cf6a766fb8f7bc5c09f30213416b28b17/ocp_tessellate-3.5.0-py3-none-any.whl", hash = "sha256:7081770e809b454b49c89a26e995bd045ace93f6e80e70484f0a8831d6d2f99b", size = 96012, upload-time = "2026-08-19T13:09:17Z" },
+    { url = "https://files.pythonhosted.org/packages/ca/27/da87f487ef3b1755e278888a72b83b11af7e47dc3321e79cefe0e6370277/ocp_tessellate-3.5.3-py3-none-any.whl", hash = "sha256:411017293e42817904f54f30268dae94ac18b18f3beeba9c0d10fbc12a3d277f", size = 61783, upload-time = "2026-09-15T15:51:53.156Z" },
 ]
 
 [[package]]
 name = "ocp-viewer-core"
-version = "1.0.8"
+version = "1.0.13"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "ocp-tessellate" },
@@ -675,9 +675,9 @@ dependencies = [
     { name = "threejs-materials" },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/4a/51/9e4096cd2c5cd647d18fca8330806bc371388022f935b7fb3d537dbed297/ocp_viewer_core-1.0.8.tar.gz", hash = "sha256:cf77a6654910efde95b781b044c11f40444ff22f1017ae8172313c42f7a26cad", size = 113451, upload-time = "2026-09-10T07:51:00.765Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/d2/99/6c36e0fda14e44e66e2fccc04420be7650f813f9e6556cb27e5470171bb8/ocp_viewer_core-1.0.13.tar.gz", hash = "sha256:57ccbfff31a03fdd6c78e1dc5f05ff55d49f959df956d450f211ec7b06bf91ca", size = 117138, upload-time = "2026-09-15T16:50:32.98Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/04/74/90c91bcc8c60a2179b04f3c44fdccc71f9de3921d1d642f1759df6e5ad87/ocp_viewer_core-1.0.8-py3-none-any.whl", hash = "sha256:0965e3ca0415bf5e6ff36de5e254b5aad76a4d071c75d419038c3b547a7be568", size = 116310, upload-time = "2026-09-10T07:50:59.63Z" },
+    { url = "https://files.pythonhosted.org/packages/c6/f7/25889dfacdb3c9278ab3eb0ced060c41ace3c8eca535ad3060f16c19ffc3/ocp_viewer_core-1.0.13-py3-none-any.whl", hash = "sha256:e74796f6b91b058446b84c5469e4ed70c4e3da57afe6dee195d9ab94df9277e5", size = 117926, upload-time = "2026-09-15T16:50:31.706Z" },
 ]
 
 [[package]]
