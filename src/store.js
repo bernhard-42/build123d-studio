@@ -45,6 +45,22 @@ export async function initStore() {
 }
 
 /**
+ * Where the settings file is, once initStore has run.
+ *
+ * Exported for the sidecar's command line: the kernel answers `workspace_config()`
+ * from this file, and used to find it as "the directory above the environment
+ * root" - which held on every platform until 0.5.0 moved the environment out of
+ * the roaming profile on Windows and left the settings in it. Two derivations of
+ * one path is how that broke; this is the one that wrote the file.
+ */
+export function settingsPath() {
+  if (path === null) {
+    throw new Error("settingsPath() called before initStore()");
+  }
+  return path;
+}
+
+/**
  * @param {string} key
  * @param {*} fallback returned when the key has never been set
  */

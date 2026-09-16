@@ -299,6 +299,10 @@ class TestableKernel(Kernel):
             super().__init__(
                 env_root=env_root,
                 app_dir=env_root,
+                # Never read: the fake starts no real kernel. Named anyway,
+                # because it is a required argument for the reason the real
+                # one is.
+                settings_path=os.path.join(env_root, "settings.json"),
                 # Never opened: new_manager below replaces the process, so
                 # nothing here writes or reads a connection file.
                 connection_file=os.path.join(env_root, "kernel.json"),

@@ -16,6 +16,7 @@ once.
 """
 
 import tempfile
+import os
 import unittest
 
 from instance import Instance
@@ -68,7 +69,7 @@ class RunQueueTest(unittest.TestCase):
         instance = Instance(root)
         instance.claim()
         self.addCleanup(instance.release)
-        self.sidecar = Sidecar(env_root=root, app_dir=root, instance=instance)
+        self.sidecar = Sidecar(env_root=root, app_dir=root, instance=instance, settings_path=os.path.join(root, "settings.json"))
         self.channel = FakeChannel()
         self.sidecar.channel = self.channel
         self.sidecar.kernel = FakeKernel()

@@ -90,7 +90,7 @@ import { initDebug } from "./debug/session.js";
 import { initDebugUi, stepAction, toggleDebugging } from "./debug/start.js";
 import * as ipc from "./ipc.js";
 import { initTheme } from "./theme.js";
-import { getSetting, initStore, setSetting } from "./store.js";
+import { getSetting, initStore, setSetting, settingsPath } from "./store.js";
 import { hideBusy, resetBusy, showBusy } from "./busy.js";
 import { appendBackendLine, showConsolePanel } from "./debug/console.js";
 import { anythingUnwell, record as recordHealth, reset as resetHealth } from "./health.js";
@@ -833,6 +833,7 @@ async function main() {
       python: environment.python,
       envRoot: environment.envRoot,
       appDir: await appDir(),
+      settings: settingsPath(),
     });
     log.info("Sidecar ready", ready);
     // The file was restored before the sidecar existed, so tell it now where

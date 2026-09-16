@@ -2,6 +2,12 @@
 
 What changed in each release, for the people using it. Anything not visible from the outside is in the git log.
 
+## 0.6.5 (2026-09-16)
+
+- **The viewer's modifier chords work on Windows and Linux for real this time.** 0.6.3 gave those platforms the right map in Settings and in what a show sends, and the viewer never received it: it is built once, at the startup logo, and Studio sent the logo only its theme — so the viewer kept the logo's own map, `meta` on the Win key, through every show after. The logo now gets the platform's keys as well, and the help overlay says `<alt>` where it said `<meta>`. And a map changed in Settings → Viewer → Modifier keys now takes effect at the next show, as every other viewer setting does, on every platform — it used to wait for the next start, for the same reason: every show computed the map and dropped it.
+- **On Windows, a changed viewer setting reaches the next `show()` — it never did.** The kernel answers `workspace_config()` from `settings.json`, and looked for it in the directory above the Python environment: true on macOS and Linux, and false on Windows since 0.5.0 moved the environment to `%LOCALAPPDATA%` and left the settings roaming in `%APPDATA%`. It read a file that did not exist and answered the shipped defaults for every viewer setting, silently, whatever Settings held and however often you restarted. The frontend now tells the sidecar where the file is.
+- **Choosing GitHub for ocp-viewer-core no longer fails.** The source was written in git's `git@github.com:…` spelling, which is not a URL, and uv refused the whole `pyproject.toml` over it. It is `https://github.com/…` now, as build123d's has always been.
+
 ## 0.6.4 (2026-09-15)
 
 - **ocp-tessellate 3.5.3 and ocp-viewer-core 1.0.13.** From the tessellator: an STL import no longer shows as an empty placeholder vertex; build123d's `BuildSheet` and the result of `ShapeList.group_by` convert instead of being skipped; a builder shown from inside its own context before it has any geometry no longer raises; a cadquery sketch that is all construction geometry shows. From the core: `show(orbit_control=True)` and `show(up="Y")` apply to that call alone, `reset_defaults(port=…)` resets the viewer it names, `push_object(…, update=True)` adds a name it has not seen, and the imports work under cadquery-ocp 8.

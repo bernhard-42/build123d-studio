@@ -297,10 +297,11 @@ class ShellChannel:
 class Kernel:
     """Owns the kernel process and the sidecar's client to it."""
 
-    def __init__(self, env_root, app_dir, connection_file, model_port, model_token,
-                 on_iopub, on_died):
+    def __init__(self, env_root, app_dir, settings_path, connection_file, model_port,
+                 model_token, on_iopub, on_died):
         self.env_root = env_root
         self.app_dir = app_dir
+        self.settings_path = settings_path
         self.model_port = model_port
         self.model_token = model_token
         self.on_iopub = on_iopub
@@ -605,10 +606,10 @@ class Kernel:
         # Where this application's own settings live, so that `show()` can
         # answer `workspace_config()` - the persistent half of a show's
         # configuration - without asking anybody. It is the frontend's file and
-        # the kernel only ever reads it.
-        env["BUILD123D_STUDIO_SETTINGS"] = os.path.join(
-            os.path.dirname(os.path.normpath(self.env_root)), "settings.json"
-        )
+        # the kernel only ever reads it, so the frontend says where it is: the
+        # path is passed in, not derived. See Sidecar.__init__ for what deriving
+        # it cost.
+        env["BUILD123D_STUDIO_SETTINGS"] = self.settings_path
 
         # No OCP_PORT any more, and its absence is the point. It used to pin
         # ocp_vscode's viewer discovery at a socket we own, because `_convert`

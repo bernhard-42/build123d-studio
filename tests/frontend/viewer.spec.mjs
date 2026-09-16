@@ -182,3 +182,137 @@ test.describe("a model with no geometry", () => {
     await expect(page.locator(".pane-viewer canvas").first()).toBeVisible();
   });
 });
+
+test.describe("the modifier keys the viewer is built with", () => {
+  // The viewer is constructed once, at the splash, and its help overlay is
+  // rendered from the keymap it was constructed with - `{{meta}}` in the
+  // template becomes whichever key the map says. Later shows re-apply theme,
+  // glass and tools and nothing more, so what the splash was given is what the
+  // user gets. This host sent only the theme, so on Windows and Linux the help
+  // said <meta> and the chords were on the Win key, which the desktop keeps.
+  const help = (page) =>
+    page.evaluate(() => document.querySelector(".tcv_cad_help_layout")?.innerHTML ?? "");
+
+  test("on Windows the meta chords are on the Alt key, and the help says so", async ({ page }) => {
+    await open(page, { platform: "Windows", files: FILES, settings: { workspace: WORKSPACE } });
+    await expect(page.locator(".pane-viewer canvas").first()).toBeVisible();
+
+    const html = await help(page);
+    expect(html).toContain("&lt;alt&gt; + &lt;left mouse button&gt;");
+    expect(html).not.toContain("&lt;meta&gt;");
+  });
+
+  test("and a show afterwards leaves them there", async ({ page }) => {
+    // The report was "not only a splash issue - still there when showing a
+    // model". True of the build that sent no keymap: the viewer built at the
+    // splash keeps its map through every show, so a wrong one stayed wrong and
+    // a right one stays right. A show reuses the viewer - clear(), then render
+    // - and neither touches the keymap; only setKeyMap does, and the help is
+    // rewritten in the same call, so the help after a show is the map after a
+    // show.
+    const { sidecar } = await open(page, {
+      platform: "Windows", files: FILES, settings: { workspace: WORKSPACE },
+    });
+    await expect(page.locator(".pane-viewer canvas").first()).toBeVisible();
+
+    // The fixture was recorded on macOS and its header carries that keymap.
+    // On Windows the kernel answers workspace_config() with the Alt map, so
+    // the header a real show carries there is this one.
+    sidecar.sendBinary(KIND_MODEL, PAYLOAD, {
+      ...MODEL.header,
+      config: {
+        ...(MODEL.header.config ?? {}),
+        keymap: { shift: "shiftKey", ctrl: "ctrlKey", meta: "altKey", alt: "metaKey" },
+      },
+    });
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          String(globalThis.__NEUTRALINO_STUB__.wrote("/appdata/build123d-studio/build123d-studio.log") ?? "")))
+      .toContain("Model rendered");
+
+    const html = await help(page);
+    expect(html).toContain("&lt;alt&gt; + &lt;left mouse button&gt;");
+    expect(html).not.toContain("&lt;meta&gt;");
+  });
+
+  test("on macOS they stay on Cmd", async ({ page }) => {
+    // The control, and the reason this went unnoticed: on macOS the logo's
+    // own map and this platform's are the same map.
+    await open(page, { platform: "Darwin", files: FILES, settings: { workspace: WORKSPACE } });
+    await expect(page.locator(".pane-viewer canvas").first()).toBeVisible();
+
+    const html = await help(page);
+    expect(html).toContain("&lt;meta&gt; + &lt;left mouse button&gt;");
+  });
+
+  const renderModel = async (page, sidecar) => {
+    sidecar.sendBinary(KIND_MODEL, PAYLOAD, MODEL.header);
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          String(globalThis.__NEUTRALINO_STUB__.wrote("/appdata/build123d-studio/build123d-studio.log") ?? "")))
+      .toContain("Model rendered");
+  };
+
+  const changeMetaTo = async (page, modifier) => {
+    await page.locator("#btn-settings").click();
+    await page.locator("#tab-viewer").click();
+    await page.locator("#viewer-modifier_keys-meta").selectOption(modifier);
+    await page.locator("#settings-apply").click();
+    await expect(page.locator("#settings-apply")).toBeHidden();
+  };
+
+  test("changing the keys in Settings takes effect at the next show, not before", async ({ page }) => {
+    // The keys are a construction-time option the viewer is given once, and a
+    // show re-applies theme, glass and tools and nothing more - so until now a
+    // change took effect at the next startup and never before, on every
+    // platform. It now travels the way every other viewer setting does: the
+    // next show's header carries the map the kernel read from the file just
+    // written, and the render puts that map onto the viewer. Applying the
+    // dialog changes nothing on screen by itself.
+    const { sidecar } = await open(page, { files: FILES, settings: { workspace: WORKSPACE } });
+    await renderModel(page, sidecar);
+    expect(await help(page)).toContain("&lt;meta&gt; + &lt;left mouse button&gt;");
+
+    await changeMetaTo(page, "ctrlKey");
+    expect(await help(page)).toContain("&lt;meta&gt; + &lt;left mouse button&gt;");
+
+    // The kernel would answer workspace_config() from the file just written;
+    // the harness's model carries its header, so give it the changed keymap
+    // the way the sidecar would.
+    sidecar.sendBinary(KIND_MODEL, PAYLOAD, {
+      ...MODEL.header,
+      config: { ...(MODEL.header.config ?? {}), keymap: { shift: "shiftKey", ctrl: "ctrlKey", meta: "ctrlKey", alt: "altKey" } },
+    });
+    // The second render, not the first: the log already says it once.
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          String(globalThis.__NEUTRALINO_STUB__.wrote("/appdata/build123d-studio/build123d-studio.log") ?? "")
+            .split("Model rendered").length - 1))
+      .toBe(2);
+
+    const html = await help(page);
+    expect(html).toContain("&lt;ctrl&gt; + &lt;left mouse button&gt; double");
+    expect(html).not.toContain("&lt;meta&gt;");
+  });
+
+  test("and a map stored in Settings wins over the platform's default", async ({ page }) => {
+    // The keys are the user's to change, and the dialog stores only what
+    // differs - so a stored map is a deliberate one and has to reach the
+    // viewer ahead of anything this host would have chosen.
+    await open(page, {
+      platform: "Windows",
+      files: FILES,
+      settings: {
+        workspace: WORKSPACE,
+        viewer: { modifier_keys: { shift: "shiftKey", ctrl: "ctrlKey", meta: "ctrlKey", alt: "altKey" } },
+      },
+    });
+    await expect(page.locator(".pane-viewer canvas").first()).toBeVisible();
+
+    const html = await help(page);
+    expect(html).toContain("&lt;ctrl&gt; + &lt;left mouse button&gt; double");
+  });
+});

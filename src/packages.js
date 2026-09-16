@@ -42,7 +42,10 @@ export const PACKAGES = [
     // application: a uv source wins over whatever the dependency itself says -
     // measured - so choosing GitHub or a local checkout redirects it entirely.
     name: "ocp-viewer-core",
-    repository: "git@github.com:bernhard-42/ocp-viewer-core",
+    // https, as build123d's is. The scp-style `git@github.com:...` spelling is
+    // not a URL - uv refused the file with "relative URL without a base" - and
+    // the repository is public, so nothing here needs a key.
+    repository: "https://github.com/bernhard-42/ocp-viewer-core",
     branch: "main",
   },
 ];

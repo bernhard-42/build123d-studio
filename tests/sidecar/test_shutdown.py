@@ -60,7 +60,7 @@ class ShutdownTest(unittest.TestCase):
         self.root = tempfile.mkdtemp(prefix="studio-shutdown-")
         self.instance = Instance(self.root)
         self.instance.claim()
-        self.sidecar = Sidecar(env_root=self.root, app_dir=self.root, instance=self.instance)
+        self.sidecar = Sidecar(env_root=self.root, app_dir=self.root, instance=self.instance, settings_path=os.path.join(self.root, "settings.json"))
         self.addCleanup(self.instance.release)
 
         self.stopped = []
@@ -164,7 +164,7 @@ class ShutdownTest(unittest.TestCase):
             def restart(self):
                 return False
 
-        sidecar = Watched(env_root=self.root, app_dir=self.root, instance=self.instance)
+        sidecar = Watched(env_root=self.root, app_dir=self.root, instance=self.instance, settings_path=os.path.join(self.root, "settings.json"))
         sidecar.channel = Channel("channel", self.stopped)
         sidecar.kernel = Refusing("kernel", self.stopped)
         sidecar.console = None
@@ -208,7 +208,7 @@ class ShutdownTest(unittest.TestCase):
                 # had been stopped by the time it fired.
                 fired.append(list(stopped))
 
-        sidecar = Watched(env_root=self.root, app_dir=self.root, instance=self.instance)
+        sidecar = Watched(env_root=self.root, app_dir=self.root, instance=self.instance, settings_path=os.path.join(self.root, "settings.json"))
         for name in ["completer", "debug", "run", "measurements",
                      "console", "kernel", "models", "channel", "instance"]:
             setattr(sidecar, name, Recorder(name, stopped))
@@ -289,7 +289,7 @@ class StartupAbandonedTest(unittest.TestCase):
             def console_start(self):
                 started.append("console")
 
-        return Recording(env_root=self.root, app_dir=self.root, instance=self.instance)
+        return Recording(env_root=self.root, app_dir=self.root, instance=self.instance, settings_path=os.path.join(self.root, "settings.json"))
 
     def test_nothing_further_is_brought_up_once_a_stop_has_begun(self):
         sidecar = self._sidecar()
@@ -434,7 +434,8 @@ class StdinDuringStartupTest(unittest.TestCase):
 
         process = subprocess.Popen(
             [sys.executable, os.path.join(repo, "sidecar", "main.py"),
-             "--env-root", root, "--app-dir", repo],
+             "--env-root", root, "--app-dir", repo,
+             "--settings", os.path.join(root, "settings.json")],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
@@ -464,7 +465,8 @@ class StdinDuringStartupTest(unittest.TestCase):
 
         process = subprocess.Popen(
             [sys.executable, os.path.join(repo, "sidecar", "main.py"),
-             "--env-root", root, "--app-dir", repo],
+             "--env-root", root, "--app-dir", repo,
+             "--settings", os.path.join(root, "settings.json")],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
@@ -517,7 +519,8 @@ class StdinDuringStartupTest(unittest.TestCase):
 
         process = subprocess.Popen(
             [sys.executable, os.path.join(repo, "sidecar", "main.py"),
-             "--env-root", root, "--app-dir", repo],
+             "--env-root", root, "--app-dir", repo,
+             "--settings", os.path.join(root, "settings.json")],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -559,7 +562,8 @@ class StdinDuringStartupTest(unittest.TestCase):
 
         process = subprocess.Popen(
             [sys.executable, os.path.join(repo, "sidecar", "main.py"),
-             "--env-root", root, "--app-dir", repo],
+             "--env-root", root, "--app-dir", repo,
+             "--settings", os.path.join(root, "settings.json")],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,

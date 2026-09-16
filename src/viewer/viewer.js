@@ -9,6 +9,8 @@ import { copyText } from "../editing.js";
 import * as ipc from "../ipc.js";
 import * as log from "../log.js";
 import { onThemeChange, resolvedTheme } from "../theme.js";
+import { STORAGE_KEY as VIEWER_KEY, withDefaults } from "../viewer-settings.js";
+import { getSetting } from "../store.js";
 
 // The viewer pane.
 //
@@ -147,10 +149,41 @@ function overrides() {
  *
  * The splash itself is the core's: one logo for every viewer, described once.
  */
+/**
+ * The modifier keys the viewer is built with: what Settings holds, over this
+ * platform's default.
+ *
+ * Sent with the splash, because that is the moment the viewer is constructed
+ * and the only moment the keymap it is constructed with can be chosen - the
+ * core's own contract for the splash is "its theme, its tree width and its
+ * modifier keys". This host sent only the theme, so the viewer was built with
+ * the logo's own map, which spells `meta` as `metaKey`: Cmd on macOS, the
+ * unusable Win key everywhere else. Every later show computed the right map
+ * and dropped it, because a show re-applies theme, glass and tools and nothing
+ * more. On macOS the two maps coincide, which is why it went unnoticed there.
+ */
+function modifierKeys() {
+  return withDefaults(getSetting(VIEWER_KEY)).modifier_keys;
+}
+
+/**
+ * Put a keymap onto the live viewer.
+ *
+ * Through the page's "ui" path - the one `set_viewer_config()` takes - which
+ * is the only route to a viewer that already exists: `setKeyMap` is reached
+ * from there and from construction, and from nowhere in a show. Called after
+ * every render with the keymap that show was computed with, so a changed
+ * setting reaches the viewer when the next show does, as every other viewer
+ * setting does - those travel in the render options, the keymap alone does not.
+ */
+function applyModifierKeys(keymap) {
+  page.handleMessage({ type: "ui", config: { keymap } });
+}
+
 export function showLogo() {
   try {
     const started = performance.now();
-    page.showSplash({ theme: resolvedTheme() });
+    page.showSplash({ theme: resolvedTheme(), keymap: modifierKeys() });
     log.info(`Logo rendered in ${(performance.now() - started).toFixed(0)} ms`);
   } catch (error) {
     log.warn("Could not render the startup logo:", error);
@@ -229,6 +262,15 @@ export function initViewer() {
         data: { shapes },
         config: header.config ?? {},
       });
+      // The keymap this show was computed with, put onto the viewer by hand.
+      // The viewer is built once, and a show re-applies theme, glass and tools
+      // and nothing more - `header.config.keymap` is worked out on every show
+      // and then dropped. It is the merged value the core produced for this
+      // call, workspace setting through show keyword, so applying it here is
+      // exactly the line showViewer does not have, at the same layering.
+      if (header.config?.keymap !== undefined) {
+        applyModifierKeys(header.config.keymap);
+      }
       log.info(
         `Model rendered: ${header.count ?? "?"} shapes, ` +
           `${(payload.byteLength / 1024).toFixed(0)} kB, ` +

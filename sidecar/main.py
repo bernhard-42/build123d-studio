@@ -131,9 +131,17 @@ ORPHAN_GRACE = 120
 
 
 class Sidecar:
-    def __init__(self, env_root, app_dir, instance):
+    def __init__(self, env_root, app_dir, instance, settings_path):
         self.env_root = env_root
         self.app_dir = app_dir
+        # The frontend's settings.json, which the kernel answers
+        # workspace_config() from. Given rather than derived: it used to be
+        # "the directory above env_root", which is true where the environment
+        # and the settings share a parent - macOS, Linux - and false on Windows
+        # since 0.5.0 put the environment in Local and left the settings in
+        # Roaming. There the kernel read a file that did not exist and answered
+        # the shipped defaults for every setting, silently, for four releases.
+        self.settings_path = settings_path
         # This process's own directory under the shared environment root, with
         # its lock already held - claimed in main() before anything could start
         # a kernel. Everything per-instance hangs off it; see instance.py.
@@ -498,6 +506,7 @@ class Sidecar:
         self.kernel = Kernel(
             env_root=self.env_root,
             app_dir=self.app_dir,
+            settings_path=self.settings_path,
             connection_file=self.instance.connection_file,
             model_port=self.models.port,
             model_token=self.models.token,
@@ -1781,6 +1790,10 @@ def main():
     parser = argparse.ArgumentParser("build123d-studio sidecar")
     parser.add_argument("--env-root", required=True, help="Python environment root")
     parser.add_argument("--app-dir", required=True, help="Application directory")
+    # Required, not defaulted: a kernel that cannot find this file answers the
+    # shipped defaults and says nothing, which is the failure this argument
+    # exists to end. The frontend resolved the path when it wrote the file.
+    parser.add_argument("--settings", required=True, help="The frontend's settings.json")
     args = parser.parse_args()
 
     # Step out of the application directory before doing anything else.
@@ -1821,7 +1834,12 @@ def main():
     if remove_legacy_connection_file(args.env_root):
         log("Removed the pre-instance kernel.json from the environment root")
 
-    sidecar = Sidecar(env_root=args.env_root, app_dir=args.app_dir, instance=instance)
+    sidecar = Sidecar(
+        env_root=args.env_root,
+        app_dir=args.app_dir,
+        instance=instance,
+        settings_path=args.settings,
+    )
 
     # Before anything is brought up, so that a quit is heard during startup and
     # not only after it. Nothing has been spawned yet at this point, so there is

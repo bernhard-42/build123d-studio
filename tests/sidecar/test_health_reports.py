@@ -16,6 +16,7 @@ restarted - `test_kernel_restart.py` holds that - only about what is said.
 """
 
 import tempfile
+import os
 import unittest
 
 from instance import Instance
@@ -73,7 +74,7 @@ class HealthReportTest(unittest.TestCase):
         instance.claim()
         self.addCleanup(instance.release)
 
-        self.sidecar = Sidecar(env_root=root, app_dir=root, instance=instance)
+        self.sidecar = Sidecar(env_root=root, app_dir=root, instance=instance, settings_path=os.path.join(root, "settings.json"))
         self.channel = FakeChannel()
         self.sidecar.channel = self.channel
         self.sidecar.console = None
@@ -156,7 +157,7 @@ class SplashUntilSomethingIsDrawnTest(unittest.TestCase):
         instance.claim()
         self.addCleanup(instance.release)
 
-        self.sidecar = Sidecar(env_root=root, app_dir=root, instance=instance)
+        self.sidecar = Sidecar(env_root=root, app_dir=root, instance=instance, settings_path=os.path.join(root, "settings.json"))
         self.sidecar.channel = FakeChannel()
 
     def test_a_model_retires_the_splash(self):
@@ -199,7 +200,7 @@ class ViewerMessagesArePassedOnWholeTest(unittest.TestCase):
         instance.claim()
         self.addCleanup(instance.release)
 
-        self.sidecar = Sidecar(env_root=root, app_dir=root, instance=instance)
+        self.sidecar = Sidecar(env_root=root, app_dir=root, instance=instance, settings_path=os.path.join(root, "settings.json"))
         self.channel = FakeChannel()
         self.sidecar.channel = self.channel
 

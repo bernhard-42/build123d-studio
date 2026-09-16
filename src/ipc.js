@@ -487,13 +487,17 @@ async function resume(code) {
 /**
  * Start the sidecar, read its handshake, and connect.
  *
- * @param {{python: string, envRoot: string, appDir: string}} options
+ * @param {{python: string, envRoot: string, appDir: string, settings: string}} options
  */
-export async function startSidecar({ python, envRoot, appDir }) {
-  launch = { python, envRoot, appDir };
+export async function startSidecar({ python, envRoot, appDir, settings }) {
+  launch = { python, envRoot, appDir, settings };
+  // Three paths, all resolved here and none derived over there - see the note
+  // on resolve_env_root in bootstrap/envroot.js for why. `settings` is the file
+  // the kernel answers workspace_config() from, and it is the frontend's file.
   const command =
     `${quote(python)} ${quote(`${appDir}/sidecar/main.py`)}` +
-    ` --env-root ${quote(envRoot)} --app-dir ${quote(appDir)}`;
+    ` --env-root ${quote(envRoot)} --app-dir ${quote(appDir)}` +
+    ` --settings ${quote(settings)}`;
 
   log.info("Starting sidecar:", command);
 

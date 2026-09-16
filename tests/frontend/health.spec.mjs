@@ -105,3 +105,26 @@ test.describe("the toolbar says when something below it is unwell", () => {
     await expect(page.locator("#health-chip")).toBeHidden();
   });
 });
+
+test.describe("what the sidecar is told at launch", () => {
+  test("the settings file it answers workspace_config() from is named, not derived", async ({ page }) => {
+    // The kernel used to find settings.json as "the directory above the
+    // environment root". True where the two share a parent - macOS, Linux -
+    // and false on Windows since 0.5.0, where the environment is in Local and
+    // the settings stay in Roaming: the kernel read a file that did not exist
+    // and answered the shipped defaults for every setting, silently. The
+    // frontend wrote the file, so the frontend says where it is.
+    await open(page, { platform: "Windows" });
+
+    const spawned = await page.evaluate(() =>
+      globalThis.__NEUTRALINO_STUB__
+        .calls()
+        .filter((call) => call.name === "spawnProcess")
+        .map((call) => call.args[0])
+        .find((command) => command.includes("sidecar/main.py")));
+
+    expect(spawned, "the sidecar was never spawned").toBeDefined();
+    expect(spawned).toContain("--settings ");
+    expect(spawned).toContain("/appdata/build123d-studio/settings.json");
+  });
+});

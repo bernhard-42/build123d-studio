@@ -116,7 +116,8 @@ class Sidecar:
         self.started = time.monotonic()
         self.proc = subprocess.Popen(
             [self.python, os.path.join(self.app_dir, "sidecar", "main.py"),
-             "--env-root", self.env_root, "--app-dir", self.app_dir],
+             "--env-root", self.env_root, "--app-dir", self.app_dir,
+             "--settings", os.path.join(os.path.dirname(self.env_root), "settings.json")],
             cwd=self.app_dir,
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True, bufsize=1,
