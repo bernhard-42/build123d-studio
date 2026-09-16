@@ -94,3 +94,25 @@ export function quoteFor(platform, value) {
   const text = String(value);
   return platform === "Windows" ? quoteWindows(text) : quotePosix(text);
 }
+
+/**
+ * The command line actually handed to the shell.
+ *
+ * On Windows every command ends in `&& exit /b 0`. cmd.exe runs the AutoRun
+ * value under HKCU or HKLM\Software\Microsoft\Command Processor before any
+ * command - and when that names a script whose folder is gone, which is what an
+ * uninstalled Anaconda leaves behind, cmd prints "The system cannot find the
+ * path specified", runs the command anyway, and returns 1 for a command that
+ * succeeded. Measured: a curl that downloaded the file came back as 1, and the
+ * download was thrown away. With the suffix, a command that succeeds exits 0
+ * through either shell, and one that fails keeps its own code - 3, 23, and 1
+ * for a `cd` into a missing directory were all measured coming through intact.
+ *
+ * Nothing is appended elsewhere: /bin/sh has no AutoRun.
+ *
+ * @param {string} platform NL_OS: "Windows", "Darwin" or "Linux"
+ * @param {string} command already quoted
+ */
+export function shellCommandFor(platform, command) {
+  return platform === "Windows" ? `${command} && exit /b 0` : command;
+}

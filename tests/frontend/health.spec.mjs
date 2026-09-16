@@ -127,4 +127,24 @@ test.describe("what the sidecar is told at launch", () => {
     expect(spawned).toContain("--settings ");
     expect(spawned).toContain("/appdata/build123d-studio/settings.json");
   });
+
+  test("on Windows every command ends in `&& exit /b 0`, so cmd's AutoRun cannot fail it", async ({ page }) => {
+    // A broken AutoRun entry makes cmd.exe report a successful command as
+    // exit 1 - measured, and it discarded a finished download. The suffix
+    // makes the shell return the command's own code; see shellCommandFor.
+    // Proof, at writing: with the shellCommandFor call removed from spawn(),
+    // this fails on the first command.
+    await open(page, { platform: "Windows" });
+
+    const commands = await page.evaluate(() =>
+      globalThis.__NEUTRALINO_STUB__
+        .calls()
+        .filter((call) => call.name === "spawnProcess")
+        .map((call) => call.args[0]));
+
+    expect(commands.length, "nothing was spawned").toBeGreaterThan(0);
+    for (const command of commands) {
+      expect(command).toMatch(/ && exit \/b 0$/);
+    }
+  });
 });

@@ -4,6 +4,7 @@ import "./icons.css";
 
 import { ensureEnvironment } from "./bootstrap/setup.js";
 import { appDir, recordAppLocation } from "./bootstrap/envroot.js";
+import { logStartupFacts } from "./bootstrap/diagnostics.js";
 import { openTarget } from "./args.js";
 import { stopRunning } from "./proc.js";
 import {
@@ -546,6 +547,11 @@ async function main() {
   await neuWindow.show();
   watchWindow();
 
+  // After the window is up, so a slow answer delays the splash's lines rather
+  // than the window; before the environment, so the machine is described in
+  // the log ahead of whatever the bootstrap has to say about it.
+  await logStartupFacts();
+
   let environment;
   try {
     environment = await ensureEnvironment();
@@ -870,4 +876,16 @@ async function main() {
   }
 }
 
-main();
+// What throws before the environment is reached - the log directory that
+// cannot be created, a settings file that cannot be read - used to end main()
+// before neuWindow.show(), leaving a process with no window and nothing on
+// screen to report. The window is raised so the splash can say what happened.
+main().catch(async (error) => {
+  log.error("Startup failed", error);
+  try {
+    await neuWindow.show();
+  } catch {
+    // Not up either; the log line above is what remains.
+  }
+  fail("build123d Studio could not start.", error?.message ?? error);
+});

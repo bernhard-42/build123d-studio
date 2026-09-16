@@ -99,6 +99,11 @@ export function hideSplash() {
  *
  * On its own this is terminal - there is no usable app behind it. Callers that
  * do have something to go back to follow it with acknowledge().
+ *
+ * Ends by naming the log file. The splash holds the last few hundred lines and
+ * the file holds everything - what the machine is, every command and its exit
+ * code - and a report from somebody else's computer needs the file, so the one
+ * screen they are looking at says where it is.
  */
 export function fail(message, detail) {
   setStatus(message);
@@ -107,6 +112,13 @@ export function fail(message, detail) {
     appendLog("");
     appendLog(String(detail));
   }
+  appendLog("");
+  const path = log.logPath();
+  appendLog(
+    path === null
+      ? "No log file could be written."
+      : `Full details are in the log file: ${path}`,
+  );
 }
 
 /**

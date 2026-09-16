@@ -26,7 +26,12 @@
     "window.*",
     "events.*",
     "clipboard.*",
-    "computer.getOSInfo"
+    "computer.getOSInfo",
+    "computer.getKernelInfo",
+    "computer.getCPUInfo",
+    "computer.getMemoryInfo",
+    "computer.getDisks",
+    "computer.getDisplays"
   ],
   "modes": {
     "window": {

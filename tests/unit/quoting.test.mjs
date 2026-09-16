@@ -13,7 +13,7 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
 
-import { quoteFor } from "../../src/quoting.js";
+import { quoteFor, shellCommandFor } from "../../src/quoting.js";
 
 test("posix: wraps in single quotes", () => {
   assert.equal(quoteFor("Darwin", "/usr/bin/curl"), "'/usr/bin/curl'");
@@ -157,4 +157,22 @@ test("windows: a value cannot break out of the quoting", () => {
   ]) {
     assert.equal(unquote(quoteFor("Windows", value)), value, `round trip: ${value}`);
   }
+});
+
+// --- the line handed to the shell ---
+//
+// Proof, at writing: with shellCommandFor returning the command unchanged on
+// Windows, the first test below fails on the missing suffix.
+
+
+test("Windows commands end in `&& exit /b 0`, so success is 0 whatever cmd's AutoRun did", () => {
+  assert.equal(
+    shellCommandFor("Windows", '"C:\\WINDOWS\\System32\\curl.exe" -fsSL "https://x"'),
+    '"C:\\WINDOWS\\System32\\curl.exe" -fsSL "https://x" && exit /b 0',
+  );
+});
+
+test("POSIX commands are handed over as they are", () => {
+  assert.equal(shellCommandFor("Darwin", "'/usr/bin/curl' -fsSL 'https://x'"), "'/usr/bin/curl' -fsSL 'https://x'");
+  assert.equal(shellCommandFor("Linux", "curl"), "curl");
 });

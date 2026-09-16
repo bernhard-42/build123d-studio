@@ -445,6 +445,10 @@ export const os = {
     return globalThis.__HARNESS__?.env?.[name] ?? "";
   },
 
+  async getEnvs() {
+    return { ...(globalThis.__HARNESS__?.env ?? {}) };
+  },
+
   async setEnv() {},
 
   async showMessageBox(title, detail, choices, kind) {
@@ -680,6 +684,25 @@ export const computer = {
   async getDisplays() {
     record("getDisplays", []);
     return [{ id: 1, x: 0, y: 0, width: 1920, height: 1200 }];
+  },
+
+  // The startup report reads these at every start. Fixed values, shaped as the
+  // documented API returns them, so the log a test leaves behind reads as a
+  // real one does.
+  async getOSInfo() {
+    return { name: "Harness", description: "Playwright WebKit", version: "0" };
+  },
+  async getKernelInfo() {
+    return { variant: "harness", version: "0" };
+  },
+  async getCPUInfo() {
+    return { model: "stub", architecture: "x64", logicalThreads: 1 };
+  },
+  async getMemoryInfo() {
+    return { physical: { total: 8 * 1024 ** 3, available: 4 * 1024 ** 3 } };
+  },
+  async getDisks() {
+    return [{ mountPoint: "/", free: 100 * 1024 ** 3, total: 500 * 1024 ** 3 }];
   },
 };
 

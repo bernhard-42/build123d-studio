@@ -1,6 +1,7 @@
 import { filesystem, os } from "@neutralinojs/lib";
 
 import pins from "./pins.json";
+import { curlConfigCandidates } from "./startupfacts.js";
 import { run, quote } from "../proc.js";
 import { appendLog, setStatus } from "./splash.js";
 import * as log from "../log.js";
@@ -143,12 +144,80 @@ async function systemTools() {
 
 async function download(url, destination) {
   const { curl } = await systemTools();
-  const code = await run(
-    `${quote(curl)} -fsSL --retry 3 -o ${quote(destination)} ${quote(url)}`,
-    { onLine: (line) => log.info("curl:", line) },
-  );
+  // On the splash too: with -f -s -S the only lines are errors, and curl's own
+  // sentence - "Protocol https is disabled", "Could not resolve host" - is the
+  // diagnosis. An exit code on its own sends a report back for a second round.
+  const onLine = (line) => {
+    log.info("curl:", line);
+    appendLog(`curl: ${line}`);
+  };
+  const code = await run(`${quote(curl)} -fsSL --retry 3 -o ${quote(destination)} ${quote(url)}`, {
+    onLine,
+  });
   if (code !== 0) {
     throw new Error(`Download failed (curl exit ${code}): ${url}`);
+  }
+}
+
+/**
+ * Say which curl and tar are about to be used, and refuse plainly when one is
+ * missing.
+ *
+ * cmd.exe answers a path it cannot find with exit 1 and a sentence in the
+ * system language - indistinguishable, from here, from curl exiting 1 on its
+ * own. Checking first turns that into a message naming the file, on a machine
+ * that is most likely a Windows older than 10 1803.
+ *
+ * curl's default config file is named as well: it applies to every curl on the
+ * machine, this one included, and a `proto` line in it is the one way a plain
+ * https download fails with exit 1 on a current curl - measured.
+ */
+async function describeTools() {
+  const { curl, tar } = await systemTools();
+  for (const [name, path] of [
+    ["curl", curl],
+    ["tar", tar],
+  ]) {
+    // Only an absolute path can be checked; a bare name is PATH's business.
+    if (path.includes("/") || path.includes("\\")) {
+      if (!(await exists(path))) {
+        throw new Error(
+          `${name} was not found at ${path}. build123d Studio needs it to fetch uv` +
+            (NL_OS === "Windows" ? "; Windows 10 version 1803 or later ships it." : "."),
+        );
+      }
+    }
+    let version = "";
+    const code = await run(`${quote(path)} --version`, {
+      onLine: (line) => {
+        if (version === "" && line.trim() !== "") {
+          version = line.trim();
+        }
+      },
+    });
+    const said = code === 0 ? version : `--version exited ${code}`;
+    log.info(`${name}: ${path} - ${said}`);
+    appendLog(`${name}: ${said}`);
+  }
+
+  try {
+    const envs = await os.getEnvs();
+    const curlDir = curl.slice(0, Math.max(curl.lastIndexOf("/"), curl.lastIndexOf("\\")));
+    const present = [];
+    for (const candidate of curlConfigCandidates(NL_OS, envs, curlDir)) {
+      if (await exists(candidate)) {
+        present.push(candidate);
+      }
+    }
+    if (present.length === 0) {
+      log.info("curl config file: none");
+    } else {
+      // curl reads the first; the rest are named because a person will ask.
+      log.info(`curl config file: ${present.join(", ")}`);
+      appendLog(`curl reads its config file at ${present[0]}`);
+    }
+  } catch (error) {
+    log.warn("curl config file: could not check -", error?.message ?? error);
   }
 }
 
@@ -211,6 +280,7 @@ export async function ensureUv(envRoot) {
   const archive = `uv-${triple}.${isWindows ? "zip" : "tar.gz"}`;
 
   setStatus("Fetching uv, the Python environment manager…");
+  await describeTools();
   appendLog(`Downloading ${archive} (uv ${wanted})`);
 
   // A scratch directory of this instance's own, rather than one shared name.
