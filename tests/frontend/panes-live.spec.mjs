@@ -96,7 +96,7 @@ test.describe("the variable explorer shows the namespace", () => {
     await show.click();
 
     const frame = await sidecar.waitFor("kernel.execute");
-    expect(frame.code).toBe("from build123d_studio import show; show(count)");
+    expect(frame.code).toBe('from build123d_studio import show; show(count, names=["count"])');
   });
 
   test("but Show is greyed out on a row below a variable", async ({ page }) => {
@@ -316,7 +316,7 @@ test.describe("the variable explorer shows the namespace", () => {
     await page.locator(".var-row", { hasText: "b" }).click({ button: "right" });
     await page.locator(".context-menu-item", { hasText: "Show" }).click();
     const frame = await sidecar.waitFor("kernel.execute");
-    expect(frame.code).toBe("from build123d_studio import show; show(b, count)");
+    expect(frame.code).toBe('from build123d_studio import show; show(b, count, names=["b", "count"])');
   });
 
   test("Shift-click extends the row selection and cancels the browser's text selection", async ({ page }) => {
@@ -354,7 +354,7 @@ test.describe("the variable explorer shows the namespace", () => {
     await expect(page.locator(".var-row", { hasText: "count" })).toHaveClass(/var-selected/);
     await page.locator(".context-menu-item", { hasText: "Show" }).click();
     const frame = await sidecar.waitFor("kernel.execute");
-    expect(frame.code).toBe("from build123d_studio import show; show(count)");
+    expect(frame.code).toBe('from build123d_studio import show; show(count, names=["count"])');
   });
 });
 

@@ -673,8 +673,10 @@ async function main() {
       } else if (id === "show" && variables.length > 0) {
         // One show of all of them, through the same execute as a Run, echoed
         // into the console. The import is there for a namespace that never
-        // imported show itself.
-        execute(`from build123d_studio import show; show(${variables.join(", ")})`);
+        // imported show itself. The names travel too, so the viewer's tree
+        // says "plate" rather than "Solid".
+        const names = variables.map((name) => JSON.stringify(name)).join(", ");
+        execute(`from build123d_studio import show; show(${variables.join(", ")}, names=[${names}])`);
       }
     },
   });
