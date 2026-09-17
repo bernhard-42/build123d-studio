@@ -179,45 +179,40 @@ export function snippetCompletions(snippets, before, position, kinds, rules) {
 }
 
 /**
- * The shipped set, with the user's own on top.
+ * The snippets file, written once and then the user's.
  *
- * Matched by prefix, and theirs wins: a set can be extended without being
- * copied, and a single snippet replaced without the other twenty-four being
- * maintained by hand. Order is the shipped ones first, so the list a user sees
- * is stable as they add to it.
- */
-export function mergeSnippets(shipped, mine) {
-  const replaced = new Set(mine.map((snippet) => snippet.prefix));
-  return [...shipped.filter((snippet) => !replaced.has(snippet.prefix)), ...mine];
-}
-
-/**
- * Read the user's snippets, and say once what could not be used.
- *
- * A missing file is the ordinary case - most people never write one - and is
- * not a problem to report. Anything else is: a file somebody wrote and this
- * cannot read is exactly the case where silence looks like the feature not
- * existing.
+ * On a machine that has none, the shipped set is written to snippets.json -
+ * the first start, and any later start after the file was deleted, which is
+ * also how the shipped set is got back. It is never written over: from then on
+ * the file is the whole truth, read at every start and when Settings is
+ * applied, and nothing is merged underneath it - a snippet removed from the
+ * file is gone, as editing a file leads one to expect.
  *
  * @param {{filesystem: object, log: object}} services
+ * @param {string} dataDir
+ * @param {string} shippedText the built-in file, as shipped
  * @returns {Promise<object[]>}
  */
 export async function loadSnippets({ filesystem, log }, dataDir, shippedText) {
-  const shipped = parseSnippets(shippedText).snippets;
   const path = snippetsPath(dataDir);
   let text;
+  let source = path;
   try {
     text = await filesystem.readFile(path);
   } catch {
-    // No file of their own, which is the ordinary case: what ships is what
-    // there is.
-    return shipped;
+    text = shippedText;
+    try {
+      await filesystem.writeFile(path, shippedText);
+      log.info(`Wrote the shipped snippets to ${path}`);
+    } catch (error) {
+      log.warn(`Could not write ${path}; using the shipped snippets:`, error);
+      source = "the shipped set";
+    }
   }
   const { snippets, problems } = parseSnippets(text);
   for (const problem of problems) {
-    log.warn(`${path}: ${problem}`);
+    log.warn(`${source}: ${problem}`);
   }
-  const merged = mergeSnippets(shipped, snippets);
-  log.info(`${merged.length} snippets: ${shipped.length} shipped, ${snippets.length} from ${path}`);
-  return merged;
+  log.info(`${snippets.length} snippets from ${source}`);
+  return snippets;
 }

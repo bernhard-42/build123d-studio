@@ -42,6 +42,32 @@ test.describe("clicking a file", () => {
     await expect(row(page, "part.py")).not.toHaveClass(/tree-active/);
   });
 
+  test("a CAD file is imported on the kernel and shown, not opened", async ({ page }) => {
+    // STEP is text and would open as a wall of numbers; a binary STL would be
+    // refused. Neither is what a click on a model means. The line that runs is
+    // echoed into the console, and _imported is the user's to keep.
+    // Proof, at writing: with the importCode branch removed from onOpenFile,
+    // this fails on the tab list containing frame.step.
+    const { sidecar } = await openApp(page, {
+      files: { ...FILES, [`${PROJECT}/frame.step`]: "ISO-10303-21;\n" },
+    });
+
+    await row(page, "frame.step").click();
+
+    await sidecar.waitFor("kernel.execute");
+    await expect
+      .poll(() => sidecar.received.filter((frame) => frame.type === "kernel.execute").length)
+      .toBe(2);
+    const sent = sidecar.received.filter((frame) => frame.type === "kernel.execute").map((f) => f.code);
+    expect(sent).toEqual([
+      "# Importing frame.step ...",
+      "from build123d import import_step; from build123d_studio import show, Camera; " +
+        `_imported = import_step("${PROJECT}/frame.step"); show(_imported, reset_camera=Camera.RESET)`,
+    ]);
+    expect(await tabLabels(page)).not.toContain("frame.step");
+    await expect(page.locator(".confirm-overlay")).toBeHidden();
+  });
+
   test("but a right click opens nothing", async ({ page }) => {
     // The difference that makes the menu usable on a file somebody has no
     // intention of opening.

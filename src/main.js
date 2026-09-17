@@ -24,6 +24,7 @@ import {
 } from "./console/terminal.js";
 import {
   bufferKeys,
+  execute,
   focus as focusEditor,
   hasTextFocus,
   initEditor,
@@ -70,6 +71,7 @@ import {
   syncKernelDirectory,
 } from "./editor/files.js";
 import { initTabStrip } from "./editor/tabstrip.js";
+import { importCode } from "./editor/importfile.js";
 import { initSidebar, toggleSidebar } from "./editor/sidebar.js";
 import { chordFromEvent, sameChord } from "./keys.js";
 import { watchNativeLink } from "./nativelink.js";
@@ -577,8 +579,19 @@ async function main() {
   });
   // Clicking a file in the tree opens it exactly as Open File does, tab and
   // all - the tree is a way of finding files, not a second kind of buffer.
+  // Except a CAD file, which has no buffer to be: it is imported on the kernel
+  // and shown, and the line that did it is in the console (importfile.js).
   initSidebar({
-    onOpenFile: (path) => withTitle(() => openPath(path)),
+    onOpenFile: (path) => {
+      const lines = importCode(path);
+      if (lines !== null) {
+        for (const code of lines) {
+          execute(code);
+        }
+        return Promise.resolve();
+      }
+      return withTitle(() => openPath(path));
+    },
     // A refresh is the only moment this application learns that a file it has
     // open has been deleted from outside - there is no watcher yet.
     onRefreshed: () => {

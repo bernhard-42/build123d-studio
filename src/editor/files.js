@@ -1241,11 +1241,12 @@ export function pendingRecoveryWrites() {
 // --- recovering what a crash left behind -----------------------------------
 
 /**
- * Read the user's snippet file into the editor.
+ * Read the snippets file into the editor, writing the shipped set first when
+ * there is none.
  *
  * Called at startup and again when the settings dialog is applied, which is the
  * moment somebody who has just edited the file is most likely to want it read.
- * A missing file is the ordinary case and says nothing.
+ * The file is the whole set - see loadSnippets.
  */
 export async function reloadUserSnippets() {
   setUserSnippets(await loadSnippets({ filesystem, log }, await appDataDir(), shippedSnippets));

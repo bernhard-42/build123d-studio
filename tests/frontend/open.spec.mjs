@@ -43,7 +43,9 @@ const FILES = {
   [`${PROJECT}/part.py`]: "PART = 1\n",
   [`${PROJECT}/plate.py`]: "PLATE = 1\n",
   [`${PROJECT}/logo.png`]: PNG,
-  [`${PROJECT}/assembly.step`]: HUGE,
+  // A large *text* file. Not a STEP: a CAD file is imported on the kernel
+  // rather than opened, so it never reaches the size question.
+  [`${PROJECT}/generated.py`]: HUGE,
 };
 
 const WORKSPACE = {
@@ -117,7 +119,7 @@ test.describe("what is asked about first", () => {
   test("a large file asks, and Cancel opens nothing", async ({ page }) => {
     await openApp(page);
 
-    await clickInTree(page, "assembly.step");
+    await clickInTree(page, "generated.py");
 
     await expect(page.locator(".confirm-overlay")).toBeVisible();
     const asked = await page.locator(".confirm-overlay").innerText();
@@ -131,29 +133,29 @@ test.describe("what is asked about first", () => {
     await page.locator('.confirm-overlay [data-answer="cancel"]').click();
 
     await expect(page.locator(".confirm-overlay")).toBeHidden();
-    await expect(page.locator(".tab-label", { hasText: "assembly.step" })).toHaveCount(0);
+    await expect(page.locator(".tab-label", { hasText: "generated.py" })).toHaveCount(0);
     await expect(page.locator(".tab-active .tab-label")).toHaveText("part.py");
   });
 
   test("Load opens it", async ({ page }) => {
     await openApp(page);
 
-    await clickInTree(page, "assembly.step");
+    await clickInTree(page, "generated.py");
     await expect(page.locator(".confirm-overlay")).toBeVisible();
     await page.locator('.confirm-overlay [data-answer="save"]').click();
 
-    await expect(page.locator(".tab-active .tab-label")).toHaveText("assembly.step");
+    await expect(page.locator(".tab-active .tab-label")).toHaveText("generated.py");
   });
 
   test("only the front of it is looked at before the question", async ({ page }) => {
     await openApp(page);
 
-    await clickInTree(page, "assembly.step");
+    await clickInTree(page, "generated.py");
     await expect(page.locator(".confirm-overlay")).toBeVisible();
 
     const calls = await nativeCalls(page);
     const sniff = calls.find(
-      (call) => call.name === "readBinaryFile" && call.args[0] === `${PROJECT}/assembly.step`,
+      (call) => call.name === "readBinaryFile" && call.args[0] === `${PROJECT}/generated.py`,
     );
     expect(sniff, "the file was not sniffed at all").toBeDefined();
     expect(sniff.args[1].pos).toBe(0);
@@ -165,15 +167,15 @@ test.describe("what is asked about first", () => {
     // the application arguing with itself about a file that is on screen.
     await openApp(page);
 
-    await clickInTree(page, "assembly.step");
+    await clickInTree(page, "generated.py");
     await page.locator('.confirm-overlay [data-answer="save"]').click();
-    await expect(page.locator(".tab-active .tab-label")).toHaveText("assembly.step");
+    await expect(page.locator(".tab-active .tab-label")).toHaveText("generated.py");
 
     await page.locator(".tab", { hasText: "part.py" }).click();
     await expect(page.locator(".tab-active .tab-label")).toHaveText("part.py");
-    await clickInTree(page, "assembly.step");
+    await clickInTree(page, "generated.py");
 
     await expect(page.locator(".confirm-overlay")).toBeHidden();
-    await expect(page.locator(".tab-active .tab-label")).toHaveText("assembly.step");
+    await expect(page.locator(".tab-active .tab-label")).toHaveText("generated.py");
   });
 });

@@ -17,7 +17,7 @@ import { strict as assert } from "node:assert";
 import { test } from "node:test";
 
 import {
-  mergeSnippets,
+  loadSnippets,
   parseSnippets,
   prefixBeing,
   snippetCompletions,
@@ -169,26 +169,76 @@ test("the file sits beside the settings", () => {
   assert.equal(snippetsPath("/appdata/build123d-studio"), "/appdata/build123d-studio/snippets.json");
 });
 
-// --- the shipped set and the user's ----------------------------------------
+// --- the file is the truth ----------------------------------------------------
+//
+// Proof, at writing: with the writeFile call removed from loadSnippets, "a
+// machine with no file gets the shipped set written" fails on `written` and
+// "where the file cannot be written" on the missing warning; with a merge over
+// the shipped set put back, "a snippet removed from the file is gone" fails on
+// the count.
 
-test("a user's snippet replaces a shipped one with the same prefix", () => {
-  // So a set can be extended without being copied, and one entry replaced
-  // without the other twenty-four being maintained by hand.
-  const shipped = parseSnippets(SET).snippets;
-  const mine = parseSnippets(JSON.stringify({
-    Mine: { prefix: "?bdp", body: ["MINE"] },
-    New: { prefix: "?zz", body: ["Z"] },
-  })).snippets;
+/** A filesystem holding one directory's files, which can be told to refuse writes. */
+function fakeFilesystem(files, { readOnly = false } = {}) {
+  const written = [];
+  return {
+    written,
+    async readFile(path) {
+      if (!Object.hasOwn(files, path)) {
+        throw new Error(`NE_FS_FILRDER: ${path}`);
+      }
+      return files[path];
+    },
+    async writeFile(path, text) {
+      if (readOnly) {
+        throw new Error(`NE_FS_FILWRER: ${path}`);
+      }
+      files[path] = text;
+      written.push(path);
+    },
+  };
+}
 
-  const merged = mergeSnippets(shipped, mine);
+const quiet = { info() {}, warn() {} };
+const DIR = "/appdata/build123d-studio";
 
-  assert.equal(merged.length, 4);
-  assert.equal(merged.find((s) => s.prefix === "?bdp").body, "MINE");
-  // The shipped ones keep their order, so the list is stable as a user adds.
-  assert.deepEqual(merged.map((s) => s.prefix), ["?bds", ">ext", "?bdp", "?zz"]);
+test("a machine with no file gets the shipped set written, and reads it", async () => {
+  const files = {};
+  const filesystem = fakeFilesystem(files);
+
+  const snippets = await loadSnippets({ filesystem, log: quiet }, DIR, SET);
+
+  assert.deepEqual(filesystem.written, [`${DIR}/snippets.json`]);
+  assert.equal(files[`${DIR}/snippets.json`], SET);
+  assert.deepEqual(snippets.map((s) => s.prefix), ["?bdp", "?bds", ">ext"]);
 });
 
-test("with no snippets of their own, the shipped set is what there is", () => {
-  const shipped = parseSnippets(SET).snippets;
-  assert.deepEqual(mergeSnippets(shipped, []).map((s) => s.prefix), ["?bdp", "?bds", ">ext"]);
+test("an existing file is read and never written over", async () => {
+  const mine = JSON.stringify({ Mine: { prefix: "?bdp", body: ["MINE"] } });
+  const files = { [`${DIR}/snippets.json`]: mine };
+  const filesystem = fakeFilesystem(files);
+
+  const snippets = await loadSnippets({ filesystem, log: quiet }, DIR, SET);
+
+  assert.deepEqual(filesystem.written, []);
+  assert.equal(files[`${DIR}/snippets.json`], mine);
+  assert.equal(snippets.find((s) => s.prefix === "?bdp").body, "MINE");
+});
+
+test("a snippet removed from the file is gone - nothing is merged underneath", async () => {
+  const files = { [`${DIR}/snippets.json`]: JSON.stringify({ Only: { prefix: "?zz", body: ["Z"] } }) };
+
+  const snippets = await loadSnippets({ filesystem: fakeFilesystem(files), log: quiet }, DIR, SET);
+
+  assert.deepEqual(snippets.map((s) => s.prefix), ["?zz"]);
+});
+
+test("where the file cannot be written, the shipped set still serves, and the log says so", async () => {
+  const warnings = [];
+  const log = { info() {}, warn: (...parts) => warnings.push(parts.join(" ")) };
+
+  const snippets = await loadSnippets({ filesystem: fakeFilesystem({}, { readOnly: true }), log }, DIR, SET);
+
+  assert.deepEqual(snippets.map((s) => s.prefix), ["?bdp", "?bds", ">ext"]);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /Could not write .*snippets\.json/);
 });

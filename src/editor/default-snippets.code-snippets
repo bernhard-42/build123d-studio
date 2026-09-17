@@ -1,19 +1,14 @@
-// Shipped with build123d Studio as its default snippets.
+// build123d Studio snippets - this file is yours to edit.
+//
+// Read at every start of build123d Studio and when Settings is applied. Type a
+// prefix in the editor and accept the suggestion. VS Code's .code-snippets
+// format: comments and trailing commas are fine, and a .code-snippets file
+// pasted in unedited works. Delete this file to get the shipped set back.
 //
 // Source: https://github.com/build123d/build123d-portable, scripts/build123d-OCP.code-snippets
-// "build123d CodeCAD speedmodeling snippet by Jern", Apache-2.0. See NOTICE.
-//
-// Two lines differ from upstream. The viewer is imported from build123d_studio
-// rather than from ocp_vscode, which is the module this application provides.
-// And `# fmt: on` is on a line of its own rather than trailing the `)` above
-// it: a trailing one does not re-enable the formatter, so upstream's version
-// leaves everything after the show_all block - the whole rest of the file, and
-// every line the user goes on to write - permanently unformatted. Measured
-// against ruff 0.16.3, and black behaves the same way.
-//
-// A user's own snippets.json is read on top of this - see snippets.js - and an
-// entry there with the same prefix replaces the one here, so this file can be
-// overridden without being edited.
+// "build123d CodeCAD speedmodeling snippet by Jern", Apache-2.0. The viewer is
+// imported from build123d_studio here, and `# fmt: on` sits on a line of its
+// own, which is what makes it re-enable the formatter.
 {
 	// build123d CodeCAD speedmodeling snippet by Jern
 	//

@@ -475,6 +475,13 @@ LIBRARY_MODULES = (
 
 _MISSING = object()
 
+# The one underscore name that is shown. A CAD file clicked in the tree is
+# imported on the kernel as `_imported` - underscored so that clicking through a
+# folder of exports leaves one name behind rather than one per file - and the
+# whole point of the click is to look at what arrived, so this pane must not
+# hide it.
+SHOWN_UNDERSCORED = {"_imported"}
+
 
 def _from_library(name, value):
     """True if this name is the very object a known library exports.
@@ -492,7 +499,9 @@ def _from_library(name, value):
 
 
 def _is_interesting(name, value):
-    if name.startswith("_") or name in HIDDEN:
+    if name.startswith("_") and name not in SHOWN_UNDERSCORED:
+        return False
+    if name in HIDDEN:
         return False
 
     if isinstance(value, types.ModuleType):

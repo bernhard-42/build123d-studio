@@ -213,13 +213,12 @@ async function gather() {
     rows: await logRows(),
   });
 
-  // Where a user's own snippets go. Named whether or not the file is there:
-  // unlike the logs, this is a path somebody has to be told before they can
-  // write one, so "it does not exist yet" is the case that most needs it.
+  // The snippets file, which is the user's to edit: written from the shipped
+  // set at the first start and read at every one after.
   sections.push({
     title: "Snippets",
-    note: "VS Code's .code-snippets format, comments and all. Read at startup "
-      + "and when Settings is applied.",
+    note: "Yours to edit - VS Code's .code-snippets format, comments and all. Read at "
+      + "startup and when Settings is applied; delete it to get the shipped set back.",
     rows: [pathRow("File", snippetsPath(await appDataDir()))],
   });
 

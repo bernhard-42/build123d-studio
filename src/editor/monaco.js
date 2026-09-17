@@ -193,8 +193,14 @@ function currentModel() {
   return editor === null ? null : editor.getModel();
 }
 
-/** Send code to the kernel. It is echoed into the console pane as In [n]:. */
-function execute(code) {
+/**
+ * Send code to the kernel. It is echoed into the console pane as In [n]:.
+ *
+ * Exported for the one caller outside this file with a line of its own to run
+ * - a CAD file clicked in the tree, see importfile.js - so that it shows the
+ * console and returns the keyboard exactly as a Run does.
+ */
+export function execute(code) {
   if (code.trim() === "") {
     return;
   }

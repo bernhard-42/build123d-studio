@@ -316,6 +316,17 @@ class InspectorTest(NamespaceFixture, unittest.TestCase):
         self.assertNotIn("Cube", rows)
         self.assertNotIn("helper", rows)
 
+    def test_underscore_names_are_hidden_except_the_imported_one(self):
+        """`_imported` is what a click on a CAD file in the tree produces, and
+        the click is for looking at it. Every other underscore name stays out:
+        IPython's `_`, `__builtins__`, a script's own private helpers."""
+        exec("_scratch = 1\n_imported = 2\n", self.namespace)  # noqa: S102
+        rows = self.variables()
+
+        self.assertIn("_imported", rows)
+        self.assertNotIn("_scratch", rows)
+        self.assertNotIn("__builtins__", rows)
+
     def test_nor_is_a_lambda_or_an_instance_method(self):
         self.given(twice=lambda x: x * 2, method="".join)
         rows = self.variables()
