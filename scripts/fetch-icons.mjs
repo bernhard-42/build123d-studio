@@ -58,6 +58,10 @@ const ICONS = {
   "debug-step-into": "step_into",
   "debug-step-out": "step_out",
   "debug-stop": "stop",
+  // The reset_camera shortcut beside the console tabs: the camera resets on
+  // the next show, or is kept where it is.
+  "camera-reset": "flip_camera_ios",
+  "camera-keep": "photo_camera",
 };
 
 async function download(url, description) {

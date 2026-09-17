@@ -539,6 +539,27 @@ def _is_interesting(name, value):
     return not _from_library(name, value)
 
 
+def viewer_defaults():
+    """The viewer defaults the application shows a control for, as JSON.
+
+    Read from the build123d_studio module already loaded in this kernel - the
+    warm-up imports it - and never imported here: this runs on every idle. The
+    value of `reset_camera` is a Camera member, and its name is what travels;
+    anything that is not one is passed as text. A kernel where the module is
+    absent, or where reading raises, answers null for the key rather than
+    failing the refresh that carries it.
+    """
+    module = sys.modules.get("build123d_studio")
+    result = {"reset_camera": None}
+    if module is not None:
+        try:
+            value = module.get_default("reset_camera")
+            result["reset_camera"] = getattr(value, "name", None) or (str(value) if value is not None else None)
+        except Exception:  # noqa: BLE001 - a default that cannot be read is no default
+            pass
+    return json.dumps(result)
+
+
 def variables():
     """One row per user variable, as a JSON string. No geometry is evaluated.
 

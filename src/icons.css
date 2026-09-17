@@ -161,3 +161,13 @@
 .icon-debug-stop::before {
   content: "\e047";
 }
+
+/* flip_camera_ios */
+.icon-camera-reset::before {
+  content: "\ea38";
+}
+
+/* photo_camera */
+.icon-camera-keep::before {
+  content: "\e412";
+}

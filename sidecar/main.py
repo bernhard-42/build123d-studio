@@ -180,6 +180,9 @@ class Sidecar:
         # The kernel warm-up is held back until the console is up; see
         # warm_kernel.
         self._warmed = threading.Event()
+        # The warm-up's request id, held until its idle: that idle is the first
+        # moment the kernel can answer what its viewer defaults are.
+        self._warm_request = None
         # Set while an idle-triggered refresh is queued or running, so repeats
         # collapse into one. See request_refresh.
         self._refresh_queued = threading.Event()
@@ -619,7 +622,8 @@ class Sidecar:
         try:
             # Watched, because this is the line that went unanswered for two
             # minutes on 2026-08-15 and the log said nothing more about it.
-            self.watch_stall(self.kernel.warm_up(), "Kernel warm-up")
+            self._warm_request = self.kernel.warm_up()
+            self.watch_stall(self._warm_request, "Kernel warm-up")
         except Exception as exc:  # noqa: BLE001 - a failed warm-up only costs speed
             log(f"Kernel warm-up failed: {exc}")
 
@@ -644,6 +648,12 @@ class Sidecar:
         # after that return would never be cancelled at all.
         if msg_type == "status" and content.get("execution_state") == "idle":
             self.finish_stall(message["parent_header"].get("msg_id"))
+            # The first refresh. Every later one is booked by an execute idle,
+            # and the warm-up is internal - so without this the defaults control
+            # would show nothing until the first run.
+            if self._warm_request is not None and message["parent_header"].get("msg_id") == self._warm_request:
+                self._warm_request = None
+                self.request_refresh()
 
         # Warm-up and inspection requests produce status traffic of their own.
         # Treating that as user activity would make the explorer refresh in
@@ -1042,6 +1052,22 @@ class Sidecar:
         rows = self._inspect(f"{INSPECTOR}.variables()", timeout=timeout)
         if rows is not None:
             self.channel.send("vars.data", variables=rows)
+        # The viewer defaults the toolbar shows a control for, read on the same
+        # occasions as the namespace: they move with it - a script's own
+        # set_defaults, a line typed in the console, a restart - and the only
+        # honest control is one that reads them rather than remembers them.
+        #
+        # Never while the warm-up is importing. The startup refresh runs during
+        # it - it always has, and its namespace read merely times out - but
+        # get_default reaches into build123d_studio while the main thread is
+        # still initialising that module, and a kernel wedged at 0% CPU with
+        # the warm-up never finishing is what that produced. The refresh the
+        # warm-up's own idle books is the first to carry the defaults.
+        if self._warm_request is not None:
+            return
+        defaults = self._inspect(f"{INSPECTOR}.viewer_defaults()", timeout=timeout)
+        if defaults is not None:
+            self.channel.send("viewer.defaults", **defaults)
 
     def request_refresh(self):
         """Queue an idle-triggered refresh, coalescing repeats.

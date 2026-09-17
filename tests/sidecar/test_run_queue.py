@@ -56,11 +56,24 @@ class FakeKernel:
 
     `is_internal` is what keeps a completion's busy/idle off the toolbar, and
     every message in these tests is a user's run, so it answers no to all of
-    them.
+    them. `evaluate` answers the two inspections a refresh makes, from a table
+    a test fills.
     """
 
+    def __init__(self):
+        self.answers = {}
+        # Request ids that are the sidecar's own - the warm-up, an inspection
+        # - which is_internal keeps off the toolbar and away from the refresh.
+        self.internal = set()
+
     def is_internal(self, message):
-        return False
+        return message["parent_header"].get("msg_id") in self.internal
+
+    def evaluate(self, expression, timeout=None):
+        for suffix, answer in self.answers.items():
+            if expression.endswith(suffix):
+                return answer
+        return None
 
 
 class RunQueueTest(unittest.TestCase):
@@ -153,6 +166,43 @@ class RunQueueTest(unittest.TestCase):
         last = [p for t, p in self.channel.sent if t == "kernel.status"][-1]
         self.assertEqual(last, {"state": "idle", "queued": 0})
         self.assertIn(("submit", {"lane": "inspect"}), self.channel.sent)
+
+    def test_a_refresh_carries_the_viewer_defaults_beside_the_namespace(self):
+        """The reset_camera shortcut reads the kernel's default on the same
+        occasions the explorer reads the namespace; both come from one
+        refresh, so neither can be stale against the other."""
+        self.sidecar.kernel.answers = {
+            ".variables()": "[]",
+            ".viewer_defaults()": '{"reset_camera": "KEEP"}',
+        }
+        self.sidecar.refresh_variables()
+
+        self.assertIn(("vars.data", {"variables": []}), self.channel.sent)
+        self.assertIn(("viewer.defaults", {"reset_camera": "KEEP"}), self.channel.sent)
+
+    def test_the_defaults_are_not_read_while_the_warm_up_imports(self):
+        """The startup refresh runs during the warm-up and its namespace read
+        merely times out; a defaults read then reached into a module the main
+        thread was still initialising and wedged the kernel for good."""
+        self.sidecar.kernel.answers = {
+            ".variables()": "[]",
+            ".viewer_defaults()": '{"reset_camera": "RESET"}',
+        }
+        self.sidecar._warm_request = "warm-1"
+        self.sidecar.refresh_variables()
+
+        self.assertIn(("vars.data", {"variables": []}), self.channel.sent)
+        self.assertNotIn(("viewer.defaults", {"reset_camera": "RESET"}), self.channel.sent)
+
+    def test_the_warm_up_finishing_books_the_first_refresh(self):
+        """Every later refresh is booked by an execute idle; the warm-up is
+        internal, so without this the shortcut showed nothing until the
+        first run."""
+        self.sidecar.kernel.internal = {"warm-1"}
+        self.sidecar._warm_request = "warm-1"
+        self.sidecar.on_iopub(status("idle", "warm-1", parent_type="execute_request"))
+        self.assertIn(("submit", {"lane": "inspect"}), self.channel.sent)
+        self.assertIsNone(self.sidecar._warm_request)
 
     def test_a_run_queued_behind_the_console_is_waiting(self):
         """The console's request is not ours, so ours is not the one running."""

@@ -448,3 +448,57 @@ test.describe("the expand marker is drawn by the bundled font", () => {
     expect(fonts[1]).toContain("Material Symbols");
   });
 });
+
+test.describe("the camera shortcut beside the console tabs", () => {
+  // Proof, at writing: with the render() call removed from the viewer.defaults
+  // handler in camerashortcut.js, the first test fails on the button staying
+  // hidden; with the press's execute removed, the second fails waiting for
+  // the kernel.execute frame.
+
+  test("it shows what the kernel says the default is, and nothing before that", async ({ page }) => {
+    const { sidecar } = await openApp(page);
+    const button = page.locator("#camera-shortcut");
+    await expect(button).toBeHidden();
+
+    sidecar.send("viewer.defaults", { reset_camera: "RESET" });
+    await expect(button).toBeVisible();
+    await expect(button.locator(".icon")).toHaveClass(/icon-camera-reset/);
+
+    sidecar.send("viewer.defaults", { reset_camera: "KEEP" });
+    await expect(button.locator(".icon")).toHaveClass(/icon-camera-keep/);
+    await expect(button).toHaveAttribute("title", /kept on show \(KEEP\)/);
+
+    // CENTER from Settings is the other state as well, and says so.
+    sidecar.send("viewer.defaults", { reset_camera: "CENTER" });
+    await expect(button.locator(".icon")).toHaveClass(/icon-camera-keep/);
+    await expect(button).toHaveAttribute("title", /kept on show \(CENTER\)/);
+
+    // A kernel that cannot say has no button.
+    sidecar.send("viewer.defaults", { reset_camera: null });
+    await expect(button).toBeHidden();
+  });
+
+  test("a press runs set_defaults on the kernel, and the icon follows the kernel's answer", async ({ page }) => {
+    const { sidecar } = await openApp(page);
+    sidecar.send("viewer.defaults", { reset_camera: "RESET" });
+    const button = page.locator("#camera-shortcut");
+    await expect(button).toBeVisible();
+
+    await button.click();
+    const frame = await sidecar.waitFor("kernel.execute");
+    expect(frame.code).toBe(
+      "from build123d_studio import set_defaults, Camera; set_defaults(reset_camera=Camera.KEEP)",
+    );
+    // Not flipped by the press: the kernel has not said so yet.
+    await expect(button.locator(".icon")).toHaveClass(/icon-camera-reset/);
+
+    sidecar.send("viewer.defaults", { reset_camera: "KEEP" });
+    await expect(button.locator(".icon")).toHaveClass(/icon-camera-keep/);
+
+    await button.click();
+    await expect
+      .poll(() => sidecar.received.filter((f) => f.type === "kernel.execute").length)
+      .toBe(2);
+    expect(sidecar.received.filter((f) => f.type === "kernel.execute")[1].code).toContain("Camera.RESET");
+  });
+});

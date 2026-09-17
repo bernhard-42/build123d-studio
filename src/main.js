@@ -80,6 +80,7 @@ import { handleKey } from "./titlebar/titlebar.js";
 import { followWindowFocus } from "./nativedialog.js";
 import { initViewer, showLogo } from "./viewer/viewer.js";
 import { initVariables, selectionFor } from "./vars/explorer.js";
+import { initCameraShortcut } from "./camerashortcut.js";
 import { awaitKernelRestart, showSettings } from "./settings.js";
 import { showInfo } from "./info.js";
 import {
@@ -606,6 +607,7 @@ async function main() {
   });
   initViewer();
   initVariables();
+  initCameraShortcut();
   initToolbar();
   const console_ = initConsole();
 

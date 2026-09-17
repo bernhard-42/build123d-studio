@@ -299,6 +299,36 @@ class InspectorTest(NamespaceFixture, unittest.TestCase):
 
         self.assertIn("Awkward", self.variables()["awkward"]["repr"])
 
+    # --- the viewer defaults the toolbar shows ---
+
+    def test_the_reset_camera_default_travels_by_name(self):
+        """Read from the module already in the kernel, never imported: the
+        refresh runs on every idle. A Camera member goes as its name."""
+        import enum
+        import types
+
+        class Camera(enum.Enum):
+            RESET = "reset"
+            KEEP = "keep"
+
+        fake = types.ModuleType("build123d_studio")
+        fake.get_default = lambda key: {"reset_camera": Camera.KEEP}[key]
+        real = sys.modules.get("build123d_studio")
+        sys.modules["build123d_studio"] = fake
+        try:
+            self.assertEqual(json.loads(inspector.viewer_defaults()), {"reset_camera": "KEEP"})
+            fake.get_default = lambda key: (_ for _ in ()).throw(RuntimeError("no viewer"))
+            self.assertEqual(json.loads(inspector.viewer_defaults()), {"reset_camera": None})
+        finally:
+            sys.modules["build123d_studio"] = real
+
+    def test_without_the_module_the_default_is_null_rather_than_an_error(self):
+        real = sys.modules.pop("build123d_studio")
+        try:
+            self.assertEqual(json.loads(inspector.viewer_defaults()), {"reset_camera": None})
+        finally:
+            sys.modules["build123d_studio"] = real
+
     # --- what is data and what is code ---
 
     def test_classes_and_functions_are_not_variables(self):

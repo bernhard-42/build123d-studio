@@ -695,7 +695,8 @@ html body {
   display: none;
 }
 
-.debug-btn {
+.debug-btn,
+.shortcut-btn {
   width: 26px;
   height: 22px;
 }
@@ -998,6 +999,22 @@ html body {
 
 /* Right-aligned, which is where they were in the tab strip - the difference is
    that there is nothing here to crowd them out. */
+/* The right half of the tab row. The shortcuts sit at the far right; the debug
+   bar, when shown, sits before them and takes the stretch itself. */
+.console-shortcuts {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+  padding: 0 4px;
+  border-left: 1px solid var(--border);
+}
+
+.debug-bar:not([hidden]) + .console-shortcuts {
+  margin-left: 0;
+}
+
 .console-tabs .debug-bar {
   margin-left: auto;
 }
