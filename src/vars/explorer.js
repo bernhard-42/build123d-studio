@@ -497,11 +497,16 @@ function header() {
     if (index < 2) {
       const column = index === 0 ? "name" : "type";
       th.classList.add("var-sortable");
+      // Always there, a fixed square: empty when the column is not sorted,
+      // the chevron turned up or down when it is. A glyph that came and went
+      // changed the header's height with it, and one rotated about the
+      // centre of a box wider than it was tall landed at two different x.
+      const mark = document.createElement("span");
+      mark.className = "var-sort";
       if (order !== null && order.column === column) {
-        const chevron = document.createElement("span");
-        chevron.className = `icon icon-chevron var-sort-${order.direction}`;
-        th.append(" ", chevron);
+        mark.classList.add("icon", "icon-chevron", `var-sort-${order.direction}`);
       }
+      th.append(mark);
       th.addEventListener("click", () => {
         order = nextOrder(order, column);
         render();

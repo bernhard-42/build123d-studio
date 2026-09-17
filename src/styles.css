@@ -1282,19 +1282,35 @@ html body {
   color: var(--fg);
 }
 
-/* The same chevron as the twisty, turned to point the way the rows run. */
-.var-header .icon::before {
+/* The sort mark: a 12px square beside the column name whether or not the
+   column is sorted, so the header keeps its height. The chevron is the
+   twisty's, centred in the square and turned about its centre, so up and down
+   sit at the same x. */
+.var-sort {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  margin-left: 3px;
+  vertical-align: middle;
+  overflow: hidden;
+  line-height: 12px;
+  text-align: center;
+}
+
+/* Two classes, to beat .icon::before's 18px from icons.css: the square is
+   the size, not the glyph's default. */
+.var-sort.icon::before {
+  display: block;
   font-size: 12px;
+  line-height: 12px;
 }
 
-.var-header .var-sort-asc {
-  display: inline-block;
-  transform: rotate(90deg);
-}
-
-.var-header .var-sort-desc {
-  display: inline-block;
+.var-sort-asc {
   transform: rotate(-90deg);
+}
+
+.var-sort-desc {
+  transform: rotate(90deg);
 }
 
 /* A hit target wider than the line it moves. Four pixels of border is

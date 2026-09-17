@@ -198,15 +198,31 @@ test.describe("the variable explorer shows the namespace", () => {
     expect(plain(await names())).toEqual(["b", "count"]);
 
     const nameHeader = page.locator(".var-header th", { hasText: "Name" });
+    const geometry = () =>
+      page.evaluate(() => {
+        const th = [...document.querySelectorAll(".var-header th")].find((t) => t.textContent.includes("Name"));
+        const mark = th.querySelector(".var-sort");
+        return { height: th.getBoundingClientRect().height, markLeft: mark.getBoundingClientRect().left };
+      });
+    const unsorted = await geometry();
+
     await nameHeader.click();
     expect(plain(await names())).toEqual(["b", "count"]);
     await expect(nameHeader.locator(".var-sort-asc")).toHaveCount(1);
+    const ascending = await geometry();
     await nameHeader.click();
     expect(plain(await names())).toEqual(["count", "b"]);
     await expect(nameHeader.locator(".var-sort-desc")).toHaveCount(1);
+    const descending = await geometry();
     await nameHeader.click();
     expect(plain(await names())).toEqual(["b", "count"]);
     await expect(nameHeader.locator(".icon")).toHaveCount(0);
+
+    // The mark is a fixed square: the header is one height in all three
+    // states, and up and down sit at the same x.
+    expect(ascending.height).toBe(unsorted.height);
+    expect(descending.height).toBe(unsorted.height);
+    expect(descending.markLeft).toBe(ascending.markLeft);
 
     // Type: Box before int.
     await page.locator(".var-header th", { hasText: "Type" }).click();
