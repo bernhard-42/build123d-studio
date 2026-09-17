@@ -97,6 +97,20 @@ test.describe("the kernel connection", () => {
 });
 
 test.describe("copying a path", () => {
+  test("Open on a file row closes the dialog and opens the file in the editor", async ({ page }) => {
+    // Proof, at writing: with the .info-open branch removed from the click
+    // handler, this fails on the dialog still being there.
+    const { sidecar } = await open(page);
+    const dialog = await about(page, sidecar);
+    const logPath = await rowFor(page, dialog, "Log").locator(".info-open").getAttribute("data-open");
+    expect(logPath).toMatch(/build123d-studio\.log$/);
+
+    await rowFor(page, dialog, "Log").locator(".info-open").click();
+
+    await expect(page.locator("#info-dialog")).toHaveCount(0);
+    await expect.poll(() => page.locator(".tab-label").allTextContents()).toContain("build123d-studio.log");
+  });
+
   test("every path has a button and every version has none", async ({ page }) => {
     const { sidecar } = await open(page);
     const dialog = await about(page, sidecar);
@@ -110,6 +124,13 @@ test.describe("copying a path", () => {
     // whole dialog as text.
     await expect(rowFor(page, dialog, "Monaco editor").locator(".info-copy")).toHaveCount(0);
     await expect(rowFor(page, dialog, "Platform").locator(".info-copy")).toHaveCount(0);
+
+    // A file gets Open as well; a directory does not - the editor has nothing
+    // to do with one.
+    await expect(rowFor(page, dialog, "Log").locator(".info-open")).toHaveCount(1);
+    await expect(rowFor(page, dialog, "File").locator(".info-open")).toHaveCount(1);
+    await expect(rowFor(page, dialog, "Kernel connection file").locator(".info-open")).toHaveCount(1);
+    await expect(rowFor(page, dialog, "Location").locator(".info-open")).toHaveCount(0);
   });
 
   test("in a column wider than the labels beside it", async ({ page }) => {

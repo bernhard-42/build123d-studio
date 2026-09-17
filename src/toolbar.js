@@ -1,6 +1,6 @@
 import { window as neuWindow } from "@neutralinojs/lib";
 
-import { closeActiveTab, newFile, openFile, saveFile } from "./editor/files.js";
+import { closeActiveTab, newFile, openFile, openPath, saveFile } from "./editor/files.js";
 import { toggleSidebar } from "./editor/sidebar.js";
 import { askTwoWay } from "./confirm.js";
 import { toggleBottomRow } from "./layout/splitter.js";
@@ -388,7 +388,15 @@ export function initToolbar() {
     "btn-interrupt": interruptKernel,
     "btn-restart": restartKernel,
     "btn-palette": openCommandPalette,
-    "btn-info": showInfo,
+    // About's Open buttons open a file in the editor; the title follows, as
+    // it does after every tab action main.js wraps.
+    "btn-info": () =>
+      showInfo({
+        onOpen: async (path) => {
+          await openPath(path);
+          updateTitle();
+        },
+      }),
     "btn-settings": showSettings,
   };
 

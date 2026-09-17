@@ -688,7 +688,7 @@ async function main() {
   });
 
   await initMenu({
-    [MENU.ABOUT]: showInfo,
+    [MENU.ABOUT]: () => showInfo({ onOpen: (path) => withTitle(() => openPath(path)) }),
     [MENU.SETTINGS]: showSettings,
     [MENU.QUIT]: shutdown,
     [MENU.CUT]: cut,

@@ -43,7 +43,7 @@ async function logRows() {
   // libraries inside it printed, and what the measurement backend said. Each is
   // named only when it exists, for the same reason the rotated one is - a path
   // to a file nobody wrote sends the reader looking for it.
-  const rows = [pathRow("Log", current)];
+  const rows = [fileRow("Log", current)];
   for (const [label, path] of [
     ["Browser console", log.consolePath()],
     ["Measurement backend", log.backendPath()],
@@ -53,7 +53,7 @@ async function logRows() {
     }
     try {
       await filesystem.getStats(path);
-      rows.push(pathRow(label, path));
+      rows.push(fileRow(label, path));
     } catch {
       // Nothing has been written to it in this installation.
     }
@@ -62,7 +62,7 @@ async function logRows() {
   const previous = `${current}.1`;
   try {
     await filesystem.getStats(previous);
-    rows.push(pathRow("Previous log", previous));
+    rows.push(fileRow("Previous log", previous));
   } catch {
     // Never rotated, which is the common case.
   }
@@ -107,6 +107,16 @@ function row(label, value) {
  */
 function pathRow(label, value) {
   return { ...row(label, value), copy: true };
+}
+
+/**
+ * A row whose value is a file the editor can open: copy, and an Open button
+ * beside it. The log, the snippets file, the kernel's connection file - the
+ * things a support request reads, one click from being read here. Not for a
+ * directory, which the editor has nothing to do with.
+ */
+function fileRow(label, value) {
+  return { ...pathRow(label, value), open: true };
 }
 
 // How long the About dialog waits for the sidecar's answer. Long enough for a
@@ -219,7 +229,7 @@ async function gather() {
     title: "Snippets",
     note: "Yours to edit - VS Code's .code-snippets format, comments and all. Read at "
       + "startup and when Settings is applied; delete it to get the shipped set back.",
-    rows: [pathRow("File", snippetsPath(await appDataDir()))],
+    rows: [fileRow("File", snippetsPath(await appDataDir()))],
   });
 
   // On its own, because it is the only section that asks the reader to do
@@ -256,7 +266,7 @@ async function gather() {
       + "jupyter-console outside of build123d Studio.",
     rows: [
       typeof info?.info?.connectionFile === "string"
-        ? pathRow("Kernel connection file", info.info.connectionFile)
+        ? fileRow("Kernel connection file", info.info.connectionFile)
         : row("Kernel connection file", "starting…"),
     ],
   });
@@ -304,9 +314,15 @@ function render(sections) {
                 + ` data-copy="${escapeHtml(r.value)}">`
                 + `<span class="icon icon-copy"></span></button>`
               : "";
+          const open =
+            r.open === true
+              ? `<button type="button" class="btn info-open" title="Open in the editor"`
+                + ` data-open="${escapeHtml(r.value)}">`
+                + `<span class="icon icon-open"></span></button>`
+              : "";
           return (
             `<tr><td class="info-label">${escapeHtml(r.label)}</td>` +
-            `<td class="info-value">${escapeHtml(r.value)}${copy}</td></tr>`
+            `<td class="info-value">${escapeHtml(r.value)}${copy}${open}</td></tr>`
           );
         })
         .join("");
@@ -330,7 +346,13 @@ function onKeyDown(event) {
   }
 }
 
-export async function showInfo() {
+/**
+ * @param {object} [options]
+ * @param {(path: string) => Promise<unknown>} [options.onOpen] opens a file in
+ *   the editor - the Open button on a file row; the dialog closes first, so
+ *   the tab is what is on screen when the file arrives
+ */
+export async function showInfo({ onOpen = null } = {}) {
   close();
 
   const overlay = document.createElement("div");
@@ -363,6 +385,12 @@ export async function showInfo() {
 
   // Delegated, so it survives the innerHTML above and needs no per-row wiring.
   body.addEventListener("click", async (event) => {
+    const opener = event.target.closest?.(".info-open") ?? null;
+    if (opener !== null && onOpen !== null) {
+      close();
+      Promise.resolve(onOpen(opener.dataset.open)).catch((error) => log.warn("Could not open it:", error));
+      return;
+    }
     // A click that lands on the glyph inside the button, on the button itself,
     // or on the row around it - only the first two are a copy.
     const button = event.target.closest?.(".info-copy") ?? null;
