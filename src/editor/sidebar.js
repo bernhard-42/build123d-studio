@@ -30,6 +30,7 @@ import {
 } from "./tree.js";
 import { askTwoWay, notifyFailure, notifyRefusal } from "../confirm.js";
 import { showContextMenu } from "../contextmenu.js";
+import { importerFor } from "./importfile.js";
 import { getSetting, setSetting } from "../store.js";
 import { refreshLayout } from "../layout/splitter.js";
 import * as log from "../log.js";
@@ -42,6 +43,7 @@ const HIDDEN_KEY = "sidebarHidden";
 
 let root = null;
 let openFile = null;
+let showFile = null;
 // Told when a file is renamed here, so a tab holding it can follow.
 let renamedOnDisk = () => {};
 // Told after every refresh, so the editor can check whether the files its tabs
@@ -75,8 +77,14 @@ const children = new Map();
 // setting.
 let filter = "";
 
-export function initSidebar({ onOpenFile, onRefreshed = () => {}, onRenamed = () => {} }) {
+export function initSidebar({
+  onOpenFile,
+  onShowFile = () => {},
+  onRefreshed = () => {},
+  onRenamed = () => {},
+}) {
   openFile = onOpenFile;
+  showFile = onShowFile;
   refreshed = onRefreshed;
   renamedOnDisk = onRenamed;
   hidden = getSetting(HIDDEN_KEY) === true;
@@ -711,15 +719,24 @@ function showRowMenu(row, x, y) {
   if (row.isDirectory) {
     return;
   }
+  // Show, for a file build123d can import - STL, STEP, BREP, DXF, SVG. A
+  // click opens a file, whatever it is, because that is what a click means
+  // everywhere in the tree; an SVG one wants to edit must open in the editor.
+  // Showing is the special action, so it lives here with the other actions.
+  const showable = importerFor(row.path) !== null;
   showContextMenu({
     x,
     y,
     items: [
+      ...(showable ? [{ id: "show", label: "Show", enabled: true }] : []),
       { id: "rename", label: "Rename…", enabled: true },
       { id: "delete", label: "Delete…", enabled: true },
     ],
     onPick: (id) => {
-      if (id === "rename") {
+      if (id === "show") {
+        unmark();
+        showFile(row.path);
+      } else if (id === "rename") {
         beginRenaming(row.path);
       } else if (id === "delete") {
         confirmDelete(row.path).catch((error) => log.warn("Could not delete it:", error));

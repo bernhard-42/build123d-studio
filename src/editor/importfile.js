@@ -1,11 +1,11 @@
-// A CAD file clicked in the tree is shown, not opened.
+// Show, for a CAD file in the tree: its row menu's action.
 //
-// The editor has nothing to offer for an STL, a STEP, a DXF or an SVG: a binary
-// one is refused as "not a text file", and a text one - STEP is text, and so are
-// DXF and SVG - opens as a wall of numbers nobody meant to edit. build123d has
-// an importer for each, so a click runs that importer on the kernel and shows
-// the result, echoed into the console as the one line it is - which is also
-// the line a user copies into a script when the file is worth keeping.
+// build123d has an importer for an STL, a STEP, a BREP, a DXF and an SVG, so
+// Show runs that importer on the kernel and shows the result, echoed into the
+// console - which is also the line a user copies into a script when the file
+// is worth keeping. A click on the file still opens it, as a click does for
+// everything in the tree: an SVG or a STEP is text, and sometimes the point
+// is to edit it.
 //
 // The result is bound to `_imported` on purpose, and to nothing else. A name
 // derived from the file would put every clicked file into the namespace for

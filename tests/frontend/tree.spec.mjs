@@ -42,17 +42,23 @@ test.describe("clicking a file", () => {
     await expect(row(page, "part.py")).not.toHaveClass(/tree-active/);
   });
 
-  test("a CAD file is imported on the kernel and shown, not opened", async ({ page }) => {
-    // STEP is text and would open as a wall of numbers; a binary STL would be
-    // refused. Neither is what a click on a model means. The line that runs is
-    // echoed into the console, and _imported is the user's to keep.
-    // Proof, at writing: with the importCode branch removed from onOpenFile,
-    // this fails on the tab list containing frame.step.
+  test("a click opens a CAD file like any other; Show in its menu imports it", async ({ page }) => {
+    // A STEP or an SVG is text, and sometimes the point is to edit it - so a
+    // click opens it in the editor, as a click does for everything. Showing
+    // is the row menu's, for the files build123d can import; the lines that
+    // run are echoed into the console, and _imported is the user's to keep.
+    // Proof, at writing: with the "show" item removed from showRowMenu, this
+    // fails on the menu having no Show.
     const { sidecar } = await openApp(page, {
-      files: { ...FILES, [`${PROJECT}/frame.step`]: "ISO-10303-21;\n" },
+      files: { ...FILES, [`${PROJECT}/frame.step`]: "ISO-10303-21;\n", [`${PROJECT}/logo.svg`]: "<svg/>\n" },
     });
 
-    await row(page, "frame.step").click();
+    await row(page, "logo.svg").click();
+    await expect.poll(() => tabLabels(page)).toContain("logo.svg");
+    expect(sidecar.received.filter((frame) => frame.type === "kernel.execute")).toHaveLength(0);
+
+    await row(page, "frame.step").click({ button: "right" });
+    await page.locator(".context-menu-item", { hasText: "Show" }).click();
 
     await sidecar.waitFor("kernel.execute");
     await expect
@@ -65,7 +71,11 @@ test.describe("clicking a file", () => {
         `_imported = import_step("${PROJECT}/frame.step"); show(_imported, reset_camera=Camera.RESET)`,
     ]);
     expect(await tabLabels(page)).not.toContain("frame.step");
-    await expect(page.locator(".confirm-overlay")).toBeHidden();
+
+    // A Python file's menu has no Show.
+    await row(page, "part.py").click({ button: "right" });
+    await expect(page.locator(".context-menu")).toBeVisible();
+    await expect(page.locator(".context-menu-item", { hasText: "Show" })).toHaveCount(0);
   });
 
   test("the filter box narrows the tree to what has been opened: a name, or an extension", async ({ page }) => {
