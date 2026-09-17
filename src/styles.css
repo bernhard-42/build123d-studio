@@ -1162,11 +1162,20 @@ html body {
   font-size: 12px;
 }
 
+/* display: flex above beats the user agent's rule for [hidden] on specificity,
+   so `hidden = true` on the pane - a debug session ending, the explorer
+   toggled off - needs saying again here. */
+.pane-vars[hidden] {
+  display: none;
+}
+
 .var-body {
   flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
-  padding: 4px 0 4px 3px;
+  /* No top padding: the table header sticks to this edge, and padding here
+     would be a gap the rows scroll through above it. */
+  padding: 0 0 4px 3px;
 }
 
 /* The filter box, above the table and outside what a refresh rebuilds. Sticky,
@@ -1249,8 +1258,14 @@ html body {
 /* The header exists to be grabbed - see header() - so it stays out of the way
    otherwise: it is the column names and a line, at the pane's dim colour. */
 .var-header th {
-  position: relative;
-  padding: 2px 6px 3px 6px;
+  /* Sticky within the scrolling body, so the rows run under the column
+     names. Sticky is positioned, so the grip's absolute offset still resolves
+     against the cell. */
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--bg-pane);
+  padding: 1px 6px 2px 6px;
   border-bottom: 1px solid var(--border);
   color: var(--fg-dim);
   font-size: 11px;

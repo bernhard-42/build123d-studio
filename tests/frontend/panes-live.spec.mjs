@@ -176,9 +176,13 @@ test.describe("the variable explorer shows the namespace", () => {
       filterTop: document.querySelector(".var-filter").getBoundingClientRect().top,
       paneTop: document.getElementById("pane-vars").getBoundingClientRect().top,
       scrolled: document.querySelector(".var-body").scrollTop,
+      headerTop: document.querySelector(".var-header th").getBoundingClientRect().top,
+      bodyTop: document.querySelector(".var-body").getBoundingClientRect().top,
     }));
     expect(after.scrolled).toBeGreaterThan(0);
     expect(after.filterTop).toBe(after.paneTop);
+    // And the column names stay at the top of the body, the rows under them.
+    expect(after.headerTop).toBe(after.bodyTop);
   });
 
   test("a click on Name or Type sorts, a second reverses, a third restores the kernel's order", async ({ page }) => {
