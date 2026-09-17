@@ -2,12 +2,12 @@
 
 What changed in each release, for the people using it. Anything not visible from the outside is in the git log.
 
-## 0.6.6 (2026-09-16)
+## 0.7.0 (2026-09-17)
 
 - **Clicking a CAD file in the file tree shows it in the viewer.** STL, STEP (`.step`, `.stp`), BREP, DXF and SVG files are imported with build123d's importers instead of being opened as text. The command runs in the console, so it can be copied into a script, and the result is available as `_imported` — also in the variable explorer. Keep it under a name of your own with `part = _imported`.
 - **Filter and sort the variable explorer.** A filter box above the table narrows the rows to names (or build123d labels) containing what you type; Escape clears it. Clicking *Name* or *Type* sorts by that column — again to reverse, a third time for the original order.
 - **A camera shortcut beside the console tabs.** The button at the right of the tab row shows whether the next `show()` resets the camera (the kernel's `reset_camera` default): a flip-camera icon means it resets, a photo-camera icon means it is kept. A click switches the default with `set_defaults(reset_camera=…)`, visible in the console. It is a session default; a kernel restart brings the Settings value back.
-- **Geometry opens to its values in the explorer.** A `BoundBox` shows min, max, size, center and diagonal; a `Vertex` or `Vector` its coordinates; `Location` (and `Pos`, `Rot`), `Axis` and `Plane` their position and directions — instead of "no further detail". Edges, wires and lines list their start and end point (what `line @ 0` and `line @ 1` give).
+- **Geometry opens to its values in the explorer.** A `BoundBox` shows min, max, size, center and diagonal; a `Vertex` or `Vector` its coordinates; `Location` (and `Pos`, `Rot`), `Axis` and `Plane` their position and directions — instead of "no further detail". Edges, wires and lines list their start and end point (what `line @ 0` and `line @ 1` give), and edges and faces say what geometry they are — line, circle, bspline, plane, cylinder, sphere…
 - **Select variables in the explorer.** A click on a row selects it; the chevron opens it. Cmd/Ctrl-click adds to the selection and Shift-click extends it. Right-click → *Show* shows everything selected in one `show(a, b, c)`, and *Copy* copies the names as `a, b, c`. Rows below a variable have no name of their own, so neither applies to them.
 - **Snippets are now an editable file.** `snippets.json` in the settings directory is created from the shipped set on first start and read at every start and whenever Settings is applied. Edit, add or remove entries there; delete the file to restore the shipped set.
 - **three-cad-viewer 5.0.7.** Fixes a memory leak that made showing several large assemblies exhaust the window's memory, after which the viewer stopped rendering or the window reloaded.

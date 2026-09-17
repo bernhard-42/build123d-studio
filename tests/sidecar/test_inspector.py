@@ -604,6 +604,40 @@ class InspectorTest(NamespaceFixture, unittest.TestCase):
             {"position": "'Vector(1, 2, 3)'", "orientation": "'Vector(10, 20, 30)'"},
         )
 
+    def test_an_edge_or_a_face_says_what_kind_of_geometry_it_is(self):
+        """LINE, CIRCLE, PLANE, CYLINDER - the first question about an edge
+        or a face, and not in its repr. OTHER, which is what every wire,
+        solid and compound answers, is no information and is left out; an
+        empty shape raises on the question and is left out the same way."""
+        import enum
+
+        class GeomType(enum.Enum):
+            CIRCLE = 1
+            OTHER = 2
+
+        # Plain fakes, not _FakeShape: its __init__ swaps in a fresh class
+        # and geom_type would go with it.
+        def counted(faces, edges, vertices):
+            return {
+                "faces": lambda self: [None] * faces,
+                "edges": lambda self: [None] * edges,
+                "vertices": lambda self: [None] * vertices,
+            }
+
+        Edge = type("Edge", (), {**counted(0, 1, 2), "geom_type": GeomType.CIRCLE})
+        Solid = type("Solid", (), {**counted(6, 12, 8), "geom_type": GeomType.OTHER})
+
+        def raising(self):
+            raise ValueError("empty")
+
+        Face = type("Face", (), {**counted(0, 0, 0), "geom_type": property(raising)})
+
+        self.given(e=Edge(), s=Solid(), n=Face())
+
+        self.assertEqual(self.detail(["e"])["attributes"], {"geometry": "circle"})
+        self.assertEqual(self.detail(["s"])["attributes"], {"topology": "6 faces, 12 edges, 8 vertices"})
+        self.assertEqual(self.detail(["n"])["attributes"], {"topology": "0 edges, 0 vertices"})
+
     def test_a_face_is_not_told_that_it_has_one_face(self):
         """Its own definition fixes that, so the count says nothing."""
         self.given(f=_FakeShape("Face", faces=1, edges=4, vertices=4))

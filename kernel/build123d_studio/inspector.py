@@ -693,6 +693,22 @@ def _build123d_details(value):
             except Exception:  # noqa: BLE001 - a curve that cannot say is left without
                 pass
 
+    # What kind of curve or surface it is - LINE, CIRCLE, BSPLINE, PLANE,
+    # CYLINDER - which is the first thing anyone asks of an edge or a face
+    # and is not in its repr. A constant-time query on the underlying
+    # geometry, measured at 3-5 µs on every edge and face kind including a
+    # 20,000-segment polyline; the STEP's 5,516 faces answer in 73 ms. Wires,
+    # solids and compounds all say OTHER, which is no information and is left
+    # out; an empty shape raises, and is left out the same way.
+    if time.monotonic() < deadline:
+        try:
+            geom_type = getattr(value, "geom_type", None)
+            name = getattr(geom_type, "name", None)
+            if isinstance(name, str) and name != "OTHER":
+                details["geometry"] = name.lower()
+        except Exception:  # noqa: BLE001 - a shape with no geometry has no row
+            pass
+
     implied = IMPLIED_COUNTS.get(kind, ())
     counts = []
 
