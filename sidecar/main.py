@@ -705,6 +705,18 @@ class Sidecar:
             # cannot differ.
             # Which run this is about. A busy names the one the kernel has
             # just started - ours or the console's - and an idle retires it.
+            #
+            # An idle with another of our runs still waiting is not idle. The
+            # kernel serves its shell socket in order and the next run is
+            # already on it, so it is what runs next - and its own busy can be
+            # a long time coming: the message leaves the kernel on the IOPub
+            # thread, which needs the GIL, and an importer that holds the GIL
+            # for eight seconds holds that message for eight seconds too.
+            # Measured on a large STEP: the idle of the one-line request before
+            # it arrived at once, the import's busy arrived with its model, and
+            # the toolbar read idle for the whole import. So the next pending
+            # run is taken as running from the previous one's idle, and the
+            # kernel's late busy then names the same run.
             parent_id = message["parent_header"].get("msg_id")
             with self._runs_lock:
                 if state == "busy":
@@ -714,6 +726,9 @@ class Sidecar:
                         self._pending_runs.remove(parent_id)
                     if parent_id == self._running_run:
                         self._running_run = None
+                    if len(self._pending_runs) > 0:
+                        self._running_run = self._pending_runs[0]
+                        state = "busy"
 
             if state == "busy":
                 self._kernel_busy.set()
@@ -730,6 +745,10 @@ class Sidecar:
             # here. Kept as a condition rather than assumed, because it says
             # what the refresh depends on rather than leaving a reader to notice
             # that something twenty lines earlier happens to guarantee it.
+            # `state` is what was reported, so an idle rewritten to busy above
+            # - another run of ours is next - books no refresh: it would only
+            # queue behind that run, and describe a namespace the run is still
+            # changing. The run's own idle books it.
             if state == "idle" and parent_type == "execute_request":
                 # Namespace may have changed - whoever executed it, editor or
                 # console. Pushed rather than polled, so an idle session costs
@@ -780,6 +799,19 @@ class Sidecar:
         webview would roughly double the traffic for data it cannot read.
         """
         self.measurements.load(mapping_bytes)
+
+    def _accept_run(self, msg_id):
+        """Record a run the kernel has been handed.
+
+        With nothing of ours running it is the running one, not a waiting one:
+        the kernel takes it next, and its own busy may be a while - see the
+        idle handling in on_iopub for why. Counted as waiting, the toolbar read
+        "busy [+1]" for a STEP import that had already started.
+        """
+        with self._runs_lock:
+            self._pending_runs.append(msg_id)
+            if self._running_run is None:
+                self._running_run = msg_id
 
     def queued_runs(self):
         """How many of our runs are waiting for the kernel to reach them."""
@@ -1120,8 +1152,7 @@ class Sidecar:
         # would otherwise still ask a kernel that has a Run waiting in line.
         self._kernel_busy.set()
         # Recorded before the frame, so the count on it includes this run.
-        with self._runs_lock:
-            self._pending_runs.append(msg_id)
+        self._accept_run(msg_id)
         self.send_kernel_status("busy")
         log(f"Execute: {len(code)} chars, msg_id {msg_id}")
 

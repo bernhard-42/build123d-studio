@@ -76,8 +76,7 @@ class RunQueueTest(unittest.TestCase):
 
     def accept(self, msg_id):
         """What on_execute records when it has sent a run to the kernel."""
-        with self.sidecar._runs_lock:
-            self.sidecar._pending_runs.append(msg_id)
+        self.sidecar._accept_run(msg_id)
 
     def queued(self):
         return self.sidecar.queued_runs()
@@ -89,6 +88,16 @@ class RunQueueTest(unittest.TestCase):
         self.accept("a")
         self.sidecar.on_iopub(status("busy", "a"))
 
+        self.assertEqual(self.queued(), 0)
+
+    def test_a_run_handed_to_a_kernel_with_nothing_of_ours_running_is_the_running_one(self):
+        """Not a waiting one: the kernel takes it next, and its own busy can
+        arrive seconds later. Counted as waiting, the toolbar read "busy [+1]"
+        for an import that had already started."""
+        self.accept("a")
+        self.assertEqual(self.queued(), 0)
+        # The kernel's busy for it changes nothing.
+        self.sidecar.on_iopub(status("busy", "a"))
         self.assertEqual(self.queued(), 0)
 
     def test_a_second_run_is_waiting_while_the_first_is_worked_on(self):
@@ -122,6 +131,28 @@ class RunQueueTest(unittest.TestCase):
 
         self.sidecar.on_iopub(status("idle", "c"))
         self.assertEqual(self.queued(), 0)
+
+    def test_an_idle_with_one_of_ours_still_waiting_is_reported_as_busy(self):
+        """The kernel serves in order and the next run is already on its
+        socket, so it is what runs next. Its own busy can arrive seconds late -
+        an importer holding the GIL holds the IOPub thread that sends it - and
+        the toolbar read idle for a whole STEP import in between."""
+        self.accept("a")
+        self.accept("b")
+        self.sidecar.on_iopub(status("busy", "a"))
+        self.sidecar.on_iopub(status("idle", "a"))
+
+        last = [p for t, p in self.channel.sent if t == "kernel.status"][-1]
+        self.assertEqual(last, {"state": "busy", "queued": 0})
+        # And no refresh was booked between the two: it would only queue
+        # behind the run that is now going.
+        self.assertNotIn(("submit", {"lane": "inspect"}), self.channel.sent)
+
+        self.sidecar.on_iopub(status("busy", "b"))
+        self.sidecar.on_iopub(status("idle", "b"))
+        last = [p for t, p in self.channel.sent if t == "kernel.status"][-1]
+        self.assertEqual(last, {"state": "idle", "queued": 0})
+        self.assertIn(("submit", {"lane": "inspect"}), self.channel.sent)
 
     def test_a_run_queued_behind_the_console_is_waiting(self):
         """The console's request is not ours, so ours is not the one running."""

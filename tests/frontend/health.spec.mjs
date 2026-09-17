@@ -148,3 +148,44 @@ test.describe("what the sidecar is told at launch", () => {
     }
   });
 });
+
+test.describe("what a reloaded page does about its predecessor", () => {
+  // WebKit killed the page at 26 GB after a few large models, relaunched it and
+  // reloaded; the new page started a sidecar and kernel of its own while the
+  // old ones - spawned by the application process, which never died - ran on.
+  // Measured: the previous tree was still alive beside the new one.
+  //
+  // Proof, at writing: with the stopLeftovers call removed from main(), the
+  // first test fails on the missing exit call; with the health record removed
+  // from reportWebglGone, the second fails on the hidden chip.
+
+  test("processes a previous page left behind are stopped before anything is spawned", async ({ page }) => {
+    await open(page, { leftovers: [{ id: 7, pid: 4242 }, { id: 8, pid: 4243 }] });
+
+    const calls = await page.evaluate(() =>
+      globalThis.__NEUTRALINO_STUB__
+        .calls()
+        .filter((call) => call.name === "updateSpawnedProcess" || call.name === "spawnProcess")
+        .map((call) => (call.name === "spawnProcess" ? "spawn" : `exit ${call.args[0]}`)));
+
+    expect(calls.slice(0, 2)).toEqual(["exit 7", "exit 8"]);
+    expect(calls.slice(2)).not.toContain("exit 7");
+  });
+
+  test("a lost WebGL context is a failed subsystem the chip names", async ({ page }) => {
+    await open(page);
+    await expect(page.locator("#health-chip")).toBeHidden();
+
+    // What the browser dispatches on the canvas when the GPU takes the context
+    // away; it does not bubble, which is what the capture listener is for.
+    await page.evaluate(() => {
+      const canvas = document.querySelector("#pane-viewer canvas");
+      canvas.dispatchEvent(new Event("webglcontextlost"));
+    });
+
+    const chip = page.locator("#health-chip");
+    await expect(chip).toBeVisible();
+    await expect(page.locator("#health-label")).toHaveText("failed");
+    await expect(chip).toHaveAttribute("title", /webgl: failed - The viewer cannot draw/);
+  });
+});

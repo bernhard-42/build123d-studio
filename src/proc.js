@@ -167,6 +167,48 @@ export async function stopRunning() {
 }
 
 /**
+ * Stop what a previous page of this window left running.
+ *
+ * Spawned processes belong to the application process, not to the page. When
+ * WebKit kills the page - measured: a WebContent process at 26 GB after a few
+ * large models, killed at WebKit's 16 GB threshold - it relaunches it and
+ * reloads, and the new page starts a sidecar and a kernel of its own while the
+ * old ones are still there, holding a gigabyte and a Jupyter port each. The
+ * old sidecar's teardown is stdin EOF, which only the application closing its
+ * end delivers; asking Neutralino to end the process is what closes it.
+ *
+ * Before anything is spawned, so the list is exactly the predecessor's. A
+ * fresh start has an empty list.
+ *
+ * @returns {Promise<number>} how many were found
+ */
+export async function stopLeftovers() {
+  let leftovers;
+  try {
+    leftovers = await os.getSpawnedProcesses();
+  } catch (error) {
+    log.warn("Could not list spawned processes:", error);
+    return 0;
+  }
+  if (leftovers.length === 0) {
+    return 0;
+  }
+  log.warn(
+    `${leftovers.length} process(es) left by a previous page of this window - ` +
+      "the page was reloaded, most likely after WebKit killed it; stopping them",
+  );
+  for (const leftover of leftovers) {
+    try {
+      await os.updateSpawnedProcess(leftover.id, "exit");
+      log.info(`stopped leftover: id=${leftover.id} pid=${leftover.pid}`);
+    } catch (error) {
+      log.warn(`Could not stop leftover id=${leftover.id} pid=${leftover.pid}:`, error);
+    }
+  }
+  return leftovers.length;
+}
+
+/**
  * Run a process to completion, streaming its output line-wise to onLine.
  *
  * stdout and stderr are merged, because for uv the interesting progress

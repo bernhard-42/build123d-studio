@@ -568,6 +568,15 @@ export const os = {
   async updateSpawnedProcess(id, action) {
     record("updateSpawnedProcess", [id, action]);
   },
+
+  // What a previous page of this window left behind, as a test declares it:
+  // spawned processes belong to the application, and a reloaded page inherits
+  // them. The application asks before spawning anything of its own, so this
+  // answers the harness's list and nothing this page has started.
+  async getSpawnedProcesses() {
+    record("getSpawnedProcesses", []);
+    return (globalThis.__HARNESS_PROCESSES__?.leftovers ?? []).map((p) => ({ ...p }));
+  },
 };
 
 // --- clipboard, window, app ------------------------------------------------

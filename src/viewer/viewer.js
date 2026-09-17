@@ -8,6 +8,7 @@ import { onPaneResize } from "../layout/splitter.js";
 import { copyText } from "../editing.js";
 import * as ipc from "../ipc.js";
 import * as log from "../log.js";
+import { record as recordHealth } from "../health.js";
 import { onThemeChange, resolvedTheme } from "../theme.js";
 import { STORAGE_KEY as VIEWER_KEY, withDefaults } from "../viewer-settings.js";
 import { getSetting } from "../store.js";
@@ -37,6 +38,74 @@ let page = null;
 
 function container() {
   return document.getElementById("pane-viewer");
+}
+
+/**
+ * Whether the viewer's WebGL context is gone, or null when there is no canvas.
+ *
+ * The page hands out nothing of the renderer, but the context belongs to the
+ * canvas: asking the canvas for the context it already has returns that
+ * context, and it answers isContextLost() itself. A lost context is the one
+ * failure that leaves every render "succeeding" while the pane stays empty -
+ * three.js returns from render() at once and says so on console.log, which
+ * the mirror does not write at its default level.
+ */
+function webglLost() {
+  const canvas = container()?.querySelector("canvas");
+  if (canvas === null || canvas === undefined) {
+    return null;
+  }
+  const gl = canvas.getContext("webgl2") ?? canvas.getContext("webgl");
+  if (gl === null) {
+    return true;
+  }
+  return gl.isContextLost();
+}
+
+// A viewer that cannot draw is a failure the user has to be told about, in the
+// same place the other subsystems say so. Measured: WebKit killed the page at
+// 26 GB and reloaded it, and on the reloaded page getContext returned null -
+// every later show "rendered" into nothing while the chip stayed clear. Under
+// its own name rather than the sidecar's "viewer", which the sidecar sets to
+// ready when its model channel is up and would overwrite this.
+const WEBGL_GONE =
+  "The viewer cannot draw: WebGL is not available in this window. Restart build123d Studio.";
+let webglGone = false;
+
+function reportWebglGone(reason) {
+  webglGone = true;
+  log.error(`WebGL ${reason}`);
+  recordHealth("webgl", "failed", WEBGL_GONE);
+}
+
+// The context events do not bubble, but the capture phase still passes through
+// document on the way to the canvas - so one listener sees every canvas on the
+// page, whichever library made it. Errors, so the mirror writes them at its
+// default level, and the application log has them whatever the mirror does.
+document.addEventListener(
+  "webglcontextlost",
+  (event) => reportWebglGone(`context lost${statusOf(event)}`),
+  true,
+);
+document.addEventListener(
+  "webglcontextcreationerror",
+  (event) => reportWebglGone(`context creation failed${statusOf(event)}`),
+  true,
+);
+document.addEventListener(
+  "webglcontextrestored",
+  () => {
+    webglGone = false;
+    log.info("WebGL context restored");
+    recordHealth("webgl", "ready");
+  },
+  true,
+);
+
+function statusOf(event) {
+  return typeof event.statusMessage === "string" && event.statusMessage !== ""
+    ? `: ${event.statusMessage}`
+    : "";
 }
 
 /** The size of the surface, which for this host is a pane and not the window. */
@@ -187,10 +256,24 @@ export function showLogo() {
     log.info(`Logo rendered in ${(performance.now() - started).toFixed(0)} ms`);
   } catch (error) {
     log.warn("Could not render the startup logo:", error);
+    // three.js given a null context throws exactly this shape; the creation
+    // error event may or may not have fired first, and the record is the same.
+    if (webglLost() !== false) {
+      reportWebglGone("is not available: the logo could not be drawn");
+    }
   }
 }
 
 export function initViewer() {
+  // A replacement sidecar clears the health record; the context is still gone.
+  // Subscribed here rather than at module load: main() subscribes the reset on
+  // the same event first, and listeners run in the order they were added.
+  ipc.on("sidecar.restarting", () => {
+    if (webglGone) {
+      recordHealth("webgl", "failed", WEBGL_GONE);
+    }
+  });
+
   page = createPage({
     Viewer,
     Display,
@@ -271,10 +354,12 @@ export function initViewer() {
       if (header.config?.keymap !== undefined) {
         applyModifierKeys(header.config.keymap);
       }
+      const lost = webglLost();
       log.info(
         `Model rendered: ${header.count ?? "?"} shapes, ` +
           `${(payload.byteLength / 1024).toFixed(0)} kB, ` +
-          `${(performance.now() - started).toFixed(0)} ms`,
+          `${(performance.now() - started).toFixed(0)} ms` +
+          (lost === true ? " - but the WebGL context is lost, so nothing is on screen" : ""),
       );
     } catch (error) {
       log.error("Could not render the model:", error);

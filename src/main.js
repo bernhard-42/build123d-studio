@@ -6,7 +6,7 @@ import { ensureEnvironment } from "./bootstrap/setup.js";
 import { appDir, recordAppLocation } from "./bootstrap/envroot.js";
 import { logStartupFacts } from "./bootstrap/diagnostics.js";
 import { openTarget } from "./args.js";
-import { stopRunning } from "./proc.js";
+import { stopLeftovers, stopRunning } from "./proc.js";
 import {
   acknowledge,
   appendLog,
@@ -548,6 +548,10 @@ async function main() {
   await restoreWindow();
   await neuWindow.show();
   watchWindow();
+
+  // Before anything this page spawns, so what is found is the predecessor's:
+  // a reloaded page inherits the application's spawned processes.
+  await stopLeftovers();
 
   // After the window is up, so a slow answer delays the splash's lines rather
   // than the window; before the environment, so the machine is described in
