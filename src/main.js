@@ -79,7 +79,7 @@ import { chordsFor } from "./keybindings.js";
 import { handleKey } from "./titlebar/titlebar.js";
 import { followWindowFocus } from "./nativedialog.js";
 import { initViewer, showLogo } from "./viewer/viewer.js";
-import { initVariables } from "./vars/explorer.js";
+import { initVariables, selectionFor } from "./vars/explorer.js";
 import { awaitKernelRestart, showSettings } from "./settings.js";
 import { showInfo } from "./info.js";
 import {
@@ -665,18 +665,18 @@ async function main() {
     // HTML, and what the user dragged across is what Copy means - clamped to
     // this pane, so a drag that reached another one copies only this part.
     selectedText: () => textWithin(varsPane),
-    variableAt: (target) => {
-      const row = typeof target?.closest === "function" ? target.closest("tr.var-row") : null;
-      const name = row?.dataset.variable;
-      return typeof name === "string" && name !== "" ? name : null;
-    },
-    onPick: (id, text, variable) => {
+    variablesAt: selectionFor,
+    onPick: (id, text, variables) => {
       if (id === "copy") {
-        copyText(text);
-      } else if (id === "show" && variable !== null) {
-        // Through the same execute as a Run, echoed into the console. The
-        // import is there for a namespace that never imported show itself.
-        execute(`from build123d_studio import show; show(${variable})`);
+        // The selected names as a list - `a, b, c` - which is what a Copy of
+        // variables is for: pasting them into a show() or a tuple. With no
+        // row selected, whatever text was dragged across, as before.
+        copyText(variables.length > 0 ? variables.join(", ") : text);
+      } else if (id === "show" && variables.length > 0) {
+        // One show of all of them, through the same execute as a Run, echoed
+        // into the console. The import is there for a namespace that never
+        // imported show itself.
+        execute(`from build123d_studio import show; show(${variables.join(", ")})`);
       }
     },
   });

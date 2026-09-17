@@ -18,6 +18,8 @@
   --accent: #0e639c;
   --accent-fg: #ffffff;
   --hover: rgba(255, 255, 255, 0.06);
+  /* A selected row, a step stronger than a hover so the two read apart. */
+  --selected: rgba(255, 255, 255, 0.14);
   --row-alt: rgba(255, 255, 255, 0.03);
   --type-fg: #4ec9b0;
   --key-fg: #9cdcfe;
@@ -43,6 +45,7 @@
   --accent: #0a5c92;
   --accent-fg: #ffffff;
   --hover: rgba(0, 0, 0, 0.06);
+  --selected: rgba(0, 0, 0, 0.14);
   --row-alt: rgba(0, 0, 0, 0.035);
   --type-fg: #167e6a;
   --key-fg: #0a5c92;
@@ -1134,6 +1137,37 @@ html body {
   font-size: 12px;
 }
 
+/* The filter box, above the table and outside what a refresh rebuilds. Sticky,
+   so it stays at hand while a long namespace scrolls under it. */
+.var-filter {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 2px 6px 4px 3px;
+  background: var(--bg);
+}
+
+.var-filter-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  outline: none;
+  background: transparent;
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 12px;
+}
+
+.var-filter-input:focus {
+  border-color: var(--accent);
+}
+
+.var-filter-input::placeholder {
+  color: var(--fg-dim);
+}
+
 .var-empty {
   padding: 8px;
   color: var(--fg-dim);
@@ -1155,6 +1189,20 @@ html body {
   background: var(--hover);
 }
 
+.var-row.var-selected {
+  background: var(--selected);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+/* Every top-level row can be selected, so every one is clickable. */
+.var-row {
+  cursor: default;
+}
+
+.var-twisty {
+  cursor: pointer;
+}
+
 .var-table td {
   padding: 2px 6px 2px 0;
   overflow: hidden;
@@ -1174,6 +1222,29 @@ html body {
   font-weight: 500;
   text-align: left;
   user-select: none;
+}
+
+.var-sortable {
+  cursor: pointer;
+}
+
+.var-sortable:hover {
+  color: var(--fg);
+}
+
+/* The same chevron as the twisty, turned to point the way the rows run. */
+.var-header .icon::before {
+  font-size: 12px;
+}
+
+.var-header .var-sort-asc {
+  display: inline-block;
+  transform: rotate(90deg);
+}
+
+.var-header .var-sort-desc {
+  display: inline-block;
+  transform: rotate(-90deg);
 }
 
 /* A hit target wider than the line it moves. Four pixels of border is

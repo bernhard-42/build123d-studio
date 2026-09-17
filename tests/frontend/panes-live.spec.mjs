@@ -104,7 +104,7 @@ test.describe("the variable explorer shows the namespace", () => {
     sidecar.send("vars.data", { variables: VARIABLES });
     await expect(page.locator(".var-row .var-name")).toHaveCount(2);
     // Opening b asks the sidecar for its children; answer with one.
-    await page.locator(".var-row", { hasText: "b" }).click();
+    await page.locator(".var-row", { hasText: "b" }).locator(".var-twisty").click();
     const asked = await sidecar.waitFor("vars.detail");
     sidecar.send("vars.detail", {
       detail: {
@@ -121,6 +121,61 @@ test.describe("the variable explorer shows the namespace", () => {
 
     await page.locator(".var-row", { has: page.locator(".var-child-name") }).click({ button: "right" });
     await expect(page.locator(".context-menu-item", { hasText: "Show" })).toBeDisabled();
+  });
+
+  test("the filter box narrows the rows by name, survives a refresh, and Escape clears it", async ({ page }) => {
+    // Proof, at writing: with filterRows replaced by the unfiltered rows in
+    // render(), this fails on the count after typing.
+    const { sidecar } = await openApp(page);
+    sidecar.send("vars.data", { variables: VARIABLES });
+    await expect(page.locator(".var-row .var-name")).toHaveCount(2);
+
+    const box = page.locator(".var-filter-input");
+    await box.fill("COU");
+    await expect(page.locator(".var-row .var-name")).toHaveCount(1);
+    await expect(page.locator(".var-row .var-name").first()).toContainText("count");
+
+    // The kernel goes idle and sends the namespace again: the filter stays.
+    sidecar.send("vars.data", { variables: VARIABLES });
+    await expect(page.locator(".var-row .var-name")).toHaveCount(1);
+    await expect(box).toHaveValue("COU");
+
+    await box.fill("zzz");
+    await expect(page.locator(".var-empty")).toHaveText('No variable matches "zzz".');
+
+    await box.press("Escape");
+    await expect(box).toHaveValue("");
+    await expect(page.locator(".var-row .var-name")).toHaveCount(2);
+  });
+
+  test("a click on Name or Type sorts, a second reverses, a third restores the kernel's order", async ({ page }) => {
+    // Proof, at writing: with sortRows replaced by the unsorted rows in
+    // render(), this fails on the first order.
+    const { sidecar } = await openApp(page);
+    sidecar.send("vars.data", { variables: VARIABLES });
+    await expect(page.locator(".var-row .var-name")).toHaveCount(2);
+    const names = () => page.locator(".var-row .var-name").allTextContents();
+    const plain = (texts) => texts.map((t) => t.replace(/[^a-z_0-9]/gi, ""));
+
+    // The kernel's order: b, count.
+    expect(plain(await names())).toEqual(["b", "count"]);
+
+    const nameHeader = page.locator(".var-header th", { hasText: "Name" });
+    await nameHeader.click();
+    expect(plain(await names())).toEqual(["b", "count"]);
+    await expect(nameHeader.locator(".var-sort-asc")).toHaveCount(1);
+    await nameHeader.click();
+    expect(plain(await names())).toEqual(["count", "b"]);
+    await expect(nameHeader.locator(".var-sort-desc")).toHaveCount(1);
+    await nameHeader.click();
+    expect(plain(await names())).toEqual(["b", "count"]);
+    await expect(nameHeader.locator(".icon")).toHaveCount(0);
+
+    // Type: Box before int.
+    await page.locator(".var-header th", { hasText: "Type" }).click();
+    expect(plain(await names())).toEqual(["b", "count"]);
+    await page.locator(".var-header th", { hasText: "Type" }).click();
+    expect(plain(await names())).toEqual(["count", "b"]);
   });
 
   test("a vars.data frame becomes rows", async ({ page }) => {
@@ -165,10 +220,88 @@ test.describe("the variable explorer shows the namespace", () => {
     sidecar.send("vars.data", { variables: VARIABLES });
     await expect(page.locator(".var-row .var-name")).toHaveCount(2);
 
-    await page.locator(".var-row").nth(0).click();
+    // The chevron opens the row; a click on the name selects it and nothing
+    // more - see the selection tests above.
+    await page.locator(".var-row").nth(0).locator(".var-twisty").click();
 
     const detail = await sidecar.waitFor("vars.detail");
     expect(detail.path, "the expansion asked about the wrong row").toEqual(["b"]);
+  });
+
+  test("a click on the name selects the row and does not open it", async ({ page }) => {
+    // Proof, at writing: with the twisty's stopPropagation removed and the
+    // old head click restored, this fails on the vars.detail frame arriving.
+    const { sidecar } = await openApp(page);
+    sidecar.send("vars.data", { variables: VARIABLES });
+    await expect(page.locator(".var-row .var-name")).toHaveCount(2);
+
+    await page.locator(".var-row", { hasText: "b" }).click();
+    await expect(page.locator(".var-row", { hasText: "b" })).toHaveClass(/var-selected/);
+    await expect(page.locator(".var-row", { hasText: "count" })).not.toHaveClass(/var-selected/);
+    await page.waitForTimeout(200);
+    expect(sidecar.received.filter((f) => f.type === "vars.detail")).toHaveLength(0);
+    await expect(page.locator(".var-child-name")).toHaveCount(0);
+  });
+
+  test("Cmd-click adds to the selection, and Show and Copy act on all of it", async ({ page }) => {
+    // Proof, at writing: with variables.join replaced by variables[0] in
+    // main.js, this fails on the show line.
+    const { sidecar } = await openApp(page);
+    sidecar.send("vars.data", { variables: VARIABLES });
+    await expect(page.locator(".var-row .var-name")).toHaveCount(2);
+
+    await page.locator(".var-row", { hasText: "b" }).click();
+    await page.locator(".var-row", { hasText: "count" }).click({ modifiers: ["Meta"] });
+    await expect(page.locator(".var-row.var-selected")).toHaveCount(2);
+
+    await page.locator(".var-row", { hasText: "count" }).click({ button: "right" });
+    await page.locator(".context-menu-item", { hasText: "Copy" }).click();
+    const copied = await page.evaluate(() =>
+      globalThis.__NEUTRALINO_STUB__.calls().filter((c) => c.name === "clipboard.writeText").map((c) => c.args[0]));
+    expect(copied).toEqual(["b, count"]);
+
+    await page.locator(".var-row", { hasText: "b" }).click({ button: "right" });
+    await page.locator(".context-menu-item", { hasText: "Show" }).click();
+    const frame = await sidecar.waitFor("kernel.execute");
+    expect(frame.code).toBe("from build123d_studio import show; show(b, count)");
+  });
+
+  test("Shift-click extends the row selection and cancels the browser's text selection", async ({ page }) => {
+    // The browser extends its own selection on a Shift-click - the rows in
+    // between flashed blue on macOS - unless the mousedown is cancelled. A
+    // synthetic click in this harness does not extend a selection, so what
+    // is held is the cancellation itself: dispatchEvent answers false for a
+    // cancelled event. Proof, at writing: with the shift mousedown
+    // preventDefault removed, this fails on `cancelled`.
+    const { sidecar } = await openApp(page);
+    sidecar.send("vars.data", { variables: VARIABLES });
+    await expect(page.locator(".var-row .var-name")).toHaveCount(2);
+
+    await page.locator(".var-row", { hasText: "b" }).click();
+    await page.locator(".var-row", { hasText: "count" }).click({ modifiers: ["Shift"] });
+    await expect(page.locator(".var-row.var-selected")).toHaveCount(2);
+
+    const cancelled = await page.evaluate(() => {
+      const row = [...document.querySelectorAll(".var-row")].find((r) => r.textContent.includes("count"));
+      const shifted = new MouseEvent("mousedown", { bubbles: true, cancelable: true, shiftKey: true });
+      const plain = new MouseEvent("mousedown", { bubbles: true, cancelable: true });
+      return { shifted: !row.dispatchEvent(shifted), plain: !row.dispatchEvent(plain) };
+    });
+    expect(cancelled).toEqual({ shifted: true, plain: false });
+  });
+
+  test("a right-click outside the selection selects that row alone", async ({ page }) => {
+    const { sidecar } = await openApp(page);
+    sidecar.send("vars.data", { variables: VARIABLES });
+    await expect(page.locator(".var-row .var-name")).toHaveCount(2);
+
+    await page.locator(".var-row", { hasText: "b" }).click();
+    await page.locator(".var-row", { hasText: "count" }).click({ button: "right" });
+    await expect(page.locator(".var-row.var-selected")).toHaveCount(1);
+    await expect(page.locator(".var-row", { hasText: "count" })).toHaveClass(/var-selected/);
+    await page.locator(".context-menu-item", { hasText: "Show" }).click();
+    const frame = await sidecar.waitFor("kernel.execute");
+    expect(frame.code).toBe("from build123d_studio import show; show(count)");
   });
 });
 

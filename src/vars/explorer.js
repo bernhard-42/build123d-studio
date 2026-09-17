@@ -1,4 +1,6 @@
 import { getSetting, setSetting } from "../store.js";
+import { filterRows } from "./filter.js";
+import { nextOrder, sortRows } from "./sort.js";
 import { columnWidths, isUnder, pageInfo, pathKey, resized } from "./tree.js";
 import { detailFor, reset as resetFrames, scopeRows } from "./frames.js";
 import * as ipc from "../ipc.js";
@@ -38,6 +40,57 @@ let source = "kernel";
 
 function paneElement() {
   return document.getElementById("pane-vars");
+}
+
+// What is typed into the filter, and which column the rows are sorted by.
+// Session state, not settings: both are for finding something in a long
+// namespace now, not preferences about the pane. See sort.js for the cycle.
+let filter = "";
+let order = null;
+
+// The selected top-level rows, by name, and the one a Shift-click extends
+// from. Selection is what Show and Copy act on. Only top-level rows can be
+// selected: a child is addressed by position and has no name to show or copy.
+const selected = new Set();
+let anchor = null;
+
+/**
+ * The part of the pane render() rebuilds. The filter box sits above it and is
+ * built once, so typing into it survives every refresh the kernel sends.
+ */
+function bodyElement() {
+  const pane = paneElement();
+  let body = pane.querySelector(".var-body");
+  if (body === null) {
+    const bar = document.createElement("div");
+    bar.className = "var-filter";
+    const input = document.createElement("input");
+    input.type = "search";
+    input.className = "var-filter-input";
+    input.placeholder = "Filter";
+    input.setAttribute("aria-label", "Filter variables");
+    input.spellcheck = false;
+    input.addEventListener("input", () => {
+      filter = input.value;
+      render();
+    });
+    // Escape empties it and gives the keyboard back to the editor, which is
+    // where the next keystroke after finding something usually belongs.
+    input.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        input.value = "";
+        filter = "";
+        render();
+        input.blur();
+      }
+    });
+    bar.append(input);
+    body = document.createElement("div");
+    body.className = "var-body";
+    pane.append(bar, body);
+  }
+  return body;
 }
 
 function formatSize(size) {
@@ -342,7 +395,28 @@ function rowsFor(row, path, depth) {
 
   if (row.expandable !== false) {
     head.classList.add("var-openable");
-    head.addEventListener("click", () => toggle(path));
+    // The chevron opens and closes; nothing else on the row does. A click on
+    // the name used to do both, so looking at a shape's children also marked
+    // it, and there was no way to mark one without opening it.
+    twisty.addEventListener("click", (event) => {
+      event.stopPropagation();
+      toggle(path);
+    });
+  }
+  if (depth === 0) {
+    if (selected.has(row.name)) {
+      head.classList.add("var-selected");
+    }
+    // A Shift-click is a range of rows, not a range of text: the browser would
+    // otherwise extend its own selection from the last click to this one and
+    // flash the rows in between blue before the re-render takes it away. A
+    // plain drag across the pane still selects text.
+    head.addEventListener("mousedown", (event) => {
+      if (event.shiftKey) {
+        event.preventDefault();
+      }
+    });
+    head.addEventListener("click", (event) => select(row.name, event));
   }
   out.push(head);
 
@@ -353,7 +427,7 @@ function rowsFor(row, path, depth) {
 }
 
 function render() {
-  const pane = paneElement();
+  const pane = bodyElement();
   pane.replaceChildren();
 
   if (rows.length === 0) {
@@ -364,12 +438,21 @@ function render() {
     return;
   }
 
+  const shown = filterRows(rows, filter);
+  if (shown.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "var-empty";
+    empty.textContent = `No variable matches "${filter.trim()}".`;
+    pane.append(empty);
+    return;
+  }
+
   const table = document.createElement("table");
   table.className = "var-table";
   table.append(columnGroup(), header());
 
   const tbody = document.createElement("tbody");
-  for (const row of rows) {
+  for (const row of sortRows(shown, order)) {
     tbody.append(...rowsFor(row, [row.name], 0));
   }
   table.append(tbody);
@@ -408,11 +491,29 @@ function header() {
   for (const [index, title] of ["Name", "Type", "Value"].entries()) {
     const th = document.createElement("th");
     th.textContent = title;
+    // Name and Type sort on a click; Value does not, because a repr is not
+    // something an order over means anything. The sorted column shows a
+    // chevron, pointing the way the rows run.
+    if (index < 2) {
+      const column = index === 0 ? "name" : "type";
+      th.classList.add("var-sortable");
+      if (order !== null && order.column === column) {
+        const chevron = document.createElement("span");
+        chevron.className = `icon icon-chevron var-sort-${order.direction}`;
+        th.append(" ", chevron);
+      }
+      th.addEventListener("click", () => {
+        order = nextOrder(order, column);
+        render();
+      });
+    }
     // The last boundary is the edge of the pane, which the splitter already
     // owns, so only the first two columns get a grip.
     if (index < 2) {
       const grip = document.createElement("span");
       grip.className = "var-grip";
+      // A grab of the boundary is not a click on the header.
+      grip.addEventListener("click", (event) => event.stopPropagation());
       grip.addEventListener("pointerdown", (event) =>
         startResize(event, index === 0 ? "name" : "type"),
       );
@@ -449,6 +550,69 @@ function startResize(event, column) {
   };
   window.addEventListener("pointermove", onMove);
   window.addEventListener("pointerup", onUp);
+}
+
+/**
+ * A click on a top-level row: plain selects it alone, Cmd/Ctrl toggles it,
+ * Shift extends from the last plain click over the rows as shown.
+ */
+function select(name, event) {
+  const toggling = event.metaKey || event.ctrlKey;
+  if (event.shiftKey && anchor !== null) {
+    const shown = visibleNames();
+    const [from, to] = [shown.indexOf(anchor), shown.indexOf(name)];
+    if (from !== -1 && to !== -1) {
+      if (!toggling) {
+        selected.clear();
+      }
+      for (const between of shown.slice(Math.min(from, to), Math.max(from, to) + 1)) {
+        selected.add(between);
+      }
+      render();
+      return;
+    }
+  }
+  if (toggling) {
+    if (selected.has(name)) {
+      selected.delete(name);
+    } else {
+      selected.add(name);
+    }
+  } else {
+    selected.clear();
+    selected.add(name);
+  }
+  anchor = name;
+  render();
+}
+
+/** The top-level names in the order the pane shows them. */
+function visibleNames() {
+  return sortRows(filterRows(rows, filter), order).map((row) => row.name);
+}
+
+/**
+ * The names a right-click acts on, in the order the pane shows them.
+ *
+ * A right-click on a row outside the selection selects that row alone first -
+ * what every list does - so what the menu offers is what is highlighted.
+ *
+ * @param {EventTarget} target what was right-clicked
+ * @returns {string[]} empty when the click was not on a top-level row
+ */
+export function selectionFor(target) {
+  const row = typeof target?.closest === "function" ? target.closest("tr.var-row") : null;
+  const name = row?.dataset.variable;
+  if (typeof name !== "string" || name === "") {
+    return [];
+  }
+  if (!selected.has(name)) {
+    selected.clear();
+    selected.add(name);
+    anchor = name;
+    render();
+  }
+  return visibleNames().filter((shown) => selected.has(shown));
 }
 
 function toggle(path) {
@@ -530,6 +694,11 @@ export function initVariables() {
     // A name that has gone, or been rebound, must not show stale detail - and
     // neither must anything that was open underneath it.
     const present = new Set(rows.map((row) => row.name));
+    for (const name of [...selected]) {
+      if (!present.has(name)) {
+        selected.delete(name);
+      }
+    }
     for (const key of [...expanded]) {
       if (!present.has(JSON.parse(key)[0])) {
         expanded.delete(key);
