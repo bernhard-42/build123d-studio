@@ -148,6 +148,39 @@ test.describe("the variable explorer shows the namespace", () => {
     await expect(page.locator(".var-row .var-name")).toHaveCount(2);
   });
 
+  test("the filter row is the tab row's height and stays put while the table scrolls", async ({ page }) => {
+    // It used to be sticky inside the scrolling pane, above the pane's own
+    // padding: rows scrolled through the gap over it. A fixed row over a
+    // scrolling body has no gap, and one CSS variable gives both rows one
+    // height so the two panes line up.
+    const { sidecar } = await openApp(page);
+    const many = Array.from({ length: 200 }, (_, i) => ({
+      name: `v${i}`, type: "int", module: "builtins", size: null, repr: String(i), label: "", expandable: false,
+    }));
+    sidecar.send("vars.data", { variables: many });
+    await expect(page.locator(".var-row .var-name")).toHaveCount(200);
+
+    const before = await page.evaluate(() => ({
+      tabs: document.getElementById("console-tabs").getBoundingClientRect().height,
+      filter: document.querySelector(".var-filter").getBoundingClientRect(),
+      pane: document.getElementById("pane-vars").getBoundingClientRect(),
+    }));
+    expect(before.filter.height).toBe(before.tabs);
+    expect(before.filter.top).toBe(before.pane.top);
+
+    await page.evaluate(() => {
+      const body = document.querySelector(".var-body");
+      body.scrollTop = body.scrollHeight;
+    });
+    const after = await page.evaluate(() => ({
+      filterTop: document.querySelector(".var-filter").getBoundingClientRect().top,
+      paneTop: document.getElementById("pane-vars").getBoundingClientRect().top,
+      scrolled: document.querySelector(".var-body").scrollTop,
+    }));
+    expect(after.scrolled).toBeGreaterThan(0);
+    expect(after.filterTop).toBe(after.paneTop);
+  });
+
   test("a click on Name or Type sorts, a second reverses, a third restores the kernel's order", async ({ page }) => {
     // Proof, at writing: with sortRows replaced by the unsorted rows in
     // render(), this fails on the first order.

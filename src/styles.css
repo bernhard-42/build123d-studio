@@ -18,6 +18,9 @@
   --accent: #0e639c;
   --accent-fg: #ffffff;
   --hover: rgba(255, 255, 255, 0.06);
+  /* The console's tab row and the explorer's filter row are one height, so
+     the two panes line up: this is the row, border included. */
+  --tab-row-height: 24px;
   /* A selected row, a step stronger than a hover so the two read apart. */
   --selected: rgba(255, 255, 255, 0.14);
   --row-alt: rgba(255, 255, 255, 0.03);
@@ -976,6 +979,8 @@ html body {
   display: flex;
   flex: 0 0 auto;
   align-items: stretch;
+  box-sizing: border-box;
+  height: var(--tab-row-height);
   border-bottom: 1px solid var(--border);
   background: var(--bg);
 }
@@ -1147,27 +1152,40 @@ html body {
   color: var(--fg-dim);
 }
 
+/* A fixed row above a scrolling body - the filter never floats over the
+   table, and nothing shows through above it. */
 .pane-vars {
   grid-column: 3;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  font-size: 12px;
+}
+
+.var-body {
+  flex: 1 1 auto;
+  min-height: 0;
   overflow: auto;
   padding: 4px 0 4px 3px;
-  font-size: 12px;
 }
 
 /* The filter box, above the table and outside what a refresh rebuilds. Sticky,
    so it stays at hand while a long namespace scrolls under it. */
 .var-filter {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  padding: 2px 6px 4px 3px;
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  box-sizing: border-box;
+  height: var(--tab-row-height);
+  padding: 0 6px 0 3px;
+  border-bottom: 1px solid var(--border);
   background: var(--bg);
 }
 
 .var-filter-input {
   width: 100%;
   box-sizing: border-box;
-  padding: 2px 6px;
+  padding: 1px 6px;
   border: 1px solid var(--border);
   border-radius: 3px;
   outline: none;
