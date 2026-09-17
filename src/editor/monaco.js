@@ -1,9 +1,34 @@
-// Import the editor core and just the Python grammar, not the "monaco-editor"
-// barrel. The barrel registers every bundled language, which drags in the
-// TypeScript, CSS, HTML and JSON language services and their web workers -
-// about 9 MB of assets for an editor that only ever shows Python.
+// Import the editor core and the grammars this editor shows, not the
+// "monaco-editor" barrel. The barrel registers every bundled language, which
+// drags in the TypeScript, CSS, HTML and JSON language services and their web
+// workers - about 9 MB of assets, nearly all of it TypeScript.
+//
+// Python, YAML and TOML are Monarch grammars: highlighting, folding and
+// brackets, no worker; YAML is 3.5 kB in the bundle, TOML (ours, toml.js)
+// about the same. JSON is a language service -
+// Monaco has no plain grammar for it - and costs about 850 kB minified
+// (jsonMode 409 kB, its worker 430 kB, measured in the production build),
+// loaded when the first JSON file is opened, not at startup. It adds syntax
+// diagnostics to the highlighting, which for settings.json and snippets.json
+// is what makes it worth that.
 import * as monaco from "monaco-editor/editor/editor.api.js";
 import "monaco-editor/languages/definitions/python/register.js";
+import "monaco-editor/languages/definitions/yaml/register.js";
+import { jsonDefaults } from "monaco-editor/language/json/monaco.contribution.js";
+import "./toml.js";
+
+// JSON here is JSONC. The file anyone edits by hand is snippets.json, which
+// is VS Code's .code-snippets shape and is read with jsonc-parser: comments
+// and trailing commas are part of it, and the shipped set has both on nearly
+// every line. The service reports each as an error by default, so it is told
+// what the application's own parser accepts. One setting for every .json -
+// the service has no per-file option - which means a comment in
+// settings.json passes too; that file is written by Settings, not by hand.
+jsonDefaults.setDiagnosticsOptions({
+  ...jsonDefaults.diagnosticsOptions,
+  comments: "ignore",
+  trailingCommas: "ignore",
+});
 // The context menu, and the Cut/Copy/Paste entries that fill it.
 //
 // editor.api.js is the API and nothing else: every *contribution* - the menu,
@@ -109,6 +134,7 @@ import "monaco-editor/editor/contrib/tokenization/browser/tokenization.js";
 // still show: as of 0.56 the exports map is {"./*": "./esm/vs/*.js"}, so the
 // esm/vs prefix is added for us and spelling it out resolves to esm/vs/esm/vs.
 import EditorWorker from "monaco-editor/editor/editor.worker.js?worker";
+import JsonWorker from "monaco-editor/language/json/json.worker.js?worker";
 
 import {
   cellAt,
@@ -138,19 +164,19 @@ import * as log from "../log.js";
 import { onThemeChange, resolvedTheme } from "../theme.js";
 
 // Monaco needs a worker to do anything non-trivial off the main thread. Python
-// has no dedicated language service in monaco-editor, so the generic editor
-// worker is the only one required - which is also why the bundle stays small.
+// and YAML have no language service in monaco-editor, so the generic editor
+// worker serves them; JSON asks for its own by label.
 self.MonacoEnvironment = {
-  getWorker() {
+  getWorker(_workerId, label) {
     // The worker is what computes word-based suggestions, so when it fails to
     // start the editor loses completion and says nothing about why. Monaco
     // reports that on the console, which this application does not have. Both
     // ends are logged: that one was asked for, and that it failed if it did.
-    const worker = new EditorWorker();
+    const worker = label === "json" ? new JsonWorker() : new EditorWorker();
     worker.addEventListener("error", (event) => {
-      log.error("Monaco editor worker failed:", event.message ?? String(event));
+      log.error(`Monaco ${label} worker failed:`, event.message ?? String(event));
     });
-    log.info("Monaco editor worker started");
+    log.info(`Monaco ${label} worker started`);
     return worker;
   },
 };
@@ -1577,6 +1603,11 @@ export async function formatBufferFor(key) {
     return null;
   }
   const model = buffer.model;
+  // ruff formats Python. A STEP export, a settings.json, a YAML file were
+  // all sent to it on save and declined; now they are not sent.
+  if (model.getLanguageId() !== "python") {
+    return null;
+  }
   const lineCount = model.getLineCount();
   if (tooLargeToFormat(lineCount)) {
     // Said once per save rather than silently, because "my file stopped being

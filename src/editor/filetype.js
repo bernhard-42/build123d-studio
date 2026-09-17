@@ -49,7 +49,22 @@ export function languageFor(path) {
   if (path === null || path === undefined || path === "") {
     return "python";
   }
-  return /\.pyi?$/i.test(path) ? "python" : "plaintext";
+  if (/\.pyi?$/i.test(path)) {
+    return "python";
+  }
+  // The helper files beside a project: highlighted, and JSON also checked by
+  // Monaco's own service - neither ever reaches the Python tooling, which is
+  // gated on the language id, as the plaintext case always was.
+  if (/\.json$/i.test(path)) {
+    return "json";
+  }
+  if (/\.ya?ml$/i.test(path)) {
+    return "yaml";
+  }
+  if (/\.toml$/i.test(path)) {
+    return "toml";
+  }
+  return "plaintext";
 }
 
 /**

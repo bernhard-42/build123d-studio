@@ -120,10 +120,21 @@ test("Python files are Python", () => {
   assert.equal(languageFor("/p/PART.PY"), "python", "the suffix is not case sensitive");
 });
 
+test("JSON, YAML and TOML are highlighted as themselves, and never as Python", () => {
+  // The helper files beside a project. The Python tooling is gated on the
+  // language id, so these stay away from ruff and the language server just as
+  // plaintext does.
+  assert.equal(languageFor("/p/settings.json"), "json");
+  assert.equal(languageFor("/p/SNIPPETS.JSON"), "json");
+  assert.equal(languageFor("/p/config.yaml"), "yaml");
+  assert.equal(languageFor("/p/config.yml"), "yaml");
+  assert.equal(languageFor("/p/pyproject.toml"), "toml");
+});
+
 test("everything else is plaintext, which is the whole point", () => {
-  // Only Python is registered here, so this is not a fallback - it is the
-  // difference between reading a STEP export and reading thousands of
-  // complaints that it is not valid Python.
+  // Python, JSON and YAML are what is registered, so this is not a fallback -
+  // it is the difference between reading a STEP export and reading thousands
+  // of complaints that it is not valid Python.
   assert.equal(languageFor("/p/screw.step"), "plaintext");
   assert.equal(languageFor("/p/mesh.3mf"), "plaintext");
   assert.equal(languageFor("/p/notes.txt"), "plaintext");
@@ -132,7 +143,8 @@ test("everything else is plaintext, which is the whole point", () => {
 
 test("a name that merely contains .py is not a Python file", () => {
   assert.equal(languageFor("/p/part.py.step"), "plaintext");
-  assert.equal(languageFor("/p/pyproject.toml"), "plaintext");
+  assert.equal(languageFor("/p/pyproject.toml"), "toml");
+  assert.equal(languageFor("/p/pytest.ini"), "plaintext");
 });
 
 test("a buffer with no file yet is Python, because New file made it", () => {
