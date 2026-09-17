@@ -83,6 +83,46 @@ test.describe("the console shows what the kernel printed", () => {
 });
 
 test.describe("the variable explorer shows the namespace", () => {
+  test("Show in a row's menu runs show() on the kernel for that variable", async ({ page }) => {
+    // Proof, at writing: with the "show" branch removed from the pane's onPick
+    // in main.js, this fails waiting for the kernel.execute frame.
+    const { sidecar } = await openApp(page);
+    sidecar.send("vars.data", { variables: VARIABLES });
+    await expect(page.locator(".var-row .var-name")).toHaveCount(2);
+
+    await page.locator(".var-row", { hasText: "count" }).click({ button: "right" });
+    const show = page.locator(".context-menu-item", { hasText: "Show" });
+    await expect(show).toBeEnabled();
+    await show.click();
+
+    const frame = await sidecar.waitFor("kernel.execute");
+    expect(frame.code).toBe("from build123d_studio import show; show(count)");
+  });
+
+  test("but Show is greyed out on a row below a variable", async ({ page }) => {
+    const { sidecar } = await openApp(page);
+    sidecar.send("vars.data", { variables: VARIABLES });
+    await expect(page.locator(".var-row .var-name")).toHaveCount(2);
+    // Opening b asks the sidecar for its children; answer with one.
+    await page.locator(".var-row", { hasText: "b" }).click();
+    const asked = await sidecar.waitFor("vars.detail");
+    sidecar.send("vars.detail", {
+      detail: {
+        path: asked.path,
+        type: "Box",
+        attributes: {},
+        children: [{ name: "0", type: "Face", module: "build123d", size: null, repr: "Face", label: "top", expandable: false }],
+        offset: 0,
+        total: 1,
+        page: 50,
+      },
+    });
+    await expect(page.locator(".var-child-name")).toHaveCount(1);
+
+    await page.locator(".var-row", { has: page.locator(".var-child-name") }).click({ button: "right" });
+    await expect(page.locator(".context-menu-item", { hasText: "Show" })).toBeDisabled();
+  });
+
   test("a vars.data frame becomes rows", async ({ page }) => {
     const { sidecar } = await openApp(page);
 

@@ -111,10 +111,21 @@ test("the console offers Copy and Paste, because a terminal takes typing", () =>
   ]);
 });
 
-test("the variable explorer offers Copy alone, being read-only", () => {
-  assert.deepEqual(contextMenuItems({ pane: "variables", hasSelection: true, platform: "Darwin" }), [
-    { id: "copy", label: "Copy", shortcut: "\u2318C", enabled: true },
-  ]);
+test("the variable explorer offers Copy, and Show for a row that is a variable", () => {
+  assert.deepEqual(
+    contextMenuItems({ pane: "variables", hasSelection: true, platform: "Darwin", hasVariable: true }),
+    [
+      { id: "copy", label: "Copy", shortcut: "\u2318C", enabled: true },
+      { id: "show", label: "Show", shortcut: null, enabled: true },
+    ],
+  );
+});
+
+test("Show is greyed, not absent, where the row has no name to show", () => {
+  // A child row is addressed by position and has no Python expression; the
+  // menu keeps its shape so nothing jumps between rows.
+  const items = contextMenuItems({ pane: "variables", hasSelection: false, platform: "Darwin" });
+  assert.deepEqual(items.map((item) => [item.id, item.enabled]), [["copy", false], ["show", false]]);
 });
 
 test("the chord is written the way each platform writes it", () => {

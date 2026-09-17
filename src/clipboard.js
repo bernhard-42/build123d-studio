@@ -58,7 +58,7 @@ export function chooseTarget({ consoleFocused, editorFocused, fieldFocused }) {
  * every other application does: an item that vanishes teaches nobody that it
  * exists, and the menu jumping between one row and two is worse than a grey one.
  */
-export function contextMenuItems({ pane, hasSelection, platform }) {
+export function contextMenuItems({ pane, hasSelection, platform, hasVariable = false }) {
   const copy = { id: "copy", label: "Copy", shortcut: shortcutFor("C", platform),
     enabled: hasSelection === true };
 
@@ -73,7 +73,15 @@ export function contextMenuItems({ pane, hasSelection, platform }) {
     ];
   }
   if (pane === "variables") {
-    return [copy];
+    return [
+      copy,
+      // show(<name>) on the kernel, for the row under the pointer. Only a row
+      // that is a variable of the namespace has a name to show; a child row
+      // is addressed by position and has no expression, so it is offered
+      // greyed rather than absent - the menu should look the same wherever
+      // it opens.
+      { id: "show", label: "Show", shortcut: null, enabled: hasVariable === true },
+    ];
   }
   return [];
 }

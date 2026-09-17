@@ -290,6 +290,12 @@ function rowsFor(row, path, depth) {
 
   const head = document.createElement("tr");
   head.className = "var-row";
+  // Only a top-level row names something Python can be asked to show. Below
+  // it the path is ordinals - the third item of a dict has no expression - so
+  // a child row carries no name and the menu's Show is greyed out on it.
+  if (depth === 0) {
+    head.dataset.variable = row.name;
+  }
 
   const name = document.createElement("td");
   name.className = depth === 0 ? "var-name" : "var-name var-child-name";

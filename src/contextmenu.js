@@ -175,18 +175,33 @@ window.addEventListener("resize", closeContextMenu);
  * @param {string} pane which item table it gets - see clipboard.js
  * @param {string} platform NL_OS, for the way the shortcuts are written
  * @param {() => string} selectedText what a Copy would copy, read at click time
- * @param {(id: string, text: string) => void} onPick
+ * @param {(target: EventTarget) => string|null} [variableAt] the variable the
+ *   pointer is on, or null - the explorer's rows carry it, see explorer.js
+ * @param {(id: string, text: string, variable: string|null) => void} onPick
  */
-export function attachContextMenu({ element, pane, platform, selectedText, onPick }) {
+export function attachContextMenu({
+  element,
+  pane,
+  platform,
+  selectedText,
+  variableAt = () => null,
+  onPick,
+}) {
   element.addEventListener("contextmenu", (event) => {
     // The webview's own menu is cancelled globally in reload.js, on the way up
     // from here. This one is ours and is shown instead.
     const text = selectedText();
+    const variable = variableAt(event.target);
     showContextMenu({
       x: event.clientX,
       y: event.clientY,
-      items: contextMenuItems({ pane, hasSelection: text !== "", platform }),
-      onPick: (id) => onPick(id, text),
+      items: contextMenuItems({
+        pane,
+        hasSelection: text !== "",
+        platform,
+        hasVariable: variable !== null,
+      }),
+      onPick: (id) => onPick(id, text, variable),
     });
   });
 }

@@ -665,9 +665,18 @@ async function main() {
     // HTML, and what the user dragged across is what Copy means - clamped to
     // this pane, so a drag that reached another one copies only this part.
     selectedText: () => textWithin(varsPane),
-    onPick: (id, text) => {
+    variableAt: (target) => {
+      const row = typeof target?.closest === "function" ? target.closest("tr.var-row") : null;
+      const name = row?.dataset.variable;
+      return typeof name === "string" && name !== "" ? name : null;
+    },
+    onPick: (id, text, variable) => {
       if (id === "copy") {
         copyText(text);
+      } else if (id === "show" && variable !== null) {
+        // Through the same execute as a Run, echoed into the console. The
+        // import is there for a namespace that never imported show itself.
+        execute(`from build123d_studio import show; show(${variable})`);
       }
     },
   });
