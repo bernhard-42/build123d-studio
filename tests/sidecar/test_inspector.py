@@ -465,6 +465,115 @@ class InspectorTest(NamespaceFixture, unittest.TestCase):
 
         self.assertEqual(attributes, {"topology": "6 faces, 12 edges, 8 vertices"})
 
+    def test_a_bounding_box_opens_to_its_extent(self):
+        """A BoundBox used to open to "no further detail" - the one thing it
+        is for. Its fields are plain attributes, read as they are."""
+
+        class Vector:
+            def __init__(self, *xyz):
+                self.xyz = xyz
+
+            def __repr__(self):
+                return f"Vector{self.xyz}"
+
+        class BoundBox:
+            min = Vector(-0.5, -1, -1.5)
+            max = Vector(0.5, 1, 1.5)
+            size = Vector(1, 2, 3)
+            diagonal = 3.7416573867739413
+
+            # A method on the real one, where the others are attributes - and
+            # a fake with it as an attribute passed while the pane showed
+            # "<bound method BoundBox.center of ...>".
+            def center(self):
+                return Vector(0, 0, 0)
+
+        self.given(bb=BoundBox())
+
+        self.assertEqual(
+            self.detail(["bb"])["attributes"],
+            {
+                "min": "Vector(-0.5, -1, -1.5)",
+                "max": "Vector(0.5, 1, 1.5)",
+                "size": "Vector(1, 2, 3)",
+                "center": "Vector(0, 0, 0)",
+                "diagonal": "3.7416573867739413",
+            },
+        )
+
+    def test_a_vertex_opens_to_its_coordinates(self):
+        """Every count of a vertex is implied, so it used to open to nothing."""
+
+        class Vertex:
+            X, Y, Z = 1.0, 2.0, 3.0
+
+        self.given(v=Vertex())
+
+        self.assertEqual(self.detail(["v"])["attributes"], {"X": "1.0", "Y": "2.0", "Z": "3.0"})
+
+    def test_a_pos_and_a_rot_open_as_the_locations_they_are(self):
+        """Pos and Rot subclass Location; a table keyed by the exact type
+        name missed both. The lookup walks the bases."""
+
+        class Location:
+            position = "Vector(1, 2, 3)"
+            orientation = "Vector(0, 0, 0)"
+
+        class Pos(Location):
+            pass
+
+        self.given(p=Pos())
+
+        self.assertEqual(
+            self.detail(["p"])["attributes"],
+            {"position": "'Vector(1, 2, 3)'", "orientation": "'Vector(0, 0, 0)'"},
+        )
+
+    def test_a_curve_opens_to_its_start_and_end(self):
+        """What `wire @ 0` and `wire @ 1` are in a script, without typing
+        them - and no "0 faces" in front of a curve's counts."""
+
+        # Not _FakeShape: its __init__ swaps in a fresh class and the two
+        # methods this test is about would go with it.
+        class Wire:
+            def faces(self):
+                return []
+
+            def edges(self):
+                return [None, None]
+
+            def vertices(self):
+                return [None, None, None]
+
+            def start_point(self):
+                return "Vector(0, 0, 0)"
+
+            def end_point(self):
+                return "Vector(2, 2, 0)"
+
+        self.given(w=Wire())
+
+        self.assertEqual(
+            self.detail(["w"])["attributes"],
+            {"start": "'Vector(0, 0, 0)'", "end": "'Vector(2, 2, 0)'", "topology": "2 edges, 3 vertices"},
+        )
+
+    def test_a_vector_and_a_location_open_to_their_components(self):
+        class Vector:
+            X, Y, Z, length = 1.0, 2.0, 3.0, 3.7416573867739413
+
+        class Location:
+            position = "Vector(1, 2, 3)"
+            orientation = "Vector(10, 20, 30)"
+
+        self.given(v=Vector(), loc=Location())
+
+        self.assertEqual(self.detail(["v"])["attributes"], {"X": "1.0", "Y": "2.0", "Z": "3.0", "length": "3.7416573867739413"})
+        self.assertEqual(
+            self.detail(["loc"])["attributes"],
+            {"position": "'Vector(1, 2, 3)'", "orientation": "'Vector(10, 20, 30)'"},
+        )
+
     def test_a_face_is_not_told_that_it_has_one_face(self):
         """Its own definition fixes that, so the count says nothing."""
         self.given(f=_FakeShape("Face", faces=1, edges=4, vertices=4))

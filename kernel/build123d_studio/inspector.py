@@ -135,6 +135,21 @@ IMPLIED_COUNTS = {
     "Face": ("faces",),
 }
 
+# The small geometry types, whose contents are a few attributes rather than a
+# topology: what a click on one should list. A Vertex is a shape with every
+# count implied, so it opened to nothing; its coordinates are what it is. By type name, as the counts are,
+# so build123d is never imported here; every entry is a plain attribute read -
+# measured on real objects, none of these computes anything. A BoundBox used to
+# open to "no further detail", which is the one thing a bounding box is for.
+GEOMETRY_ATTRIBUTES = {
+    "Vertex": ("X", "Y", "Z"),
+    "BoundBox": ("min", "max", "size", "center", "diagonal"),
+    "Vector": ("X", "Y", "Z", "length"),
+    "Location": ("position", "orientation"),
+    "Axis": ("position", "direction"),
+    "Plane": ("origin", "x_dir", "y_dir", "z_dir"),
+}
+
 # How much of a label is worth showing beside a name. A label is meant to be an
 # identifier a person chose, so a long one is either a sentence or a mistake,
 # and either way the column is not where it should be read.
@@ -613,11 +628,59 @@ def _build123d_details(value):
     details = {}
     deadline = time.monotonic() + DETAIL_BUDGET
     skipped = []
-    implied = IMPLIED_COUNTS.get(type(value).__name__, ())
+    kind = type(value).__name__
+
+    # A geometry type lists its attributes and nothing else: it has no faces to
+    # count. Under the same budget as everything else, for the same reason.
+    # Looked up along the bases, not by the exact name: Pos and Rot are
+    # Locations - `Pos(1, 2, 3)` is `type Pos, base Location` - and opened to
+    # nothing while a Location opened to its position and orientation.
+    geometry = next((cls.__name__ for cls in type(value).__mro__ if cls.__name__ in GEOMETRY_ATTRIBUTES), None)
+    if geometry is not None:
+        for attribute in GEOMETRY_ATTRIBUTES[geometry]:
+            if time.monotonic() >= deadline:
+                skipped.append(attribute)
+                continue
+            try:
+                item = getattr(value, attribute)
+                # BoundBox.center is a method where min and max are attributes;
+                # the table names what to show, not how the type spells it.
+                if callable(item):
+                    item = item()
+                details[attribute] = _short_repr(item)
+            except Exception:  # noqa: BLE001 - an attribute that raises is left out
+                pass
+        if len(skipped) > 0:
+            details["not computed"] = ", ".join(skipped) + f" (over {DETAIL_BUDGET:.0f}s)"
+        return details
+
+    # Anything one-dimensional - an Edge, a Wire, a Line, a Spline, whatever
+    # build123d makes of a curve - answers start_point() and end_point(), and
+    # faces and solids do not: the pair is the test, not a list of type names.
+    # Both are a parameter evaluation, measured well under a millisecond on
+    # each of them. `line @ 0` and `line @ 1` in a script are these two points.
+    one_d = callable(getattr(value, "start_point", None)) and callable(
+        getattr(value, "end_point", None)
+    )
+    if one_d:
+        for label, attribute in (("start", "start_point"), ("end", "end_point")):
+            if time.monotonic() >= deadline:
+                skipped.append(label)
+                continue
+            try:
+                details[label] = _short_repr(getattr(value, attribute)())
+            except Exception:  # noqa: BLE001 - a curve that cannot say is left without
+                pass
+
+    implied = IMPLIED_COUNTS.get(kind, ())
     counts = []
 
     for label, attribute in (("faces", "faces"), ("edges", "edges"), ("vertices", "vertices")):
         if label in implied:
+            continue
+        # A curve has no faces, and "0 faces" in front of its counts said so
+        # on every one of them.
+        if label == "faces" and one_d:
             continue
         if time.monotonic() >= deadline:
             skipped.append(label)
