@@ -163,3 +163,65 @@ export function freeName(base, extension, existing = []) {
   // answer; the dialog refuses the duplicate and the user types something.
   return candidate("");
 }
+
+/**
+ * Whether a file name passes the tree's filter.
+ *
+ * A visual filter over what the tree already holds, never a reason to read a
+ * directory. Three shapes of query, from three ways of looking for a file:
+ * `robot` - somewhere in the name, case-insensitively, for the file whose
+ * start one does not remember; `.py` or `.stl` - the extension, matched at
+ * the end and not as a substring, so `.py` does not pull in pyproject.toml
+ * or a .pyc; and nothing, which passes everything.
+ *
+ * @param {string} name a file's name, no path
+ * @param {string} query what was typed, untrimmed
+ */
+export function matchesTreeFilter(name, query) {
+  const needle = query.trim().toLowerCase();
+  if (needle === "") {
+    return true;
+  }
+  const lowered = name.toLowerCase();
+  if (needle.startsWith(".") && needle.length > 1) {
+    return lowered.endsWith(needle);
+  }
+  return lowered.includes(needle);
+}
+
+/**
+ * Which entries of one folder to show under a filter, given what is known
+ * about its subfolders.
+ *
+ * A file shows when its name matches. A folder shows when it has a matching
+ * descendant among what has been read, or when it has not been read at all -
+ * nothing is known about its contents and hiding it would say there is
+ * nothing there. A folder that has been read and holds no match is hidden,
+ * with everything under it.
+ *
+ * @param {string} path the folder
+ * @param {(path: string) => Array<{name: string, isDirectory: boolean}>|undefined} listing
+ *   the entries read for a folder, or undefined when it was never read
+ * @param {(parent: string, name: string) => string} join
+ * @param {string} query
+ * @returns {Array<{name: string, isDirectory: boolean}>}
+ */
+export function filteredEntries(path, listing, join, query) {
+  const entries = listing(path);
+  if (entries === undefined) {
+    return [];
+  }
+  if (query.trim() === "") {
+    return entries;
+  }
+  return entries.filter((entry) => {
+    if (!entry.isDirectory) {
+      return matchesTreeFilter(entry.name, query);
+    }
+    const full = join(path, entry.name);
+    if (listing(full) === undefined) {
+      return true;
+    }
+    return filteredEntries(full, listing, join, query).length > 0;
+  });
+}

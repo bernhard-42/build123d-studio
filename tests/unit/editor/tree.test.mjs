@@ -8,7 +8,16 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
 
-import { baseName, isHidden, isInside, joinPath, separatorOf, visibleEntries } from "../../../src/editor/tree.js";
+import {
+  baseName,
+  filteredEntries,
+  isHidden,
+  isInside,
+  joinPath,
+  matchesTreeFilter,
+  separatorOf,
+  visibleEntries,
+} from "../../../src/editor/tree.js";
 
 const dir = (name) => ({ name, isDirectory: true });
 const file = (name) => ({ name, isDirectory: false });
@@ -113,4 +122,58 @@ test("the folder itself is not inside itself, and nothing is inside nothing", ()
   assert.equal(isInside("/proj", "/proj"), false);
   assert.equal(isInside(null, "/proj/a.py"), false);
   assert.equal(isInside("/proj", null), false);
+});
+
+// --- the filter ------------------------------------------------------------
+//
+// Proof, at writing: with the extension branch removed from matchesTreeFilter,
+// "a query starting with a dot is an extension" fails on pyproject.toml; with
+// the unread-folder clause removed from filteredEntries, "a folder never read
+// stays" fails.
+
+
+test("a query matches anywhere in the name, case-insensitively", () => {
+  assert.equal(matchesTreeFilter("MyRobotArm.py", "robot"), true);
+  assert.equal(matchesTreeFilter("plate.step", "robot"), false);
+  assert.equal(matchesTreeFilter("plate.step", ""), true);
+  assert.equal(matchesTreeFilter("plate.step", "   "), true);
+});
+
+test("a query starting with a dot is an extension, matched at the end", () => {
+  assert.equal(matchesTreeFilter("robot.py", ".py"), true);
+  assert.equal(matchesTreeFilter("ROBOT.PY", ".py"), true);
+  assert.equal(matchesTreeFilter("pyproject.toml", ".py"), false);
+  assert.equal(matchesTreeFilter("robot.pyc", ".py"), false);
+  assert.equal(matchesTreeFilter("bus.stl", ".stl"), true);
+  // A lone dot is not an extension; it is a substring like any other.
+  assert.equal(matchesTreeFilter("README", "."), false);
+  assert.equal(matchesTreeFilter("a.b", "."), true);
+});
+
+test("files that match show, folders show when something under them does", () => {
+  const tree = {
+    "/p": [
+      { name: "exports", isDirectory: true },
+      { name: "src", isDirectory: true },
+      { name: "robot.py", isDirectory: false },
+      { name: "notes.txt", isDirectory: false },
+    ],
+    "/p/exports": [{ name: "bus.stl", isDirectory: false }],
+    "/p/src": [{ name: "arm.py", isDirectory: false }],
+  };
+  const listing = (path) => tree[path];
+  const join = (a, b) => `${a}/${b}`;
+
+  assert.deepEqual(filteredEntries("/p", listing, join, ".py").map((e) => e.name), ["src", "robot.py"]);
+  assert.deepEqual(filteredEntries("/p", listing, join, ".stl").map((e) => e.name), ["exports"]);
+  assert.deepEqual(filteredEntries("/p", listing, join, "robot").map((e) => e.name), ["robot.py"]);
+  assert.deepEqual(filteredEntries("/p", listing, join, "").map((e) => e.name), ["exports", "src", "robot.py", "notes.txt"]);
+});
+
+test("a folder never read stays: nothing is known about what it holds", () => {
+  const tree = {
+    "/p": [{ name: "unknown", isDirectory: true }, { name: "a.py", isDirectory: false }],
+  };
+  const shown = filteredEntries("/p", (p) => tree[p], (a, b) => `${a}/${b}`, "zzz");
+  assert.deepEqual(shown.map((e) => e.name), ["unknown"]);
 });

@@ -68,6 +68,45 @@ test.describe("clicking a file", () => {
     await expect(page.locator(".confirm-overlay")).toBeHidden();
   });
 
+  test("the filter box narrows the tree to what has been opened: a name, or an extension", async ({ page }) => {
+    // Proof, at writing: with filteredEntries replaced by the plain listing
+    // in rowsUnder, this fails on the count after typing.
+    await openApp(page, {
+      files: { ...FILES, [`${PROJECT}/exports/bus.stl`]: "solid bus\n" },
+    });
+    const names = () => page.locator(".tree-row").allTextContents();
+    await expect.poll(() => names()).toEqual(expect.arrayContaining(["exports", "hinge.py", "part.py"]));
+
+    const box = page.locator("#tree-filter");
+    await box.fill("HINGE");
+    // hinge.py, and the folder that has never been read - nothing is known
+    // about what it holds, so it stays.
+    await expect(page.locator(".tree-row")).toHaveCount(2);
+    expect(await names()).toEqual(expect.arrayContaining(["exports", "hinge.py"]));
+    await expect(page.locator(".tree-row", { hasText: "part.py" })).toHaveCount(0);
+
+    // An extension: both scripts, and the unread folder.
+    await box.fill(".py");
+    await expect(page.locator(".tree-row")).toHaveCount(3);
+
+    // Open the folder under the filter: only what matches shows in it, and
+    // with nothing matching the folder itself goes.
+    await row(page, "exports").click();
+    await expect(page.locator(".tree-row", { hasText: "bus.stl" })).toHaveCount(0);
+    await expect(page.locator(".tree-row", { hasText: "exports" })).toHaveCount(0);
+
+    await box.fill(".stl");
+    await expect(page.locator(".tree-row")).toHaveCount(2);
+    expect(await names()).toEqual(expect.arrayContaining(["exports", "bus.stl"]));
+
+    await box.fill("zzz");
+    await expect(page.locator(".tree-empty")).toContainText('No file matches "zzz"');
+
+    await box.press("Escape");
+    await expect(box).toHaveValue("");
+    await expect(page.locator(".tree-row")).toHaveCount(4);
+  });
+
   test("but a right click opens nothing", async ({ page }) => {
     // The difference that makes the menu usable on a file somebody has no
     // intention of opening.

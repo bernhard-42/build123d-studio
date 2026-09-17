@@ -527,6 +527,46 @@ html body {
   font-size: 12px;
 }
 
+/* The same row as the explorer's filter: fixed, the tab row's height. */
+.tree-filter {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  box-sizing: border-box;
+  height: var(--tab-row-height);
+  padding: 0 6px 0 6px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.tree-filter-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  outline: none;
+  background: transparent;
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 12px;
+}
+
+.tree-filter-input:focus {
+  border-color: var(--accent);
+}
+
+.tree-filter-input::placeholder {
+  color: var(--fg-dim);
+}
+
+.tree-empty {
+  margin: 0;
+  padding: 8px 10px;
+  color: var(--fg-dim);
+  font-size: 12px;
+}
+
 .tree-problem {
   margin: 0;
   padding: 2px 6px;

@@ -115,6 +115,12 @@
               <span class="icon icon-refresh"></span>
             </button>
           </div>
+          <!-- A visual filter over what the tree already holds - `robot`, or
+               `.py` for an extension. Never a reason to read a folder. -->
+          <div class="tree-filter">
+            <input type="search" class="tree-filter-input" id="tree-filter" placeholder="Filter visible files"
+                   aria-label="Filter files" spellcheck="false">
+          </div>
           <!-- Why a name was refused, under the header and above the row it is
                about. Silence would look like Enter not working. -->
           <p class="tree-problem" id="tree-problem" hidden></p>

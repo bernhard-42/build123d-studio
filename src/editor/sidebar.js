@@ -21,6 +21,7 @@ import {
   freeName,
   isInside,
   joinPath,
+  filteredEntries,
   nameProblem,
   parentOf,
   separatorOf,
@@ -69,11 +70,17 @@ let marked = null;
 const expanded = new Set();
 const children = new Map();
 
+// What is typed into the filter box. A visual filter over the entries the
+// tree holds - see filteredEntries in tree.js - and session state, not a
+// setting.
+let filter = "";
+
 export function initSidebar({ onOpenFile, onRefreshed = () => {}, onRenamed = () => {} }) {
   openFile = onOpenFile;
   refreshed = onRefreshed;
   renamedOnDisk = onRenamed;
   hidden = getSetting(HIDDEN_KEY) === true;
+  initFilter();
   document.getElementById("tree-refresh").addEventListener("click", () => {
     refreshSidebar().catch((error) => log.warn("Could not refresh the tree:", error));
   });
@@ -351,7 +358,7 @@ function rowsUnder(path, depth, out) {
   if (pending !== null && pending.folder === path && pending.replacing === null) {
     out.push({ pending: true, depth });
   }
-  for (const entry of children.get(path) ?? []) {
+  for (const entry of filteredEntries(path, (folder) => children.get(folder), joinPath, filter)) {
     const full = joinPath(path, entry.name);
     // A rename is edited where the file already is, rather than as a new row
     // above it: the thing being renamed must stay where the eye left it.
@@ -400,9 +407,37 @@ function render() {
   document.getElementById("tree-root").textContent = baseName(root);
   document.getElementById("tree-root").title = root;
   describeCreateTargets();
-  body.replaceChildren(...rowsUnder(root, 0, []).map(
+  const rows = rowsUnder(root, 0, []);
+  if (rows.length === 0 && filter.trim() !== "") {
+    // Said with its scope: the filter looks at what has been opened, and "no
+    // file" on its own would read as the file not being there.
+    const empty = document.createElement("p");
+    empty.className = "tree-empty";
+    empty.textContent = `No file matches "${filter.trim()}" among the folders opened so far.`;
+    body.replaceChildren(empty);
+    return;
+  }
+  body.replaceChildren(...rows.map(
     (row) => (row.pending === true ? renderPendingRow(row.depth) : renderRow(row)),
   ));
+}
+
+/** The filter box: every keystroke re-renders; Escape clears and lets go. */
+function initFilter() {
+  const input = document.getElementById("tree-filter");
+  input.addEventListener("input", () => {
+    filter = input.value;
+    render();
+  });
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      input.value = "";
+      filter = "";
+      render();
+      input.blur();
+    }
+  });
 }
 
 function renderRow(row) {
