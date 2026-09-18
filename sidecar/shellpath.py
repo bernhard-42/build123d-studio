@@ -106,9 +106,10 @@ def adopt_path(log, environment_bin=None):
     current = [e for e in os.environ.get("PATH", "").split(os.pathsep) if e != ""]
     login = login_shell_path()
     os.environ["PATH"] = merged_path(environment_bin, login, current)
-    if login is None:
-        if sys.platform != "win32":
-            log(f"PATH: {environment_bin} first; {default_shell()} did not answer, its PATH not adopted")
+    if sys.platform == "win32":
+        log(f"PATH: {environment_bin} first, then the process's own - no login shell on Windows")
+    elif login is None:
+        log(f"PATH: {environment_bin} first; {default_shell()} did not answer, its PATH not adopted")
     else:
         added = [e for e in login if e not in current]
         log(f"PATH: {environment_bin} first, then {len(added)} entr{'y' if len(added) == 1 else 'ies'} from {default_shell()} -l")
