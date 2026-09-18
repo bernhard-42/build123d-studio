@@ -2,34 +2,40 @@
 
 What changed in each release, for the people using it. Anything not visible from the outside is in the git log.
 
-## Unreleased
+## 0.7.1 (2026-09-18)
+
+**New features**
+
+- **Run a Makefile target from the file tree.** Right-click a `Makefile` and its targets are listed below a line as _Make ▸ build_, _Make ▸ test_, …; picking one runs `make <target>` in the Makefile's folder, with the output in the Run/Debug pane and the same Stop as a test run. The list is read from the file at every right-click, and it appears only when `make` is on this machine.
 
 **Fixes**
 
-- **Code completion is back.** Since 0.7.0 the suggestion list never opened — not for `Bo`, `import build1` or `b.bou` — while parameter hints and hover still worked. Fixed; and the *View Problem* action, missing from the hover over an error since the same change, is back with it.
+- **Code completion is back.** Since 0.7.0 the suggestion list never opened — not for `Bo`, `import build1` or `b.bou` — while parameter hints and hover still worked. Fixed; and the _View Problem_ action, missing from the hover over an error since the same change, is back with it.
+- **Runs see your PATH.** Everything Studio starts — the kernel, the console, Run File, tests, make — used to inherit the launcher's four system directories, so a Makefile's `python` or `pytest` was "command not found". The environment's own `bin/` now comes first, followed by what your login shell puts on PATH (Homebrew and the like), asked of your account's default shell once at startup.
+- **GitHub package sources no longer vanish for a session.** The check for `git` — and now `make` — is more robust now and doesn't wrongly flag its absence.
 - **No more "The kernel did not stop" over an idle kernel.** An interrupt with nothing running is ignored instead of being sent, waited on for five seconds and then blamed on the kernel. Every interrupt is now written to the log with what asked for it.
 
 ## 0.7.0 (2026-09-17)
 
 **New features**
 
-- **Show a CAD file from the file tree.** Right-click an STL, STEP (`.step`, `.stp`), BREP, DXF or SVG file and choose *Show*: it is imported with build123d's importer and shown. The command runs in the console, so it can be copied into a script, and the result is available as `_imported` — also in the variable explorer. Keep it under a name of your own with `part = _imported`. A click still opens the file in the editor, as for any file.
+- **Show a CAD file from the file tree.** Right-click an STL, STEP (`.step`, `.stp`), BREP, DXF or SVG file and choose _Show_: it is imported with build123d's importer and shown. The command runs in the console, so it can be copied into a script, and the result is available as `_imported` — also in the variable explorer. Keep it under a name of your own with `part = _imported`. A click still opens the file in the editor, as for any file.
 - **Filter the file tree.** A filter box under the tree's header narrows it to what you type — `robot` for a name you half remember, `.py` or `.stl` for an extension. It filters what the tree has already read; a folder you have not opened stays, and opens filtered.
-- **Filter and sort the variable explorer.** A filter box above the table narrows the rows to names (or build123d labels) containing what you type; Escape clears it. Clicking *Name* or *Type* sorts by that column — again to reverse, a third time for the original order.
-- **Select variables in the explorer.** A click on a row selects it; the chevron opens it. Cmd/Ctrl-click adds to the selection and Shift-click extends it. Right-click → *Show* shows everything selected in one `show(a, b, c, names=["a", "b", "c"])`, so the viewer's tree carries the variable names, and *Copy* copies the names as `a, b, c`. Rows below a variable have no name of their own, so neither applies to them.
+- **Filter and sort the variable explorer.** A filter box above the table narrows the rows to names (or build123d labels) containing what you type; Escape clears it. Clicking _Name_ or _Type_ sorts by that column — again to reverse, a third time for the original order.
+- **Select variables in the explorer.** A click on a row selects it; the chevron opens it. Cmd/Ctrl-click adds to the selection and Shift-click extends it. Right-click → _Show_ shows everything selected in one `show(a, b, c, names=["a", "b", "c"])`, so the viewer's tree carries the variable names, and _Copy_ copies the names as `a, b, c`. Rows below a variable have no name of their own, so neither applies to them.
 - **Geometry opens to its values in the explorer.** A `BoundBox` shows min, max, size, center and diagonal; a `Vertex` or `Vector` its coordinates; `Location` (and `Pos`, `Rot`), `Axis` and `Plane` their position and directions — instead of "no further detail". Edges, wires and lines list their start and end point (what `line @ 0` and `line @ 1` give), and edges and faces say what geometry they are — line, circle, bspline, plane, cylinder, sphere…
 - **A camera shortcut beside the console tabs.** The button at the right of the tab row shows whether the next `show()` resets the camera (the kernel's `reset_camera` default): a flip-camera icon means it resets, a photo-camera icon means it is kept. A click switches the default with `set_defaults(reset_camera=…)`, visible in the console. It is a session default; a kernel restart brings the Settings value back.
 - **Snippets are now an editable file.** `snippets.json` in the settings directory is created from the shipped set on first start and read at every start and whenever Settings is applied. Edit, add or remove entries there; delete the file to restore the shipped set.
 - **JSON, YAML and TOML in the editor.** `.json` files are highlighted, folded and checked for syntax errors by Monaco's JSON service — as JSONC, so the comments and trailing commas in `snippets.json` are fine; `.yaml`/`.yml` and `.toml` files (`pyproject.toml`) are highlighted. Neither is sent to ruff or the Python language server — and nor is anything else that is not Python any more.
-- **Open a file from About.** The log files, the snippets file and the kernel's connection file in Help → About have an *Open* button beside *Copy* that opens them in the editor.
+- **Open a file from About.** The log files, the snippets file and the kernel's connection file in Help → About have an _Open_ button beside _Copy_ that opens them in the editor.
 - **Startup diagnostics.** The log begins with the machine's details (OS, memory, disk space, relevant environment variables — credentials redacted) and records the exit code of every command. When the environment cannot be prepared, the splash shows the underlying error, including the shell's or curl's own message, and the path of the log file.
 
 **Fixes**
 
 - **three-cad-viewer 5.0.7.** Fixes a memory leak that made showing several large assemblies exhaust the window's memory, after which the viewer stopped rendering or the window reloaded.
 - **A first start no longer fails on Windows machines whose command prompt is broken** by a stale AutoRun registry entry (what an uninstalled Anaconda leaves behind); the splash explains the entry instead.
-- **Kernel indicator.** Stays on *busy* while a queued run waits for a long-running import to finish.
-- **Recovery after a window reload.** If the window is reloaded (for example after running out of memory), the previous kernel is stopped instead of being left running, and a viewer that can no longer draw is reported as *failed* in the toolbar with a hint to restart.
+- **Kernel indicator.** Stays on _busy_ while a queued run waits for a long-running import to finish.
+- **Recovery after a window reload.** If the window is reloaded (for example after running out of memory), the previous kernel is stopped instead of being left running, and a viewer that can no longer draw is reported as _failed_ in the toolbar with a hint to restart.
 - **Window position** is restored against the displays that are actually connected; the permission for this was missing.
 
 ## 0.6.5 (2026-09-16)
