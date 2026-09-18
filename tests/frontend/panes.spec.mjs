@@ -298,3 +298,82 @@ test.describe("hiding the console and the variables", () => {
     expect(await topFraction(page)).toBeGreaterThan(0.98);
   });
 });
+
+test.describe("a selection stays in the tab it started in", () => {
+  // Reported: dragging upward out of the Run/Debug or Backend tab went on
+  // selecting the editor. confineSelection had been given the Console tab's
+  // host alone, and those two tabs are its siblings - so a drag begun in
+  // either matched nothing and nothing was locked. The Console tab never
+  // showed it: xterm keeps a selection of its own.
+  const WORKSPACE = { folder: PROJECT, tabs: [{ path: `${PROJECT}/part.py`, caret: null }], active: `${PROJECT}/part.py` };
+
+  async function dragUpIntoEditor(page, output) {
+    const box = await output.boundingBox();
+    const editor = await page.locator(".monaco-editor .view-lines").first().boundingBox();
+    await page.mouse.move(box.x + 40, box.y + Math.min(box.height - 6, 40));
+    await page.mouse.down();
+    await page.mouse.move(box.x + 40, box.y + 5, { steps: 4 });
+    await page.mouse.move(editor.x + 30, editor.y + 8, { steps: 8 });
+    const during = await page.evaluate(() => {
+      const selection = document.getSelection();
+      const range = selection.rangeCount > 0 ? selection.getRangeAt(0) : null;
+      return {
+        inEditor: range !== null && document.getElementById("editor-host").contains(range.startContainer),
+        locked: [...document.querySelectorAll(".selection-locked")].map((element) => element.id),
+      };
+    });
+    await page.mouse.up();
+    return during;
+  }
+
+  test("from the Backend tab", async ({ page }) => {
+    await open(page, { files: FILES, settings: { workspace: WORKSPACE } });
+    await page.locator("#console-tab-backend").click();
+    const output = page.locator("#backend-output");
+    await expect(output).not.toHaveText("");
+
+    const during = await dragUpIntoEditor(page, output);
+
+    expect(during.inEditor, "the selection reached the editor").toBe(false);
+    expect(during.locked).toContain("pane-editor");
+    expect(during.locked).not.toContain("pane-console-group");
+  });
+
+  test("and a drag that ends on the tab names does not paint them", async ({ page }) => {
+    // Reported with a screenshot: Console, Run/Debug and Backend highlighted
+    // above a selection dragged up out of the log. They sit inside the group
+    // the drag is confined to, so confinement cannot help; they are simply
+    // not text.
+    await open(page, { files: FILES, settings: { workspace: WORKSPACE } });
+    await page.locator("#console-tab-backend").click();
+    const output = page.locator("#backend-output");
+    await expect(output).not.toHaveText("");
+    const box = await output.boundingBox();
+    const tabs = await page.locator("#console-tabs").boundingBox();
+
+    await page.mouse.move(box.x + 40, box.y + Math.min(box.height - 6, 40));
+    await page.mouse.down();
+    await page.mouse.move(box.x + 40, box.y + 5, { steps: 4 });
+    await page.mouse.move(tabs.x + 4, tabs.y + tabs.height / 2, { steps: 6 });
+    const text = await page.evaluate(() => document.getSelection().toString());
+    await page.mouse.up();
+
+    expect(text).not.toContain("Console");
+    expect(text).not.toContain("Backend");
+    expect(text.length, "nothing of the log was selected").toBeGreaterThan(0);
+  });
+
+  test("from the Run/Debug tab", async ({ page }) => {
+    const { sidecar } = await open(page, { files: FILES, settings: { workspace: WORKSPACE } });
+    await page.locator("#console-tab-rundebug").click();
+    // Something to select: a run's output, as the sidecar delivers it.
+    sidecar.send("run.output", { text: "line one\nline two\nline three\nline four\n" });
+    const output = page.locator("#debug-output");
+    await expect(output).toContainText("line four");
+
+    const during = await dragUpIntoEditor(page, output);
+
+    expect(during.inEditor, "the selection reached the editor").toBe(false);
+    expect(during.locked).toContain("pane-editor");
+  });
+});

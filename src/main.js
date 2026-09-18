@@ -635,10 +635,15 @@ async function main() {
   // All four, not just the two with menus: the editor and the viewer never start
   // a document selection of their own, but they are perfectly capable of being
   // dragged *into*, which highlighted Monaco's code and its minimap.
+  //
+  // The console *group*, not the Console tab's host: the Run/Debug and Backend
+  // tabs are its siblings, and a drag begun in either matched nothing here and
+  // ran on into the editor - reported, and reproduced in the harness. The
+  // Console tab never showed it because xterm keeps a selection of its own.
   confineSelection([
     document.getElementById("pane-editor"),
     document.getElementById("pane-viewer"),
-    consolePane,
+    document.getElementById("pane-console-group"),
     varsPane,
   ]);
 
