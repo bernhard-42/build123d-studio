@@ -270,3 +270,40 @@ test.describe("closing", () => {
     expect(await labels(page)).toEqual(["part.py"]);
   });
 });
+
+test.describe("the tab strip's drawn scrollbar", () => {
+  test("appears once the tabs no longer fit, and goes when they do", async ({ page }) => {
+    // The same 3px thumb the toolbar has, in the strip's row. Twelve files
+    // with long names at a narrow width overflow it; closing them empties it.
+    const files = {};
+    const tabs = [];
+    for (let i = 0; i < 12; i += 1) {
+      const path = `${PROJECT}/a_rather_long_file_name_${i}.py`;
+      files[path] = `X${i} = 1\n`;
+      tabs.push({ path, caret: null });
+    }
+    await page.setViewportSize({ width: 900, height: 700 });
+    await open(page, {
+      files,
+      settings: { workspace: { folder: PROJECT, tabs, active: tabs[0].path } },
+    });
+    await expect(page.locator(".tab")).toHaveCount(12);
+
+    const thumb = page.locator("#tab-row .scroll-thumb");
+    await expect(thumb).toBeVisible();
+    const [strip, box] = await Promise.all([
+      page.locator("#tab-strip").boundingBox(),
+      thumb.boundingBox(),
+    ]);
+    expect(box.height).toBeLessThanOrEqual(3);
+    expect(Math.abs(box.y + box.height - (strip.y + strip.height))).toBeLessThanOrEqual(1);
+
+    // Down to one: the strip is a third of a 900px window and two of these
+    // names still overflow it.
+    for (let i = 0; i < 11; i += 1) {
+      await page.locator(".tab-close").first().click();
+    }
+    await expect(page.locator(".tab")).toHaveCount(1);
+    await expect(thumb).toBeHidden();
+  });
+});

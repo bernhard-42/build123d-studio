@@ -24,6 +24,7 @@ import {
   onDirtyChange,
 } from "./monaco.js";
 import { labelsFor } from "./tabs.js";
+import { attachScrollThumb } from "../scrollthumb.js";
 
 let strip = null;
 let select = null;
@@ -39,6 +40,9 @@ export function initTabStrip(handlers) {
   select = handlers.onSelect;
   close = handlers.onClose;
   pin = handlers.onPin ?? (() => {});
+  // The strip's scrollbar, drawn: a 3px thumb along the row's bottom edge
+  // while there are more tabs than fit.
+  attachScrollThumb(strip, document.getElementById("tab-row"));
 
   // A tab has to show the dot the moment the buffer stops matching disk, and
   // typing does not go through any of the actions that redraw the strip.

@@ -37,6 +37,7 @@ import {
   requestInterrupt,
 } from "./kernelstate.js";
 import { titleWithChord } from "./keys.js";
+import { attachScrollThumb } from "./scrollthumb.js";
 
 // Toolbar wiring and the kernel state indicator.
 
@@ -359,9 +360,12 @@ export function restartKernel() {
 }
 
 export function initToolbar() {
-  // Dragging the row sideways, because it scrolls with no scrollbar when the
-  // window is too narrow and Shift-wheel is not something anybody guesses.
-  enableDragScroll(document.querySelector(".toolbar"));
+  // Dragging the row sideways, because it scrolls when the window is too
+  // narrow and Shift-wheel is not something anybody guesses; and a drawn
+  // thumb along its bottom edge that says so and drags too.
+  const toolbar = document.querySelector(".toolbar");
+  enableDragScroll(toolbar);
+  attachScrollThumb(toolbar, document.querySelector(".toolbar-row"));
 
   // The title has to follow the buffer, not only the explicit actions below: a
   // keystroke makes it dirty and a successful save makes it clean again, and

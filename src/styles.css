@@ -182,25 +182,20 @@ body {
 
    Narrow panes scroll it sideways rather than wrapping, which would cost the
    very vertical space this arrangement is meant to save. */
-/* A row of 26px buttons that scrolls when the window is too narrow for it, with
-   no scrollbar drawn at all.
-
-   Thinning it was tried first and does not hold. `scrollbar-width: thin` and a
-   4px `::-webkit-scrollbar` are both honoured by WebKit on macOS - measured, a
-   1px lane and the buttons untouched - and neither is honoured by the GTK build
-   or by WebView2, which draw their own bar across the bottom of the row and
-   cover half of every button. The alternative was reserving a lane for the
-   worst case, which is about 13px of extra height on every platform,
-   permanently, for a bar that is only drawn while scrolling.
-
-   Nothing is lost by hiding it: the row still scrolls with a wheel, a trackpad
-   or a drag, and every button in it is also a menu item with a shortcut. What
-   is given up is the hint that there is more to the right - a fade at the edge
-   would need a wrapper element, because a background shadow is painted behind
-   the buttons, which are opaque, and cannot be seen. */
+/* A row of 26px buttons that scrolls when the window is too narrow for it. The
+   native scrollbar is hidden and a 3px thumb is drawn instead - see
+   scrollthumb.js for why drawn: `scrollbar-width: thin` and a 4px
+   `::-webkit-scrollbar` are both honoured by WebKit on macOS - measured, a 1px
+   lane and the buttons untouched - and neither is honoured by the GTK build or
+   by WebView2, which draw their own bar across the bottom of the row and cover
+   half of every button. The thumb lies over the row's bottom 3px, so the row's
+   height is what it always was. */
+.toolbar-row {
+  position: relative;
+  flex: 0 0 auto;
+}
 .toolbar {
   display: flex;
-  flex: 0 0 auto;
   align-items: center;
   gap: 6px;
   padding: 4px 6px;
@@ -683,8 +678,9 @@ html body {
    Overflow scrolls rather than wrapping or collapsing into a dropdown - a
    second row would steal height from the editor on exactly the projects that
    need it most, and a dropdown is a second place to look for a file that is
-   already on screen somewhere. The scrollbar is thin and the strip keeps a
-   fixed height, so the editor below it never moves. */
+   already on screen somewhere. The scrollbar is a drawn 3px thumb over the
+   row's bottom edge and the strip keeps a fixed height, so the editor below
+   it never moves. */
 
 /* The strip and the debug controls, in one row. The controls take what they
    need and the strip scrolls in the rest, so debugging costs a little width and
@@ -695,6 +691,7 @@ html body {
    the size of its content by default, so without it the row would grow wider
    than the pane rather than the strip scrolling. */
 .tab-row {
+  position: relative;
   display: flex;
   flex: 0 0 auto;
   align-items: stretch;
@@ -710,7 +707,8 @@ html body {
   background: var(--bg);
   overflow-x: auto;
   overflow-y: hidden;
-  scrollbar-width: thin;
+  /* Hidden; the drawn thumb below the row is the scrollbar. */
+  scrollbar-width: none;
 }
 
 /* Present only while a session is running, which is what makes it worth having
@@ -759,12 +757,32 @@ html body {
 }
 
 .tab-strip::-webkit-scrollbar {
-  height: 4px;
+  display: none;
 }
 
-.tab-strip::-webkit-scrollbar-thumb {
+/* The drawn scrollbar of a row that scrolls sideways - scrollthumb.js sets
+   its left and width. Faint until the pointer is over the row, as VS Code's
+   is; solid while dragged. */
+.scroll-thumb {
+  position: absolute;
+  bottom: 0;
+  height: 3px;
   border-radius: 2px;
-  background: var(--border);
+  background: var(--fg-dim);
+  opacity: 0.35;
+  z-index: 1;
+  cursor: default;
+  transition: opacity 120ms;
+}
+.scroll-thumb[hidden] {
+  display: none;
+}
+.toolbar-row:hover .scroll-thumb,
+.tab-row:hover .scroll-thumb {
+  opacity: 0.7;
+}
+.scroll-thumb.dragging {
+  opacity: 0.9;
 }
 
 .tab {

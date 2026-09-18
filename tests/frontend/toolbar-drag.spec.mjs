@@ -95,3 +95,45 @@ test.describe("dragging the toolbar", () => {
     await expect(page.locator("#info-dialog")).toBeVisible();
   });
 });
+
+test.describe("the drawn scrollbar", () => {
+  // VS Code's 3px thumb, for the same reason theirs is drawn: the native
+  // bar is either invisible or, on GTK and WebView2, over half the buttons.
+  const thumb = (page) => page.locator(".toolbar-row .scroll-thumb");
+
+  test("is there when the row overflows, along its bottom edge, and not otherwise", async ({ page }) => {
+    await openNarrow(page);
+
+    await expect(thumb(page)).toBeVisible();
+    const [bar, box] = await Promise.all([
+      page.locator(".toolbar").boundingBox(),
+      thumb(page).boundingBox(),
+    ]);
+    expect(box.height).toBeLessThanOrEqual(3);
+    expect(Math.abs(box.y + box.height - (bar.y + bar.height))).toBeLessThanOrEqual(1);
+    expect(box.width).toBeLessThan(bar.width);
+    expect(box.x).toBeGreaterThanOrEqual(bar.x - 1);
+
+    // Wide enough for every button - the editor pane gets a share of the
+    // window, not all of it, so it takes 2000px to give the row its 635 -
+    // and the thumb goes away.
+    await page.setViewportSize({ width: 2000, height: 700 });
+    await expect(thumb(page)).toBeHidden();
+  });
+
+  test("follows the scroll position, and dragging it scrolls the row", async ({ page }) => {
+    await openNarrow(page);
+    const before = (await thumb(page).boundingBox()).x;
+
+    await dragBy(page, -160);
+    await expect.poll(async () => (await thumb(page).boundingBox()).x).toBeGreaterThan(before + 10);
+
+    // Back to the start by dragging the thumb itself to the left.
+    const box = await thumb(page).boundingBox();
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width / 2 - 300, box.y + box.height / 2, { steps: 6 });
+    await page.mouse.up();
+    expect(await scrollLeft(page)).toBe(0);
+  });
+});
