@@ -379,13 +379,27 @@ test.describe("the buttons above a marker", () => {
   });
 
   test("Interrupt asks the kernel to stop", async ({ page }) => {
+    // While the kernel is busy, which is the only time there is anything to
+    // interrupt - see the toolbar's own rule in panes-live.spec.
     const { sidecar } = await openWithCells(page);
+    sidecar.send("kernel.status", { state: "busy" });
+    await expect(page.locator("#kernel-label")).toHaveText("busy");
 
     await lens(page, "\u23f9 Interrupt").first().click();
 
     await expect.poll(() =>
       sidecar.received.filter((frame) => frame.type === "kernel.interrupt").length,
     ).toBe(1);
+  });
+
+  test("and asks nothing of an idle kernel", async ({ page }) => {
+    const { sidecar } = await openWithCells(page);
+    await expect(page.locator("#kernel-label")).toHaveText("idle");
+
+    await lens(page, "\u23f9 Interrupt").first().click();
+    await page.waitForTimeout(300);
+
+    expect(sidecar.received.filter((frame) => frame.type === "kernel.interrupt")).toHaveLength(0);
   });
 
   test("and the setting takes them away", async ({ page }) => {
