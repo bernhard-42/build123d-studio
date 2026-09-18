@@ -452,6 +452,13 @@ export const os = {
   async setEnv() {},
 
   async showMessageBox(title, detail, choices, kind) {
+    // What the real one does with a non-string, minus the abort: Neutralino
+    // reads title and content with get<string>() and terminates the process
+    // on anything else. Refused before it is recorded, so a test that expects
+    // the box to have been shown fails the way the application would have.
+    if (typeof title !== "string" || typeof detail !== "string") {
+      throw new TypeError(`showMessageBox needs strings, got ${typeof title} and ${typeof detail}`);
+    }
     record("showMessageBox", [title, detail, choices, kind]);
     return dialogAnswers.length > 0 ? dialogAnswers.shift() : "OK";
   },

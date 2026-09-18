@@ -307,6 +307,9 @@ test.describe("testing", () => {
     await expect.poll(async () => (await called(page, "showMessageBox")).length).toBeGreaterThan(0);
     const [box] = await called(page, "showMessageBox");
     expect(box.args[0]).toBe("Test Folder");
+    // And it says where Stop is - the one thing somebody reading it wants to
+    // know - rather than telling them to stop something without saying how.
+    expect(box.args[1]).toContain("press Stop in the Run/Debug pane");
     expect(sent(sidecar, "run.tests")).toEqual([]);
     // And the chooser never opened: there was nothing to ask about.
     expect(await called(page, "showFolderDialog")).toEqual([]);
