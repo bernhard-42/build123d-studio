@@ -113,3 +113,32 @@ export function describeSize(size) {
   }
   return `${(size / 1024 / 1024).toFixed(1)} MB`;
 }
+
+// The pictures the editor shows rather than edits. SVG is not here: it is
+// text, and sometimes the point of opening one is to edit it.
+const IMAGE_TYPES = {
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  gif: "image/gif",
+  webp: "image/webp",
+};
+
+/**
+ * The MIME type for a picture the editor can show, or null for anything else.
+ *
+ * By extension, and only these. A picture opens in a tab of its own with no
+ * editor behind it - nothing to type into, nothing to save - which is a
+ * different kind of tab from the text ones, so the list is deliberately the
+ * formats a browser draws and nothing that might be text.
+ */
+export function imageType(path) {
+  if (typeof path !== "string") {
+    return null;
+  }
+  const dot = path.lastIndexOf(".");
+  if (dot < 0) {
+    return null;
+  }
+  return IMAGE_TYPES[path.slice(dot + 1).toLowerCase()] ?? null;
+}

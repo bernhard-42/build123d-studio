@@ -588,3 +588,84 @@ test.describe("a Makefile's row", () => {
     expect(sidecar.received.filter((f) => f.type === "run.tool")).toHaveLength(2);
   });
 });
+
+test.describe("a picture in the tree", () => {
+  // A 2x3 PNG, red over green: the bytes of a real file rather than a name,
+  // so that the picture *drawing* is what the test holds - a blob URL that
+  // points at nothing gives an <img> with no size.
+  const PNG = [137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 2, 0, 0, 0, 3, 8, 2,
+    0, 0, 0, 54, 136, 73, 214, 0, 0, 0, 16, 73, 68, 65, 84, 120, 156, 99, 248, 207, 192, 0, 68, 12, 40, 20,
+    0, 68, 208, 5, 251, 164, 207, 222, 128, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130];
+  const SHOT = `${PROJECT}/shot.png`;
+
+  async function openWithPicture(page) {
+    // Listed at open with a placeholder, then replaced by the bytes: the
+    // harness seeds strings, and the tree only needs the name to list it.
+    const handles = await openApp(page, { files: { ...FILES, [SHOT]: "placeholder" } });
+    await page.evaluate(
+      ([path, bytes]) => globalThis.__NEUTRALINO_STUB__.given(path, new Uint8Array(bytes).buffer),
+      [SHOT, PNG],
+    );
+    return handles;
+  }
+
+  test("opens in a tab that shows it, with no editor behind", async ({ page }) => {
+    await openWithPicture(page);
+
+    await row(page, "shot.png").click();
+
+    await expect.poll(() => tabLabels(page)).toContain("shot.png");
+    const picture = page.locator("#image-host img");
+    await expect(page.locator("#image-host")).toBeVisible();
+    await expect(picture).toHaveAttribute("src", /^blob:/);
+    // Decoded, which is the claim: the bytes reached the page as a PNG.
+    await expect.poll(() => picture.evaluate((img) => img.naturalWidth)).toBe(2);
+    await expect(page.locator("#editor-host")).toBeHidden();
+  });
+
+  test("switching back to a text tab brings the editor back", async ({ page }) => {
+    await openWithPicture(page);
+    await row(page, "part.py").click();
+    await expect.poll(() => tabLabels(page)).toContain("part.py");
+
+    await row(page, "shot.png").click();
+    await expect(page.locator("#image-host")).toBeVisible();
+
+    await page.locator(".tab", { hasText: "part.py" }).click();
+
+    await expect(page.locator("#image-host")).toBeHidden();
+    await expect(page.locator("#editor-host")).toBeVisible();
+    await expect(page.locator(".monaco-editor .view-lines")).toContainText("PART = 1");
+  });
+
+  test("Save writes nothing over it, and it is never dirty", async ({ page }) => {
+    // The one thing this tab must never do. Its model is empty, and a save
+    // that wrote it would replace the picture with nothing.
+    await openWithPicture(page);
+    await row(page, "shot.png").click();
+    await expect(page.locator("#image-host")).toBeVisible();
+
+    await page.keyboard.press("Meta+s");
+    await page.waitForTimeout(300);
+
+    const stored = await page.evaluate(
+      (path) => globalThis.__NEUTRALINO_STUB__.wrote(path),
+      SHOT,
+    );
+    expect(typeof stored, "the picture was written as text").not.toBe("string");
+    await expect(page.locator(".tab-close.tab-dirty")).toHaveCount(0);
+  });
+
+  test("closing the tab frees it, and it opens again", async ({ page }) => {
+    await openWithPicture(page);
+    await row(page, "shot.png").click();
+    await expect(page.locator("#image-host")).toBeVisible();
+
+    await page.locator(".tab", { hasText: "shot.png" }).locator(".tab-close").click();
+
+    await expect(page.locator("#image-host")).toBeHidden();
+    await row(page, "shot.png").click();
+    await expect(page.locator("#image-host")).toBeVisible();
+    await expect.poll(() => page.locator("#image-host img").evaluate((img) => img.naturalWidth)).toBe(2);
+  });
+});

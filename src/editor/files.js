@@ -44,6 +44,7 @@ import {
   focus as focusEditor,
   focusAt,
   insertSnippet,
+  isImageBuffer,
   bufferNeedsSaving,
   markMissingFiles,
   isBufferMissing,
@@ -63,7 +64,7 @@ import { refreshTabs } from "./tabstrip.js";
 import { chooseActive, readWorkspace } from "./workspace.js";
 import { unsavedPrompt } from "./unsaved.js";
 import { focusTree, hideFolder, revealInTree, showFolder } from "./sidebar.js";
-import { describeSize, isLarge, looksBinary, SNIFF_BYTES } from "./filetype.js";
+import { describeSize, imageType, isLarge, looksBinary, SNIFF_BYTES } from "./filetype.js";
 import { formatOnSave } from "./formatting.js";
 import { changedSince, hasTimestamp, stampOf } from "./ondisk.js";
 import {
@@ -260,9 +261,9 @@ export async function closeFolder() {
  * re-read from disk. Two tabs over two models of one file are two independent
  * sets of edits, and whichever is saved last would silently win.
  */
-function showInTab({ path = null, text = "" }) {
+function showInTab({ path = null, text = "", image = null }) {
   const open = path === null ? null : bufferForPath(path);
-  const key = open === null ? openBuffer({ path, text }) : open;
+  const key = open === null ? openBuffer({ path, text, image }) : open;
   if (open !== null) {
     showBuffer(open);
   }
@@ -779,8 +780,9 @@ export async function checkActiveFileChanged() {
   const path = bufferPath(key);
   // A buffer with no file cannot have been changed underneath, a missing one is
   // already saying so on its tab, and a save in flight is about to record its
-  // own stamp - asking over the top of it would be about a change we made.
-  if (path === null || isBufferMissing(key) || saving.get(key) !== undefined) {
+  // own stamp - asking over the top of it would be about a change we made. A
+  // picture has nothing to overwrite or reload.
+  if (path === null || isBufferMissing(key) || saving.get(key) !== undefined || isImageBuffer(key)) {
     return;
   }
   const before = bufferStamp(key);
@@ -920,6 +922,12 @@ async function mayOpen(path) {
  * clicked is a worse answer than a sentence saying why.
  */
 export async function openPath(path) {
+  // A picture is shown, not edited: its own tab, with the bytes drawn and no
+  // editor behind them. Decided by name before the binary check below, which
+  // would otherwise refuse it as not being text - which is exactly what it is.
+  if (imageType(path) !== null) {
+    return openImage(path);
+  }
   // A file already in a tab skips the questions, and not only to save the
   // reading. It was answered for when it was opened, and being asked again
   // about a file that is on screen - or refused one that is - would be the
@@ -955,6 +963,36 @@ export async function openPath(path) {
   return path;
 }
 
+/**
+ * Show a picture in a tab of its own.
+ *
+ * Read whole, as bytes, and handed to the page as a blob URL - the CSP allows
+ * img-src blob: and nothing wider, so the bytes go through the page rather
+ * than the file being named to the browser. A tab that already shows it is
+ * simply brought forward; the bytes are not re-read, since nothing here can
+ * change them.
+ */
+async function openImage(path) {
+  if (bufferForPath(path) !== null) {
+    showInTab({ path });
+    await saveWorkspace();
+    return path;
+  }
+  let bytes;
+  try {
+    bytes = await filesystem.readBinaryFile(path);
+  } catch (error) {
+    log.warn(`Could not open ${path}:`, error);
+    await notifyFailure("Could not open", `${path}\n\n${describe(error)}`);
+    return null;
+  }
+  const url = URL.createObjectURL(new Blob([bytes], { type: imageType(path) }));
+  showInTab({ path, image: url });
+  await rememberFolder(path);
+  await saveWorkspace();
+  log.info("Opened", path, "as a picture");
+  return path;
+}
 
 /**
  * A sentence about a failure, whatever shape the failure arrived in.
@@ -1559,6 +1597,11 @@ const saving = new Map();
 export async function saveFile({ saveAs = false } = {}) {
   const key = activeBufferKey();
   if (key === null) {
+    return null;
+  }
+  // A picture's tab holds no text. Its model is empty, and writing that over
+  // the file would be the one thing this tab must never do.
+  if (isImageBuffer(key)) {
     return null;
   }
   const inFlight = saving.get(key);

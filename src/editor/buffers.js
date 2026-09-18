@@ -61,7 +61,7 @@ export function initBuffers(modelOperations) {
  * Does not activate it. Which buffer the editor shows is a separate decision and
  * belongs to the caller that is about to attach the model.
  */
-export function open({ path = null, text = "", caret = null, matchesDisk = true }) {
+export function open({ path = null, text = "", caret = null, matchesDisk = true, image = null }) {
   const key = nextKey;
   nextKey += 1;
   const model = models.create(text, path);
@@ -79,8 +79,17 @@ export function open({ path = null, text = "", caret = null, matchesDisk = true 
     // Whether the file this buffer names has gone from disk. Not a property of
     // the model - the text is fine, it is the file underneath it that is not.
     missing: false,
+    // A picture, as the URL of its bytes, for a tab that shows rather than
+    // edits. The model above is empty and never shown for one of these; it
+    // exists so that a buffer is one shape everywhere else.
+    image,
   });
   return key;
+}
+
+/** The picture a buffer shows, or null for a text buffer. */
+export function imageOf(key) {
+  return buffers.get(key)?.image ?? null;
 }
 
 /**

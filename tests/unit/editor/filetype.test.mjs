@@ -12,6 +12,7 @@ import {
   LARGE_FILE_BYTES,
   SNIFF_BYTES,
   describeSize,
+  imageType,
   isLarge,
   languageFor,
   looksBinary,
@@ -151,4 +152,16 @@ test("a buffer with no file yet is Python, because New file made it", () => {
   assert.equal(languageFor(null), "python");
   assert.equal(languageFor(undefined), "python");
   assert.equal(languageFor(""), "python");
+});
+
+test("pictures are named by extension, case aside, and SVG stays text", () => {
+  assert.equal(imageType("/p/shot.png"), "image/png");
+  assert.equal(imageType("/p/photo.JPG"), "image/jpeg");
+  assert.equal(imageType("/p/photo.jpeg"), "image/jpeg");
+  assert.equal(imageType("C:\\p\\anim.gif"), "image/gif");
+  assert.equal(imageType("/p/pic.webp"), "image/webp");
+  assert.equal(imageType("/p/logo.svg"), null);
+  assert.equal(imageType("/p/part.py"), null);
+  assert.equal(imageType("/p/png"), null);
+  assert.equal(imageType(null), null);
 });

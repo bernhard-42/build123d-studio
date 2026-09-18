@@ -590,10 +590,32 @@ export function getValue() {
  * it, so Cmd-Z in a freshly opened file could put back a line belonging to a
  * file that was no longer on screen.
  */
-export function openBuffer({ path = null, text = "", caret = null, matchesDisk = true }) {
-  const key = buffers.open({ path, text, caret, matchesDisk });
+export function openBuffer({ path = null, text = "", caret = null, matchesDisk = true, image = null }) {
+  const key = buffers.open({ path, text, caret, matchesDisk, image });
   showBuffer(key);
   return key;
+}
+
+/**
+ * Put a picture over the editor, or take it away.
+ *
+ * The editor keeps its place in the layout and loses its model: an image tab
+ * is a tab with nothing to type into, and an editor with no model is already
+ * the state closing the last tab leaves, so everything that reads the active
+ * model knows it can be null.
+ */
+function showImage(url) {
+  const host = document.getElementById("image-host");
+  const picture = host.querySelector("img");
+  if (url === null) {
+    host.hidden = true;
+    picture.removeAttribute("src");
+    document.getElementById("editor-host").hidden = false;
+    return;
+  }
+  picture.src = url;
+  host.hidden = false;
+  document.getElementById("editor-host").hidden = true;
 }
 
 /**
@@ -613,6 +635,13 @@ export function showBuffer(key) {
 
   const buffer = buffers.get(key);
   buffers.activate(key);
+  if (buffer.image !== null) {
+    editor.setModel(null);
+    showImage(buffer.image);
+    notifyDirtyChanged();
+    return;
+  }
+  showImage(null);
   editor.setModel(buffer.model);
   refreshBreakpointDecorations();
   const state = buffers.viewState(key);
@@ -643,6 +672,7 @@ export function showNoBuffer() {
   }
   clearCellDecorations();
   buffers.deactivate();
+  showImage(null);
   editor.setModel(null);
   notifyDirtyChanged();
 }
@@ -653,7 +683,18 @@ export function closeBuffer(key) {
   // nothing left to read it from afterwards.
   forgetBuffer(key, bufferPath(key));
   breakpoints.forget(key);
+  // The bytes behind a picture are held by the page until the URL is revoked;
+  // closing the tab is the moment nobody will look at them again.
+  const image = buffers.imageOf(key);
+  if (image !== null) {
+    URL.revokeObjectURL(image);
+  }
   return buffers.close(key);
+}
+
+/** Whether a buffer is a picture rather than text. */
+export function isImageBuffer(key) {
+  return buffers.imageOf(key) !== null;
 }
 
 /** The keys of every open buffer, in the order they were opened. */
