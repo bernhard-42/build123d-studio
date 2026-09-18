@@ -4,8 +4,8 @@ import {
   renderRequirements,
   tomlString,
 } from "./requirements.js";
-import { run } from "./proc.js";
 import * as log from "./log.js";
+import { probeGit } from "./tools.js";
 
 // Which source each upgradable package comes from.
 //
@@ -77,7 +77,6 @@ const DEFAULTS = Object.fromEntries(PACKAGES.map((p) => [p.name, PYPI]));
 let sources = { ...DEFAULTS };
 let localPaths = {};
 let extras = "";
-let gitAvailable = null;
 
 export function packageSources() {
   return { ...sources };
@@ -98,26 +97,6 @@ export function isDefaultSelection(selection = sources) {
   return PACKAGES.every((p) => selection[p.name] === PYPI);
 }
 
-
-/**
- * Is a git binary available?
- *
- * uv resolves git refs over HTTPS on its own, but `uv sync` shells out to git
- * to fetch and build - it fails with "Git executable not found" otherwise. The
- * PyPI sources never need it, so this only gates the GitHub option.
- */
-export async function hasGit() {
-  if (gitAvailable !== null) {
-    return gitAvailable;
-  }
-  try {
-    const code = await run("git --version", {});
-    gitAvailable = code === 0;
-  } catch {
-    gitAvailable = false;
-  }
-  return gitAvailable;
-}
 
 export async function loadPackageSources() {
   const stored = getSetting(STORAGE_KEY);
@@ -142,10 +121,13 @@ export async function loadPackageSources() {
   extras = typeof custom === "string" ? custom : "";
 
   // A stored GitHub choice is worthless if git has since disappeared; fall back
-  // rather than fail every start. A local path is not checked here - it may sit
-  // on a volume that is not mounted yet, and uv reports a missing one far more
+  // rather than fail every start. Only on a probe that *found it absent*: one
+  // that threw or did not answer says nothing about git, and a choice thrown
+  // away on a bad moment is a session with no GitHub sources and nothing in
+  // the log to explain it. A local path is not checked here - it may sit on a
+  // volume that is not mounted yet, and uv reports a missing one far more
   // clearly than a guess made at startup would.
-  if (Object.values(sources).includes(GITHUB) && !(await hasGit())) {
+  if (Object.values(sources).includes(GITHUB) && (await probeGit()) === "absent") {
     log.warn("git is not available; reverting package sources to PyPI");
     sources = { ...DEFAULTS };
   }

@@ -5,7 +5,6 @@ import {
   PACKAGES,
   PYPI,
   customPackages,
-  hasGit,
   localPathFor,
   packageSources,
   saveCustomPackages,
@@ -13,6 +12,7 @@ import {
   selectionFromSources,
   savePackageSources,
 } from "./packages.js";
+import { hasGit } from "./tools.js";
 import {
   findProblems,
   localSourceProblem,
