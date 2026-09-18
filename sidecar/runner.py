@@ -24,6 +24,7 @@ prints its own report, and the report is the feature.
 """
 
 import os
+import shutil
 import subprocess
 import threading
 
@@ -82,6 +83,27 @@ class RunSession:
             arguments.extend(["-W", "ignore"])
         arguments.append(target)
         return self._spawn(arguments, env, cwd, f"pytest {target}")
+
+    def start_make(self, makefile, target, env):
+        """Run one target of a Makefile. Returns an error string, or None.
+
+        The same process-of-its-own as a file and a pytest run, and the same
+        pane and Stop afterwards. Two things differ. The working directory is
+        the Makefile's own folder rather than the kernel's: make reads the file
+        it finds there, and a target's recipe assumes it is run from beside it.
+        And `make` is whichever one the environment's PATH names - the frontend
+        offers the entries only after `make --version` answered, so a missing
+        binary here is the rare case where the two disagree, and it is refused
+        with its reason rather than left to the supervisor to fail on.
+        """
+        if not os.path.isfile(makefile):
+            return f"{makefile} is not there"
+        make = shutil.which("make", path=env.get("PATH"))
+        if make is None:
+            return "make is not on the PATH"
+        return self._spawn(
+            [make, target], env, os.path.dirname(makefile), f"make {target}",
+        )
 
     def _spawn(self, command, env, cwd, what):
         """Start one command under the supervisor. Returns an error, or None.

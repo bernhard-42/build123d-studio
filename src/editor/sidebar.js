@@ -31,6 +31,8 @@ import {
 import { askTwoWay, notifyFailure, notifyRefusal } from "../confirm.js";
 import { showContextMenu } from "../contextmenu.js";
 import { importerFor } from "./importfile.js";
+import { isMakefile, makeTargets } from "./makefile.js";
+import { hasMake } from "../tools.js";
 import { getSetting, setSetting } from "../store.js";
 import { refreshLayout } from "../layout/splitter.js";
 import * as log from "../log.js";
@@ -44,6 +46,8 @@ const HIDDEN_KEY = "sidebarHidden";
 let root = null;
 let openFile = null;
 let showFile = null;
+// What a Make entry in a Makefile's row menu runs; see showRowMenu.
+let runMake = () => {};
 // Told when a file is renamed here, so a tab holding it can follow.
 let renamedOnDisk = () => {};
 // Told after every refresh, so the editor can check whether the files its tabs
@@ -80,11 +84,13 @@ let filter = "";
 export function initSidebar({
   onOpenFile,
   onShowFile = () => {},
+  onMake = () => {},
   onRefreshed = () => {},
   onRenamed = () => {},
 }) {
   openFile = onOpenFile;
   showFile = onShowFile;
+  runMake = onMake;
   refreshed = onRefreshed;
   renamedOnDisk = onRenamed;
   hidden = getSetting(HIDDEN_KEY) === true;
@@ -518,7 +524,8 @@ function renderRow(row) {
     event.preventDefault();
     marked = row.path;
     render();
-    showRowMenu(row, event.clientX, event.clientY);
+    showRowMenu(row, event.clientX, event.clientY)
+      .catch((error) => log.warn("Could not open the row menu:", error));
   });
   return element;
 }
@@ -715,7 +722,7 @@ function unmark() {
   render();
 }
 
-function showRowMenu(row, x, y) {
+async function showRowMenu(row, x, y) {
   if (row.isDirectory) {
     return;
   }
@@ -724,6 +731,12 @@ function showRowMenu(row, x, y) {
   // everywhere in the tree; an SVG one wants to edit must open in the editor.
   // Showing is the special action, so it lives here with the other actions.
   const showable = importerFor(row.path) !== null;
+  // A Makefile's targets, below a line, each as "Make ▸ target" - flat rather
+  // than a submenu, because a right-click on a Makefile is asking for exactly
+  // this list. Read now rather than kept: the file is small, the menu is
+  // rare, and a list read at right-click time is never stale. Only when make
+  // answers on this machine; a Makefile without make is a file like any other.
+  const targets = await makeTargetsFor(row.path);
   showContextMenu({
     x,
     y,
@@ -731,11 +744,16 @@ function showRowMenu(row, x, y) {
       ...(showable ? [{ id: "show", label: "Show", enabled: true }] : []),
       { id: "rename", label: "Rename…", enabled: true },
       { id: "delete", label: "Delete…", enabled: true },
+      ...(targets.length > 0 ? [{ separator: true }] : []),
+      ...targets.map((target) => ({ id: `make:${target}`, label: `Make \u25b8 ${target}`, enabled: true })),
     ],
     onPick: (id) => {
       if (id === "show") {
         unmark();
         showFile(row.path);
+      } else if (id.startsWith("make:")) {
+        unmark();
+        runMake(row.path, id.slice("make:".length));
       } else if (id === "rename") {
         beginRenaming(row.path);
       } else if (id === "delete") {
@@ -750,6 +768,23 @@ function showRowMenu(row, x, y) {
       }
     },
   });
+}
+
+/**
+ * The Make entries a row gets: its targets when it is a Makefile and make is
+ * here, otherwise none. Unreadable is none too - the menu still opens with the
+ * file actions, and the reason is in the log rather than in the way.
+ */
+async function makeTargetsFor(path) {
+  if (!isMakefile(path) || !(await hasMake())) {
+    return [];
+  }
+  try {
+    return makeTargets(await filesystem.readFile(path));
+  } catch (error) {
+    log.warn("Could not read the Makefile:", error);
+    return [];
+  }
 }
 
 /**

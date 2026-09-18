@@ -83,6 +83,11 @@ class FakeSidecar {
     if (!this._answers.has("editor.format")) {
       this._answers.set("editor.format", () => ({ source: null }));
     }
+    // A machine with make, unless a test says otherwise: the sidecar answers
+    // from its own PATH, and the row menu waits on it.
+    if (!this._answers.has("run.tool")) {
+      this._answers.set("run.tool", (frame) => ({ name: frame.name, present: true }));
+    }
     if (!this._answers.has("editor.restartLanguageServer")) {
       this._answers.set("editor.restartLanguageServer", () => ({ detail: "restarted" }));
     }

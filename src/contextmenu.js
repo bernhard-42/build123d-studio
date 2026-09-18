@@ -98,8 +98,12 @@ function positionWithin(menu, x, y) {
 /**
  * Show a menu at a point.
  *
+ * An item with `separator: true` is a line, not a button - the Makefile row's
+ * menu draws one between the file actions and the targets.
+ *
  * @param {{x: number, y: number,
- *          items: Array<{id: string, label: string, enabled: boolean}>,
+ *          items: Array<{id: string, label: string, enabled: boolean}
+ *                       | {separator: true}>,
  *          onPick: (id: string) => void}} options
  */
 export function showContextMenu({ x, y, items, onPick, onClose = null }) {
@@ -114,6 +118,12 @@ export function showContextMenu({ x, y, items, onPick, onClose = null }) {
   menu.setAttribute("role", "menu");
 
   for (const item of items) {
+    if (item.separator === true) {
+      const line = document.createElement("div");
+      line.className = "context-menu-separator";
+      menu.appendChild(line);
+      continue;
+    }
     const button = document.createElement("button");
     button.type = "button";
     button.className = "context-menu-item";

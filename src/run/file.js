@@ -160,6 +160,32 @@ async function runPytestOn(what, choose) {
   ipc.send("run.tests", { path: chosen, ignoreWarnings: ignoreWarnings() });
 }
 
+/**
+ * Run one target of a Makefile, from the Makefile's row in the tree.
+ *
+ * pytest's shape exactly - the same refusals, the same save of every buffer
+ * first, the same pane and the same Stop - with the target in place of a
+ * chooser: the menu already asked.
+ */
+export async function runMake(makefile, target) {
+  const what = `make ${target}`;
+  if (running) {
+    await notifyFailure(what, "Something is already running. Wait for it to finish, or press Stop in the Run/Debug pane.");
+    return;
+  }
+  if (isDebugging()) {
+    await notifyFailure(what, "Stop the debug session first.");
+    return;
+  }
+  if (!(await saveAll())) {
+    return;
+  }
+  clearDebugConsole();
+  announce(true);
+  log.info("Running", what, "in", makefile);
+  ipc.send("run.make", { makefile, target });
+}
+
 /** Run pytest over one file. */
 export async function testFile() {
   await runPytestOn("Test File", async () => {

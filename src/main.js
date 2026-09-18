@@ -100,7 +100,7 @@ import { appendBackendLine, showConsolePanel } from "./debug/console.js";
 import { anythingUnwell, record as recordHealth, reset as resetHealth } from "./health.js";
 import * as log from "./log.js";
 import { guardAgainstReload, suppressNativeContextMenu } from "./reload.js";
-import { initRunFile, testFile, testFolder, toggleRunFile } from "./run/file.js";
+import { initRunFile, runMake, testFile, testFolder, toggleRunFile } from "./run/file.js";
 import { restoreWindow, saveWindow, watchWindow } from "./windowstate.js";
 
 init();
@@ -593,6 +593,7 @@ async function main() {
         execute(code);
       }
     },
+    onMake: (makefile, target) => void runMake(makefile, target),
     // A refresh is the only moment this application learns that a file it has
     // open has been deleted from outside - there is no watcher yet.
     onRefreshed: () => {

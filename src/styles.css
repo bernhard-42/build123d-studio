@@ -927,6 +927,12 @@ html body {
   font-size: 12px;
 }
 
+.context-menu-separator {
+  height: 1px;
+  margin: 4px 8px;
+  background: var(--menu-border, var(--border));
+}
+
 .app {
   display: grid;
   flex: 1 1 auto;
@@ -2319,14 +2325,6 @@ html body {
 .titlebar-dropdown .context-menu {
   position: static;
   min-width: 220px;
-}
-
-/* Menus from this bar have separators; the panes' context menus do not, so the
-   rule lives here rather than beside them. */
-.titlebar-dropdown .context-menu-separator {
-  height: 1px;
-  margin: 4px 8px;
-  background: var(--border);
 }
 
 /* Keyboard highlight. The mouse gets :hover from the context menu's own rules;

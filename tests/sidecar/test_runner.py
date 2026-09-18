@@ -11,6 +11,7 @@ about how Popen behaves - a fake would agree with whatever this file assumed.
 
 import importlib.util
 import os
+import shutil
 import sys
 import tempfile
 import threading
@@ -233,3 +234,52 @@ class PytestTest(RunSessionTest):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MakeTest(RunSessionTest):
+    """A Makefile target from the tree's row menu: the same three lines again.
+
+    What is particular to make: it runs in the Makefile's own folder, and the
+    binary is whichever the environment's PATH names.
+    """
+
+    def makefile(self, text):
+        path = os.path.join(self.directory.name, "Makefile")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        return path
+
+    def test_a_makefile_that_is_not_there_is_refused_before_anything_is_spawned(self):
+        error = self.session.start_make(
+            os.path.join(self.directory.name, "Makefile"), "build", env=dict(os.environ),
+        )
+        self.assertIn("is not there", error)
+        self.assertFalse(self.session.alive())
+
+    def test_without_make_on_the_path_it_is_refused_with_the_reason(self):
+        # The frontend hides the entries when `make --version` does not answer;
+        # this is the sidecar's own word for the case where the two disagree.
+        env = dict(os.environ)
+        env["PATH"] = self.directory.name
+        error = self.session.start_make(self.makefile("all:\n\techo hi\n"), "all", env=env)
+        self.assertEqual(error, "make is not on the PATH")
+        self.assertFalse(self.session.alive())
+
+    @unittest.skipUnless(shutil.which("make") is not None, "make is not on this machine")
+    def test_it_runs_the_target_from_the_makefiles_own_folder(self):
+        makefile = self.makefile("where:\n\t@pwd\n\t@echo TARGET_RAN\n")
+        self.assertIsNone(self.session.start_make(makefile, "where", env=dict(os.environ)))
+        self.assertTrue(self.exited.wait(30), "make never reported an exit")
+        text = "".join(self.output)
+        self.assertIn("TARGET_RAN", text)
+        # Its own folder, not the process's: the temp dir is where pwd lands.
+        self.assertIn(os.path.basename(self.directory.name), text)
+        self.assertEqual(self.exits, [0])
+
+    @unittest.skipUnless(shutil.which("make") is not None, "make is not on this machine")
+    def test_a_failing_recipe_exits_non_zero_with_makes_own_report(self):
+        makefile = self.makefile("bad:\n\t@exit 3\n")
+        self.assertIsNone(self.session.start_make(makefile, "bad", env=dict(os.environ)))
+        self.assertTrue(self.exited.wait(30), "make never reported an exit")
+        self.assertIn("Error 3", "".join(self.output))
+        self.assertEqual(self.exits, [2])

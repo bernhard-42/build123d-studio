@@ -16,6 +16,7 @@ import argparse
 import faulthandler
 import json
 import os
+import shutil
 import signal
 import sys
 import threading
@@ -384,6 +385,8 @@ class Sidecar:
         # where a step cannot queue behind the session that is starting.
         self.channel.on("run.start", self.on_run_start, lane=DEBUG)
         self.channel.on("run.tests", self.on_run_tests, lane=DEBUG)
+        self.channel.on("run.make", self.on_run_make, lane=DEBUG)
+        self.channel.on("run.tool", self.on_run_tool)
         self.channel.on("run.stop", self.on_run_stop, lane=DEBUG)
         self.channel.on("debug.start", self.on_debug_start, lane=DEBUG)
         self.channel.on("debug.stop", self.on_debug_stop, lane=DEBUG)
@@ -1392,6 +1395,34 @@ class Sidecar:
         else:
             log(f"Tests failed to start: {error}")
             self.channel.send("run.failed", path=path, message=error)
+
+    def on_run_tool(self, message):
+        """Whether a command is on the PATH a run would get.
+
+        Answered here and not by the frontend spawning `make --version`,
+        because the PATH that matters is this process's - the one with the
+        environment's bin and the login shell's entries on it - and the
+        frontend's own is the launcher's.
+        """
+        name = message.get("name")
+        present = isinstance(name, str) and name != "" and shutil.which(name) is not None
+        self.channel.send("run.tool", id=message.get("id"), name=name, present=present)
+
+    def on_run_make(self, message):
+        """Run one Makefile target, the way a pytest run is run."""
+        if self._refusing("a run"):
+            return
+        makefile = message.get("makefile")
+        target = message.get("target")
+        if not isinstance(makefile, str) or not isinstance(target, str) or target == "":
+            self.channel.send("run.failed", path=makefile, message="no target given")
+            return
+        error = self.run.start_make(makefile, target, env=self.kernel.kernel_environment())
+        if error is None:
+            self.channel.send("run.started", path=makefile)
+        else:
+            log(f"make {target} failed to start: {error}")
+            self.channel.send("run.failed", path=makefile, message=error)
 
     def on_run_stop(self, _message):
         self.run.stop()

@@ -481,3 +481,110 @@ test.describe("opening a file gives it the keyboard", () => {
     await expect(page.locator(".monaco-editor .view-lines")).toContainText("MINE");
   });
 });
+
+test.describe("a Makefile's row", () => {
+  const MAKEFILE = [
+    ".PHONY: build test",
+    "VERSION := 1",
+    "build:",
+    "\techo building",
+    "test: build",
+    "\tpytest",
+    "",
+  ].join("\n");
+  const withMakefile = { files: { ...FILES, [`${PROJECT}/Makefile`]: MAKEFILE } };
+  const entries = (page) => page.locator(".context-menu-item", { hasText: "Make ▸" });
+
+  test("offers each target below a line, and picking one runs it", async ({ page }) => {
+    // Flat rather than a submenu, by request: a right-click on a Makefile is
+    // asking for exactly this list. The harness sidecar answers run.tool with
+    // present, which is what a machine with make does.
+    const { sidecar } = await openApp(page, withMakefile);
+
+    await row(page, "Makefile").click({ button: "right" });
+
+    await expect(page.locator(".context-menu")).toBeVisible();
+    await expect(entries(page)).toHaveText(["Make ▸ build", "Make ▸ test"]);
+    await expect(page.locator(".context-menu .context-menu-separator")).toHaveCount(1);
+    // The file actions stay, above the line.
+    await expect(page.locator(".context-menu-item", { hasText: "Rename" })).toHaveCount(1);
+
+    await page.locator(".context-menu-item", { hasText: "Make ▸ test" }).click();
+
+    const frame = await sidecar.waitFor("run.make");
+    expect(frame.makefile).toBe(`${PROJECT}/Makefile`);
+    expect(frame.target).toBe("test");
+  });
+
+  test("while a target runs, Stop is on screen and ends it", async ({ page }) => {
+    // The answer to "how do I stop this": the Run/Debug bar comes up with Stop
+    // as its one control, for a make run as for a file. Pressing it sends
+    // run.stop, and the bar goes with it.
+    const { sidecar } = await openApp(page, withMakefile);
+
+    await row(page, "Makefile").click({ button: "right" });
+    await page.locator(".context-menu-item", { hasText: "Make ▸ test" }).click();
+    await sidecar.waitFor("run.make");
+
+    const stop = page.locator("#debug-stop");
+    await expect(page.locator("#pane-debug")).toBeVisible();
+    await expect(stop).toBeVisible();
+    await expect(stop).toBeEnabled();
+    for (const id of ["debug-continue", "debug-step-over", "debug-step-into", "debug-step-out"]) {
+      await expect(page.locator(`#${id}`)).toBeHidden();
+    }
+
+    await stop.click();
+
+    await sidecar.waitFor("run.stop");
+    await expect(page.locator("#debug-bar")).toBeHidden();
+  });
+
+  test("the Makefile is read at every right-click, so an edit shows at the next one", async ({ page }) => {
+    // Nothing about the file is remembered - only that make is here. A target
+    // added in a terminal is in the menu the next time it opens.
+    await openApp(page, withMakefile);
+
+    await row(page, "Makefile").click({ button: "right" });
+    await expect(entries(page)).toHaveText(["Make ▸ build", "Make ▸ test"]);
+    await page.keyboard.press("Escape");
+
+    await page.evaluate(
+      ([path, text]) => globalThis.__NEUTRALINO_STUB__.given(path, text),
+      [`${PROJECT}/Makefile`, `${MAKEFILE}release: test\n\tsh release.sh\n`],
+    );
+    await row(page, "Makefile").click({ button: "right" });
+
+    await expect(entries(page)).toHaveText(["Make ▸ build", "Make ▸ test", "Make ▸ release"]);
+  });
+
+  test("other files get no Make entries", async ({ page }) => {
+    await openApp(page, withMakefile);
+
+    await row(page, "part.py").click({ button: "right" });
+
+    await expect(page.locator(".context-menu")).toBeVisible();
+    await expect(entries(page)).toHaveCount(0);
+    await expect(page.locator(".context-menu .context-menu-separator")).toHaveCount(0);
+  });
+
+  test("without make on this machine the row is a file like any other - until make answers", async ({ page }) => {
+    // The sidecar says whether make is on the PATH a run gets. And absence is
+    // not remembered: the next right-click asks again, which is what stops
+    // one bad moment deciding the session - see tools.js, and the git case
+    // it was written for.
+    const { sidecar } = await openApp(page, withMakefile);
+
+    let installed = false;
+    sidecar.answer("run.tool", (frame) => ({ name: frame.name, present: installed }));
+    await row(page, "Makefile").click({ button: "right" });
+    await expect(page.locator(".context-menu")).toBeVisible();
+    await expect(entries(page)).toHaveCount(0);
+    await page.keyboard.press("Escape");
+
+    installed = true;
+    await row(page, "Makefile").click({ button: "right" });
+    await expect(entries(page)).toHaveText(["Make ▸ build", "Make ▸ test"]);
+    expect(sidecar.received.filter((f) => f.type === "run.tool")).toHaveLength(2);
+  });
+});
