@@ -30,6 +30,7 @@ import {
   abandonInterrupt,
   interruptPending,
   indicatorClass,
+  kernelState,
   label as kernelLabel,
   onKernelChange,
   report as reportKernel,
@@ -324,12 +325,26 @@ export function refreshToolbarTitles() {
 /**
  * Interrupt what the kernel is running, and offer a restart if it does not stop.
  *
- * Exported because three things do it now: the toolbar button, the button above
- * a cell marker, and the keymap. The offer is the part worth sharing - an
- * interrupt that misses is the case people need help with.
+ * Exported because two things do it: the toolbar button and the lens above a
+ * cell marker, each naming itself in `source`. The offer is the part worth
+ * sharing - an interrupt that misses is the case people need help with.
  */
-export function interruptKernel() {
+export function interruptKernel(source = "toolbar") {
   return withErrorReporting("Interrupt", async () => {
+    // Named in the log with what asked for it. Reported once: the offer to
+    // restart appeared over a kernel that had run nothing, nobody had pressed
+    // anything they knew of, and neither process had written a line about an
+    // interrupt - so nothing could say which of the two callers it was.
+    log.info(`Interrupt requested by the ${source}, kernel ${kernelState()}`);
+    // Only a busy kernel has anything to interrupt. The sidecar announces
+    // busy the moment it accepts a run, so idle here means idle. An idle
+    // kernel ignores the signal and reports nothing - there is no transition
+    // for the grace below to see - and the offer then arrived five seconds
+    // after a press that had nothing to do, claiming the kernel was still
+    // running work it never had.
+    if (kernelState() !== "busy") {
+      return;
+    }
     // Before the send, not after: the point of saying it is that the button
     // did something, and whether it worked is seconds away.
     requestInterrupt();
@@ -385,7 +400,7 @@ export function initToolbar() {
     "btn-run-sel": () => runSelectionOrLine(),
     // Wrapped like the rest: with the sidecar gone these throw out of a click
     // handler, where only the global rejection logger would ever see it.
-    "btn-interrupt": interruptKernel,
+    "btn-interrupt": () => interruptKernel("toolbar button"),
     "btn-restart": restartKernel,
     "btn-palette": openCommandPalette,
     // About's Open buttons open a file in the editor; the title follows, as

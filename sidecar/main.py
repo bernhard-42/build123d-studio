@@ -1190,6 +1190,7 @@ class Sidecar:
         self.watch_stall(msg_id, "Execute")
 
     def on_interrupt(self, _message):
+        log("Interrupt: sending SIGINT to the kernel")
         self.kernel.interrupt()
 
     # --- code completion ---

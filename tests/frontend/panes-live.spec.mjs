@@ -409,6 +409,29 @@ test.describe("the toolbar says what the kernel is doing", () => {
     await expect(page.locator("#kernel-status")).toHaveClass(/idle/);
   });
 
+  test("an interrupt on an idle kernel neither reaches the sidecar nor offers a restart", async ({ page }) => {
+    // Reported: "The kernel did not stop" over a kernel that had never
+    // started. An idle kernel ignores the signal and reports nothing, so the
+    // grace saw no transition and ran out on a kernel doing nothing at all.
+    // Six seconds of real waiting, for the reason the test below gives.
+    test.slow();
+    const { sidecar } = await openApp(page);
+    await expect(page.locator("#kernel-label")).toHaveText("idle");
+
+    await page.locator("#btn-interrupt").click();
+
+    await expect(page.locator("#kernel-label")).toHaveText("idle");
+    await page.waitForTimeout(6000);
+    expect(
+      sidecar.received.filter((f) => f.type === "kernel.interrupt"),
+      "an idle kernel was sent an interrupt",
+    ).toHaveLength(0);
+    await expect(
+      page.locator(".confirm-overlay"),
+      "an idle kernel was offered a restart",
+    ).toBeHidden();
+  });
+
   test("a kernel that obeyed and was given more work is not offered a restart", async ({ page }) => {
     // Reported: interrupt two cells, then run them again straight away, and
     // five seconds later "The kernel did not stop" appeared over a kernel that

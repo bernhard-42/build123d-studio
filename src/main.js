@@ -770,7 +770,7 @@ async function main() {
   // What the Interrupt button above a cell marker does. Handed to the editor
   // rather than imported by it: interrupting belongs to the toolbar, which
   // already imports the editor.
-  setInterrupt(() => void interruptKernel());
+  setInterrupt(() => void interruptKernel("cell lens"));
 
   reloadUserSnippets().catch((error) => log.warn("Could not read the snippets file:", error));
 

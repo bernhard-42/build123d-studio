@@ -7,6 +7,7 @@ What changed in each release, for the people using it. Anything not visible from
 **Fixes**
 
 - **Code completion is back.** Since 0.7.0 the suggestion list never opened — not for `Bo`, `import build1` or `b.bou` — while parameter hints and hover still worked. Fixed; and the *View Problem* action, missing from the hover over an error since the same change, is back with it.
+- **No more "The kernel did not stop" over an idle kernel.** An interrupt with nothing running is ignored instead of being sent, waited on for five seconds and then blamed on the kernel. Every interrupt is now written to the log with what asked for it.
 
 ## 0.7.0 (2026-09-17)
 
