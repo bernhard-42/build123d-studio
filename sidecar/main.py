@@ -24,6 +24,7 @@ import threading
 # already on sys.path for these imports.
 import appinfo
 from channel import KIND_CONSOLE, KIND_MODEL, Channel, flush_logs, log
+from shellpath import adopt_path
 from completer import Completer
 from debugger import DebugSession, debug_python
 from formatter import format_source
@@ -1862,6 +1863,10 @@ def main():
     # deletes it, and from then on os.getcwd() raises FileNotFoundError -
     # which is what turned an "upgrade packages" into an unrestartable kernel.
     os.chdir(os.path.expanduser("~"))
+
+    # Before anything is spawned: every child inherits this process's PATH,
+    # and from the Finder that is four system directories - see shellpath.py.
+    adopt_path(log)
 
     # A wedged startup is silent by construction, and that silence is what made
     # the Windows deadlock expensive: the sidecar simply stopped, having logged
