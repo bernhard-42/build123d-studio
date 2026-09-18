@@ -244,9 +244,11 @@ export const filesystem = {
       missing(path);
     }
     const contents = files.get(path);
+    // A string is text; an array is bytes a test seeded through the harness,
+    // which crosses as JSON and so cannot carry an ArrayBuffer itself.
     const bytes = typeof contents === "string"
       ? new TextEncoder().encode(contents).buffer
-      : contents;
+      : Array.isArray(contents) ? new Uint8Array(contents).buffer : contents;
     if (options === null) {
       return bytes;
     }

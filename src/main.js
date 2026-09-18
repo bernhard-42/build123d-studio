@@ -62,6 +62,7 @@ import {
   checkOpenFilesExist,
   fileRenamed,
   openPath,
+  pinTab,
   restoreWorkspace,
   saveAll,
   saveFile,
@@ -581,13 +582,14 @@ async function main() {
   initTabStrip({
     onSelect: (key) => withTitle(() => selectTab(key)),
     onClose: (key) => withTitle(() => closeTab(key)),
+    onPin: (key) => pinTab(key),
   });
   // Clicking a file in the tree opens it exactly as Open File does, tab and
   // all - the tree is a way of finding files, not a second kind of buffer.
   // A CAD file is shown from the row's menu instead: it is imported on the
   // kernel, and the lines that did it are in the console (importfile.js).
   initSidebar({
-    onOpenFile: (path) => withTitle(() => openPath(path)),
+    onOpenFile: (path, options) => withTitle(() => openPath(path, options)),
     onShowFile: (path) => {
       for (const code of importCode(path) ?? []) {
         execute(code);

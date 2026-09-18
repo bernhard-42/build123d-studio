@@ -48,7 +48,7 @@ function readCurrent(workspace) {
     if (typeof tab.path !== "string" || tab.path === "") {
       continue;
     }
-    tabs.push({ path: tab.path, caret: readCaret(tab.caret) });
+    tabs.push({ path: tab.path, caret: readCaret(tab.caret), preview: tab.preview === true });
   }
   const active = typeof workspace.active === "string" && workspace.active !== ""
     ? workspace.active
@@ -76,14 +76,14 @@ function readLegacy({ lastFile, lastPosition, lastScrollTop }) {
       : null,
   );
   // No folder: nothing that predates the workspace key could have had one.
-  return { folder: null, tabs: [{ path: lastFile, caret }], active: lastFile };
+  return { folder: null, tabs: [{ path: lastFile, caret, preview: false }], active: lastFile };
 }
 
 /**
  * What to reopen, from whatever the settings file happens to contain.
  *
  * @param {{workspace: *, lastFile: *, lastPosition: *, lastScrollTop: *}} settings
- * @returns {{folder: string|null, tabs: Array<{path: string, caret: object|null}>,
+ * @returns {{folder: string|null, tabs: Array<{path: string, caret: object|null, preview: boolean}>,
  *            active: string|null}|null}
  */
 export function readWorkspace(settings) {

@@ -45,6 +45,9 @@ import {
   focusAt,
   insertSnippet,
   isImageBuffer,
+  isPreviewBuffer,
+  pinBuffer,
+  previewBufferKey,
   bufferNeedsSaving,
   markMissingFiles,
   isBufferMissing,
@@ -261,12 +264,27 @@ export async function closeFolder() {
  * re-read from disk. Two tabs over two models of one file are two independent
  * sets of edits, and whichever is saved last would silently win.
  */
-function showInTab({ path = null, text = "", image = null }) {
+function showInTab({ path = null, text = "", image = null, preview = false }) {
   const open = path === null ? null : bufferForPath(path);
-  const key = open === null ? openBuffer({ path, text, image }) : open;
   if (open !== null) {
+    // Already in a tab. Asked for as a kept tab - a double-click, a dialog -
+    // it stops being the preview; asked for as a preview it stays whatever
+    // it was, because a single click on the file behind a kept tab must not
+    // demote it.
+    if (!preview) {
+      pinBuffer(open);
+    }
     showBuffer(open);
+  } else if (preview) {
+    // The one tab a single click replaces. Closed before the new one opens
+    // so the strip does not grow and shrink under the pointer, and only if
+    // it is still a preview: an edit has already pinned a dirty one.
+    const replaced = previewBufferKey();
+    if (replaced !== null) {
+      closeBuffer(replaced);
+    }
   }
+  const key = open === null ? openBuffer({ path, text, image, preview }) : open;
   // The keyboard comes with it, as it does when a tab is chosen. Monaco draws
   // no cursor while it does not have focus, so a file opened from the tree or
   // from the menu arrived on screen with nothing to type into and no caret to
@@ -327,6 +345,13 @@ export async function selectTab(key) {
  *
  * @returns {Promise<boolean>} false if the user cancelled
  */
+/** Keep a tab, as double-clicking it does. */
+export function pinTab(key) {
+  pinBuffer(key);
+  refreshTabs();
+  saveWorkspace().catch((error) => log.warn("Could not save the workspace:", error));
+}
+
 export async function closeTab(key) {
   if (activeBufferKey() !== key) {
     showBuffer(key);
@@ -434,7 +459,7 @@ export async function saveWorkspace() {
   for (const key of bufferKeys()) {
     const path = bufferPath(key);
     if (path !== null) {
-      tabs.push({ path, caret: bufferCaret(key) });
+      tabs.push({ path, caret: bufferCaret(key), preview: isPreviewBuffer(key) });
     }
   }
   await setSetting(WORKSPACE_KEY, {
@@ -696,10 +721,19 @@ export async function restoreWorkspace() {
   // what went in was a buffer that had been opened as text.
   for (const tab of saved === null ? [] : saved.tabs) {
     try {
+      // A picture comes back as a picture. Read as text it would be a buffer
+      // of its bytes with a Save that writes them back as such.
+      if (imageType(tab.path) !== null) {
+        const url = await pictureUrl(tab.path);
+        if (url !== null) {
+          opened.set(tab.path, openBuffer({ path: tab.path, image: url, preview: tab.preview }));
+        }
+        continue;
+      }
       // Stamped before the read, for the reason openPath gives.
       const before = await stampAt(tab.path);
       const content = await filesystem.readFile(tab.path);
-      const key = openBuffer({ path: tab.path, text: content, caret: tab.caret });
+      const key = openBuffer({ path: tab.path, text: content, caret: tab.caret, preview: tab.preview });
       // Stamped here as well as in openPath, and this is the path that matters
       // most: a restored session is where nearly every open file comes from, so
       // a buffer without a stamp here would be one the changed-on-disk check
@@ -921,12 +955,12 @@ async function mayOpen(path) {
  * directory was read and is not there now - and a row that does nothing when
  * clicked is a worse answer than a sentence saying why.
  */
-export async function openPath(path) {
+export async function openPath(path, { preview = false } = {}) {
   // A picture is shown, not edited: its own tab, with the bytes drawn and no
   // editor behind them. Decided by name before the binary check below, which
   // would otherwise refuse it as not being text - which is exactly what it is.
   if (imageType(path) !== null) {
-    return openImage(path);
+    return openImage(path, { preview });
   }
   // A file already in a tab skips the questions, and not only to save the
   // reading. It was answered for when it was opened, and being asked again
@@ -946,7 +980,7 @@ export async function openPath(path) {
     await notifyFailure("Could not open", `${path}\n\n${describe(error)}`);
     return null;
   }
-  showInTab({ path, text: content });
+  showInTab({ path, text: content, preview });
   // Stamped from *before* the content was read, not after.
   //
   // The two cannot be one instant, so the only question is which way the gap
@@ -972,26 +1006,33 @@ export async function openPath(path) {
  * simply brought forward; the bytes are not re-read, since nothing here can
  * change them.
  */
-async function openImage(path) {
+async function openImage(path, { preview = false } = {}) {
   if (bufferForPath(path) !== null) {
-    showInTab({ path });
+    showInTab({ path, preview });
     await saveWorkspace();
     return path;
   }
-  let bytes;
+  const url = await pictureUrl(path);
+  if (url === null) {
+    return null;
+  }
+  showInTab({ path, image: url, preview });
+  await rememberFolder(path);
+  await saveWorkspace();
+  log.info("Opened", path, "as a picture");
+  return path;
+}
+
+/** A picture's bytes as a URL the page can draw, or null with the failure reported. */
+async function pictureUrl(path) {
   try {
-    bytes = await filesystem.readBinaryFile(path);
+    const bytes = await filesystem.readBinaryFile(path);
+    return URL.createObjectURL(new Blob([bytes], { type: imageType(path) }));
   } catch (error) {
     log.warn(`Could not open ${path}:`, error);
     await notifyFailure("Could not open", `${path}\n\n${describe(error)}`);
     return null;
   }
-  const url = URL.createObjectURL(new Blob([bytes], { type: imageType(path) }));
-  showInTab({ path, image: url });
-  await rememberFolder(path);
-  await saveWorkspace();
-  log.info("Opened", path, "as a picture");
-  return path;
 }
 
 /**

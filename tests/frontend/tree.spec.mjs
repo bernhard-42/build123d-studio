@@ -625,7 +625,9 @@ test.describe("a picture in the tree", () => {
 
   test("switching back to a text tab brings the editor back", async ({ page }) => {
     await openWithPicture(page);
-    await row(page, "part.py").click();
+    // Kept, or the single click on the picture would replace it - see the
+    // preview tabs below.
+    await row(page, "part.py").dblclick();
     await expect.poll(() => tabLabels(page)).toContain("part.py");
 
     await row(page, "shot.png").click();
@@ -667,5 +669,118 @@ test.describe("a picture in the tree", () => {
     await row(page, "shot.png").click();
     await expect(page.locator("#image-host")).toBeVisible();
     await expect.poll(() => page.locator("#image-host img").evaluate((img) => img.naturalWidth)).toBe(2);
+  });
+});
+
+test.describe("preview tabs", () => {
+  // VS Code's rule, adopted after clicking through a folder of pictures left
+  // a strip full of them: a single click opens the tab the next single click
+  // replaces, and a double-click, an edit or a double-click on the tab keeps it.
+  const THREE = {
+    files: { ...FILES, [`${PROJECT}/third.py`]: "THIRD = 1\n" },
+  };
+  const previewTabs = (page) => page.locator(".tab.tab-preview .tab-label").allTextContents();
+  // The strip minus the Untitled buffer a start with no tabs opens; these
+  // tests are about the files clicked in the tree.
+  const fileTabs = async (page) => (await tabLabels(page)).filter((label) => label !== "Untitled");
+
+  test("a single click previews, and the next single click replaces it", async ({ page }) => {
+    await openApp(page, THREE);
+
+    await row(page, "part.py").click();
+    await expect.poll(() => fileTabs(page)).toEqual(["part.py"]);
+    await expect.poll(() => previewTabs(page)).toEqual(["part.py"]);
+
+    await row(page, "hinge.py").click();
+
+    await expect.poll(() => fileTabs(page)).toEqual(["hinge.py"]);
+    await expect.poll(() => previewTabs(page)).toEqual(["hinge.py"]);
+    await expect(page.locator(".monaco-editor .view-lines")).toContainText("HINGE = 1");
+  });
+
+  test("a double-click keeps the tab, so the next single click adds one", async ({ page }) => {
+    await openApp(page, THREE);
+
+    await row(page, "part.py").dblclick();
+    await expect.poll(() => fileTabs(page)).toEqual(["part.py"]);
+    await expect.poll(() => previewTabs(page)).toEqual([]);
+
+    await row(page, "hinge.py").click();
+
+    await expect.poll(() => fileTabs(page)).toEqual(["part.py", "hinge.py"]);
+    await expect.poll(() => previewTabs(page)).toEqual(["hinge.py"]);
+  });
+
+  test("typing into a preview keeps it", async ({ page }) => {
+    await openApp(page, THREE);
+    await row(page, "part.py").click();
+    await expect.poll(() => previewTabs(page)).toEqual(["part.py"]);
+
+    await page.keyboard.type("X");
+    await expect.poll(() => previewTabs(page)).toEqual([]);
+
+    await row(page, "hinge.py").click();
+    await expect.poll(() => fileTabs(page)).toEqual(["part.py", "hinge.py"]);
+  });
+
+  test("double-clicking the tab keeps it, and a single click on a kept file does not demote it", async ({ page }) => {
+    await openApp(page, THREE);
+    await row(page, "part.py").click();
+    await expect.poll(() => previewTabs(page)).toEqual(["part.py"]);
+
+    await page.locator(".tab", { hasText: "part.py" }).dblclick();
+    await expect.poll(() => previewTabs(page)).toEqual([]);
+
+    // Kept stays kept when clicked once in the tree.
+    await row(page, "part.py").click();
+    await expect.poll(() => previewTabs(page)).toEqual([]);
+    await row(page, "hinge.py").click();
+    await expect.poll(() => fileTabs(page)).toEqual(["part.py", "hinge.py"]);
+  });
+
+  test("the preview survives a restart as a preview", async ({ page }) => {
+    // The workspace remembers which tab was the preview, so a session that
+    // ends with one comes back with one - and the first single click after
+    // the restart replaces it rather than adding to it.
+    await openApp(page, {
+      ...THREE,
+      settings: {
+        workspace: {
+          folder: PROJECT,
+          tabs: [
+            { path: `${PROJECT}/part.py`, caret: null, preview: false },
+            { path: `${PROJECT}/hinge.py`, caret: null, preview: true },
+          ],
+          active: `${PROJECT}/hinge.py`,
+        },
+      },
+    });
+    await expect.poll(() => fileTabs(page)).toEqual(["part.py", "hinge.py"]);
+    await expect.poll(() => previewTabs(page)).toEqual(["hinge.py"]);
+
+    await row(page, "third.py").click();
+
+    await expect.poll(() => fileTabs(page)).toEqual(["part.py", "third.py"]);
+  });
+
+  test("a picture left open comes back as a picture, not as its bytes", async ({ page }) => {
+    // Restore read every remembered tab as text. A PNG read that way is a
+    // buffer of its bytes with an editor behind it - and a Save that writes
+    // them back as such.
+    const PNG = [137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 2, 0, 0, 0, 3, 8, 2,
+      0, 0, 0, 54, 136, 73, 214, 0, 0, 0, 16, 73, 68, 65, 84, 120, 156, 99, 248, 207, 192, 0, 68, 12, 40, 20,
+      0, 68, 208, 5, 251, 164, 207, 222, 128, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130];
+    const SHOT = `${PROJECT}/shot.png`;
+    // The bytes themselves, seeded before the page loads: restore reads them.
+    await openApp(page, {
+      files: { ...FILES, [SHOT]: PNG },
+      settings: {
+        workspace: { folder: PROJECT, tabs: [{ path: SHOT, caret: null, preview: false }], active: SHOT },
+      },
+    });
+
+    await expect.poll(() => fileTabs(page)).toEqual(["shot.png"]);
+    await expect(page.locator("#image-host")).toBeVisible();
+    await expect(page.locator("#editor-host")).toBeHidden();
   });
 });

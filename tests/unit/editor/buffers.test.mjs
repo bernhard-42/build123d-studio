@@ -22,11 +22,14 @@ import {
   get,
   initBuffers,
   isDirty,
+  isPreview,
   keys,
   contentsOf,
   exists,
   markSaved,
   open,
+  pin,
+  previewKey,
   setPath,
   setViewState,
   viewState,
@@ -412,4 +415,27 @@ test("and back again, so renaming to .py restores it", () => {
   setPath(key, "/p/notes.py");
 
   assert.equal(created[0].language, "python");
+});
+
+test("a buffer opens kept unless asked to be the preview, and pin() keeps it", () => {
+  initBuffers(fakeModels().api);
+  const kept = open({ path: "/p/a.py", text: "" });
+  const previewed = open({ path: "/p/b.py", text: "", preview: true });
+
+  assert.equal(isPreview(kept), false);
+  assert.equal(isPreview(previewed), true);
+  assert.equal(previewKey(), previewed);
+
+  pin(previewed);
+  assert.equal(isPreview(previewed), false);
+  assert.equal(previewKey(), null);
+  // Pinning what does not exist is nothing, not a throw.
+  pin(999);
+});
+
+test("closing the preview leaves none", () => {
+  initBuffers(fakeModels().api);
+  const previewed = open({ path: "/p/b.py", text: "", preview: true });
+  close(previewed);
+  assert.equal(previewKey(), null);
 });

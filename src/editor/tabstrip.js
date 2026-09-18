@@ -20,6 +20,7 @@ import {
   bufferPath,
   isBufferDirty,
   isBufferMissing,
+  isPreviewBuffer,
   onDirtyChange,
 } from "./monaco.js";
 import { labelsFor } from "./tabs.js";
@@ -27,14 +28,17 @@ import { labelsFor } from "./tabs.js";
 let strip = null;
 let select = null;
 let close = null;
+let pin = null;
 
 /**
- * @param {{onSelect: (key: number) => void, onClose: (key: number) => void}} handlers
+ * @param {{onSelect: (key: number) => void, onClose: (key: number) => void,
+ *          onPin?: (key: number) => void}} handlers
  */
 export function initTabStrip(handlers) {
   strip = document.getElementById("tab-strip");
   select = handlers.onSelect;
   close = handlers.onClose;
+  pin = handlers.onPin ?? (() => {});
 
   // A tab has to show the dot the moment the buffer stops matching disk, and
   // typing does not go through any of the actions that redraw the strip.
@@ -77,6 +81,12 @@ function render(tab, isActive) {
   }
   if (missing) {
     classes.push("tab-missing");
+  }
+  // The preview is the tab a single click replaces; its title is in italics,
+  // which is what every editor with the same rule does and what people read
+  // it as.
+  if (isPreviewBuffer(tab.key)) {
+    classes.push("tab-preview");
   }
   element.className = classes.join(" ");
   element.title = missing ? `${tab.title}\n\nNo longer on disk. Save to write it back.` : tab.title;
@@ -130,6 +140,14 @@ function render(tab, isActive) {
       // tabs are not draggable, and they hold no focusable element but the
       // close button, which stops this event before it arrives.
       event.preventDefault();
+      // Double-clicking a preview keeps it, as in VS Code. Read off the click
+      // count here rather than from a dblclick listener: the first click
+      // redraws the strip, so the second lands on a fresh element and the
+      // browser, which wants both clicks on one node, never sends dblclick.
+      if (event.detail === 2) {
+        pin(tab.key);
+        return;
+      }
       select(tab.key);
     }
   });

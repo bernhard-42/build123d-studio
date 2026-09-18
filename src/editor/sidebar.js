@@ -510,7 +510,16 @@ function renderRow(row) {
       return;
     }
     render();
-    openFile(row.path);
+    // A single click previews: the tab it opens is the one the next single
+    // click replaces. A double-click below keeps it. The browser sends both
+    // clicks before the dblclick, so the second click finds the tab already
+    // open and only brings it forward.
+    openFile(row.path, { preview: true });
+  });
+  element.addEventListener("dblclick", () => {
+    if (!row.isDirectory) {
+      openFile(row.path, { preview: false });
+    }
   });
 
   // A right click opens nothing. It marks the row its menu is about and leaves

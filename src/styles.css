@@ -1000,6 +1000,9 @@ html body {
 }
 /* Fills the editor's place; the picture keeps its aspect and never exceeds
    the pane, so a screenshot and an icon are both simply visible. */
+.tab-preview .tab-label {
+  font-style: italic;
+}
 .image-host {
   flex: 1 1 auto;
   min-height: 0;

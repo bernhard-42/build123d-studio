@@ -31,10 +31,12 @@ import { open } from "./app.mjs";
 
 const PROJECT = "/documents/bracket";
 
-// A PNG's first bytes. The signature alone carries no NUL - the first one is in
-// the IHDR chunk's length field right after it - which is why the application
-// sniffs thousands of bytes and not eight.
-const PNG = "\u0089PNG\r\n\u001a\n\u0000\u0000\u0000\rIHDR\u0000\u0000\u0001\u0000";
+// Bytes with no text in them, the NUL a few bytes in rather than first - the
+// way a real binary's is - which is why the application sniffs thousands of
+// bytes and not eight. A compiled module rather than a picture: a .png, .jpg,
+// .gif or .webp opens in a tab of its own now, and is not what "refused" is
+// about.
+const BINARY = "\u0000\u0000\u0000\u0000\u0089\u0001\u0000\u0000\u0000\u001a\u0000\u0000\u0000\u0000\u0007\u0000";
 
 // Past the ten megabyte threshold, and ASCII so its length is its size.
 const HUGE = "b = Box(1, 2, 3)\n".repeat(700000);
@@ -42,7 +44,7 @@ const HUGE = "b = Box(1, 2, 3)\n".repeat(700000);
 const FILES = {
   [`${PROJECT}/part.py`]: "PART = 1\n",
   [`${PROJECT}/plate.py`]: "PLATE = 1\n",
-  [`${PROJECT}/logo.png`]: PNG,
+  [`${PROJECT}/part.pyc`]: BINARY,
   // A large *text* file. Not a STEP: a CAD file is imported on the kernel
   // rather than opened, so it never reaches the size question.
   [`${PROJECT}/generated.py`]: HUGE,
@@ -73,7 +75,7 @@ test.describe("what will not be opened", () => {
   test("a file that is not text is refused, and no tab appears", async ({ page }) => {
     await openApp(page);
 
-    await clickInTree(page, "logo.png");
+    await clickInTree(page, "part.pyc");
 
     const calls = await nativeCalls(page);
     const box = calls.find((call) => call.name === "showMessageBox");
@@ -83,7 +85,7 @@ test.describe("what will not be opened", () => {
     // is entitled to have a PNG in their project.
     expect(box.args[3]).toBe("WARNING");
 
-    await expect(page.locator(".tab-label", { hasText: "logo.png" })).toHaveCount(0);
+    await expect(page.locator(".tab-label", { hasText: "part.pyc" })).toHaveCount(0);
     await expect(page.locator(".tab-active .tab-label")).toHaveText("part.py");
   });
 
@@ -92,11 +94,11 @@ test.describe("what will not be opened", () => {
     // should be read would put a 400 MB STL in memory to reject it.
     await openApp(page);
 
-    await clickInTree(page, "logo.png");
+    await clickInTree(page, "part.pyc");
 
     const calls = await nativeCalls(page);
     const read = calls.filter(
-      (call) => call.name === "readFile" && call.args[0] === `${PROJECT}/logo.png`,
+      (call) => call.name === "readFile" && call.args[0] === `${PROJECT}/part.pyc`,
     );
     expect(read, "the file was read despite being refused").toHaveLength(0);
   });

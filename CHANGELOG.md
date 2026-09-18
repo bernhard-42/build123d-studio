@@ -6,6 +6,7 @@ What changed in each release, for the people using it. Anything not visible from
 
 **New features**
 
+- **Preview tabs, as in VS Code.** A single click on a file in the tree opens it in a preview tab — its title in italics — and the next single click replaces that tab instead of adding another. A double-click on the file or on the tab keeps it, and so does editing it. Which tab is the preview survives a restart.
 - **Pictures open in a tab.** A click on a `.png`, `.jpg`, `.jpeg`, `.gif` or `.webp` in the file tree shows it in a tab of its own, fitted to the pane — viewing only. SVG still opens as text.
 - **Run a Makefile target from the file tree.** Right-click a `Makefile` and its targets are listed below a line as _Make ▸ build_, _Make ▸ test_, …; picking one runs `make <target>` in the Makefile's folder, with the output in the Run/Debug pane and the same Stop as a test run. The list is read from the file at every right-click, and it appears only when `make` is on this machine.
 

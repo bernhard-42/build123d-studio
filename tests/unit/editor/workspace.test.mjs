@@ -53,14 +53,14 @@ test("the single remembered file becomes a one-tab workspace", () => {
     lastScrollTop: 9000,
   }));
   assert.deepEqual(read.tabs, [
-    { path: "/p/bracket.py", caret: { line: 380, column: 5, scrollTop: 9000 } },
+    { path: "/p/bracket.py", caret: { line: 380, column: 5, scrollTop: 9000 }, preview: false },
   ]);
   assert.equal(read.active, "/p/bracket.py");
 });
 
 test("a remembered file with no remembered position still opens", () => {
   const read = readWorkspace(settings({ lastFile: "/p/bracket.py" }));
-  assert.deepEqual(read.tabs, [{ path: "/p/bracket.py", caret: null }]);
+  assert.deepEqual(read.tabs, [{ path: "/p/bracket.py", caret: null, preview: false }]);
 });
 
 test("the new key wins over the old ones, so migration happens once", () => {
@@ -144,4 +144,19 @@ test("a remembered tab that did not open falls back to the first", () => {
 test("nothing open is nothing to show", () => {
   assert.equal(chooseActive([], "/p/a.py"), null);
   assert.equal(chooseActive([], null), null);
+});
+
+test("a preview tab is remembered as one, and anything else is a kept tab", () => {
+  const read = readWorkspace(settings({
+    workspace: {
+      folder: "/p",
+      tabs: [
+        { path: "/p/a.py", caret: null, preview: true },
+        { path: "/p/b.py", caret: null, preview: "yes" },
+        { path: "/p/c.py", caret: null },
+      ],
+      active: "/p/a.py",
+    },
+  }));
+  assert.deepEqual(read.tabs.map((tab) => tab.preview), [true, false, false]);
 });

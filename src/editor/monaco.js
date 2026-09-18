@@ -590,10 +590,25 @@ export function getValue() {
  * it, so Cmd-Z in a freshly opened file could put back a line belonging to a
  * file that was no longer on screen.
  */
-export function openBuffer({ path = null, text = "", caret = null, matchesDisk = true, image = null }) {
-  const key = buffers.open({ path, text, caret, matchesDisk, image });
+export function openBuffer({ path = null, text = "", caret = null, matchesDisk = true, image = null, preview = false }) {
+  const key = buffers.open({ path, text, caret, matchesDisk, image, preview });
   showBuffer(key);
   return key;
+}
+
+/** Whether a buffer is the preview tab - see buffers.js. */
+export function isPreviewBuffer(key) {
+  return buffers.isPreview(key);
+}
+
+/** The preview tab's key, or null. */
+export function previewBufferKey() {
+  return buffers.previewKey();
+}
+
+/** Keep a buffer: no single click replaces it afterwards. */
+export function pinBuffer(key) {
+  buffers.pin(key);
 }
 
 /**
@@ -1125,6 +1140,13 @@ export function initEditor() {
   // Bound to the editor rather than to a model, so it follows whichever buffer
   // is on screen and survives every switch between them.
   editor.onDidChangeModelContent(() => {
+    // Typing into a preview keeps it. Before anything else, so that whatever
+    // redraws the strip on this keystroke already sees a pinned tab.
+    const active = buffers.activeKeyOf();
+    if (active !== null && buffers.isPreview(active)) {
+      buffers.pin(active);
+      notifyDirtyChanged();
+    }
     refreshCellDecorations();
     scheduleDirtyCheck();
     // Told on every keystroke rather than on a transition, because what

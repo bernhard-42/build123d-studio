@@ -61,7 +61,7 @@ export function initBuffers(modelOperations) {
  * Does not activate it. Which buffer the editor shows is a separate decision and
  * belongs to the caller that is about to attach the model.
  */
-export function open({ path = null, text = "", caret = null, matchesDisk = true, image = null }) {
+export function open({ path = null, text = "", caret = null, matchesDisk = true, image = null, preview = false }) {
   const key = nextKey;
   nextKey += 1;
   const model = models.create(text, path);
@@ -83,8 +83,37 @@ export function open({ path = null, text = "", caret = null, matchesDisk = true,
     // edits. The model above is empty and never shown for one of these; it
     // exists so that a buffer is one shape everywhere else.
     image,
+    // A preview is a tab opened by a single click, and it is the one tab the
+    // next single click replaces - VS Code's rule, adopted because clicking
+    // through a folder of pictures left a strip full of them. At most one
+    // buffer is a preview at a time; pin() takes the flag off, and the
+    // things that pin are an edit, a double-click, and a save.
+    preview,
   });
   return key;
+}
+
+/** Whether a buffer is the preview tab. */
+export function isPreview(key) {
+  return buffers.get(key)?.preview === true;
+}
+
+/** The preview buffer, if there is one. */
+export function previewKey() {
+  for (const buffer of buffers.values()) {
+    if (buffer.preview) {
+      return buffer.key;
+    }
+  }
+  return null;
+}
+
+/** Keep a buffer: it is no longer the one a single click replaces. */
+export function pin(key) {
+  const buffer = buffers.get(key);
+  if (buffer !== undefined) {
+    buffer.preview = false;
+  }
 }
 
 /** The picture a buffer shows, or null for a text buffer. */
