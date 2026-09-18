@@ -52,6 +52,10 @@ class PtyConsole:
         self._winpty = None
         self._reader = None
         self._stopped = threading.Event()
+        # Whether anybody has typed into this console. Set by write(), which
+        # is the only way keystrokes reach it; read when it exits, to tell a
+        # Ctrl-D from a console that died on its own - see Sidecar.console_start.
+        self.typed = threading.Event()
 
         # Guards use of the pty handle against the close that ends it.
         #
@@ -208,6 +212,7 @@ class PtyConsole:
 
     def write(self, data: bytes):
         """Send keystrokes from xterm.js to the console."""
+        self.typed.set()
         with self._fd_lock:
             if self._stopped.is_set():
                 return

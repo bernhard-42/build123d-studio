@@ -20,6 +20,7 @@ import shutil
 import signal
 import sys
 import threading
+import time
 
 # The sidecar is run by path (python sidecar/main.py), so its own directory is
 # already on sys.path for these imports.
@@ -87,6 +88,7 @@ FORMAT = "format"
 # works and up to thirty when it does not. Neither belongs in front of a
 # keystroke, and neither belongs behind a fifteen-second inspection.
 DEBUG = "debug"
+
 
 # The most suggestions one reply carries. `import ` alone offers 394 on this
 # machine, and every one of them crosses the socket on a keystroke. Two hundred
@@ -565,21 +567,37 @@ class Sidecar:
             # first Run onto every startup. See on_iopub for what fires it now.
             self.channel.send_binary(KIND_CONSOLE, data)
 
+        started = time.monotonic()
+
         def on_exit():
             # A restart stops the console on purpose and starts a new one a
             # moment later. Reporting that as an exit would put "[console
             # exited]" in the transcript every time the user restarts.
             if self.console is not console:
                 return
-            self.channel.send("console.exit")
+            # A console that ended on its own - Ctrl-D at its prompt, `exit`,
+            # a crash - is only the client; the kernel and everything in it
+            # are fine. So it is replaced, and the namespace is not touched:
+            # Restart Kernel was the only way back and it threw the session's
+            # names away for a client that had merely quit. Only one that was
+            # typed into: a console that cannot start, or draws its banner and
+            # crashes, does so without a keystroke and would be replaced for
+            # ever, while one that got a keystroke ended because of it. A
+            # lifetime was the first test and a burst limit the second; timing
+            # cannot tell a person from a loop, and input can. Not while we
+            # are leaving. The replacement is started on the control lane,
+            # where a kernel restart runs too, so the two cannot start a
+            # console each.
+            lived = time.monotonic() - started
+            respawn = console.typed.is_set() and not self._refusing("a console")
+            self.channel.send("console.exit", respawning=respawn)
+            if respawn:
+                log(f"Console exited after {lived:.0f}s; starting another")
+                self.channel.submit(CONTROL, lambda: self._console_respawn(console))
+            else:
+                log(f"Console exited after {lived:.0f}s; not replaced - nobody had typed into it")
 
-        console = PtyConsole(
-            python=sys.executable,
-            console_module_dir=self.sidecar_dir,
-            connection_file=self.kernel.connection_file,
-            on_output=on_output,
-            on_exit=on_exit,
-        )
+        console = self._new_console(on_output, on_exit)
         self.console = console
         if self.console_size is None:
             console.start()
@@ -1150,6 +1168,29 @@ class Sidecar:
     # Both tolerate self.console being None: there is no console for the moment
     # between stopping the old one and starting its replacement, and a keystroke
     # or a pane resize can arrive in exactly that window.
+
+    def _new_console(self, on_output, on_exit):
+        """The console process. A method so a test can hand back a fake."""
+        return PtyConsole(
+            python=sys.executable,
+            console_module_dir=self.sidecar_dir,
+            connection_file=self.kernel.connection_file,
+            on_output=on_output,
+            on_exit=on_exit,
+        )
+
+    def _console_respawn(self, exited):
+        """Start a console in place of one that exited on its own.
+
+        On the control lane, behind whatever restart may be in flight: if a
+        restart got there first, `self.console` is no longer the one that
+        exited and there is nothing left to do.
+        """
+        if self.console is not exited or self._refusing("a console"):
+            return
+        self.console = None
+        self.console_start()
+        self.channel.send("console.restarted")
 
     def on_console_input(self, payload):
         if self.console is not None:

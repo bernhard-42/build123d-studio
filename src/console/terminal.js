@@ -114,8 +114,20 @@ export function initConsole() {
     terminal.focus();
   });
 
-  ipc.on("console.exit", () => {
-    terminal.write("\r\n\x1b[31m[console exited]\x1b[0m\r\n");
+  ipc.on("console.exit", (frame) => {
+    // Replaced by the sidecar when it exited on its own after living a while
+    // - Ctrl-D, `exit` - and the kernel with its namespace stays. Said so,
+    // rather than a pane that merely stops, because the banner that follows
+    // is the same one a restart draws and would otherwise read as one.
+    terminal.write(frame?.respawning === true
+      ? "\r\n\x1b[31m[console exited]\x1b[0m \x1b[2m- starting another; the kernel and its variables are kept\x1b[0m\r\n"
+      : "\r\n\x1b[31m[console exited]\x1b[0m\r\n");
+  });
+
+  ipc.on("console.restarted", () => {
+    // The new pty has to know the pane's size before its banner is drawn.
+    sendSize();
+    terminal.focus();
   });
 
   onPaneResize(refit);
