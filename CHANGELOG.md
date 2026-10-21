@@ -2,7 +2,7 @@
 
 What changed in each release, for the people using it. Anything not visible from the outside is in the git log.
 
-## 0.10.0 (unreleased)
+## 0.10.0 (2026-10-21)
 
 - **Features**
     - New setting **Show minimap** under View in the Editor settings (default on): turns the editor's minimap off or on, at once and for the next start
