@@ -24,14 +24,12 @@ import { execute } from "../editor/monaco.js";
 import { afterNativeDialog } from "../nativedialog.js";
 import { chooseSaveName } from "../savedialog.js";
 import { getSetting, setSetting } from "../store.js";
-import {
-  defaultValue,
-  exportCode,
-  filtersFor,
-  fits,
-  problems,
-  suggestedName,
-} from "./exportcode.js";
+import { problems } from "../signatureform.js";
+import { escapeHtml, optionRows, readControl, startingValues } from "../signaturecontrols.js";
+import { exportCode, filtersFor, suggestedName } from "./exportcode.js";
+
+// The controls' ids: export-option-unit and so on.
+const PREFIX = "export-option-";
 
 // The last format and the values per format, so the next export starts where
 // the last one ended: { format: "STEP", values: { STEP: { unit: "IN" } } }.
@@ -50,14 +48,6 @@ const NOTES = {
 
 let open = false;
 
-function escapeHtml(text) {
-  return String(text)
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;");
-}
-
 /** What was remembered, made safe to read whatever settings.json holds. */
 function remembered() {
   const stored = getSetting(EXPORT_KEY);
@@ -67,48 +57,6 @@ function remembered() {
   const values = typeof stored.values === "object" && stored.values !== null ? stored.values : {};
   const format = typeof stored.format === "string" ? stored.format : null;
   return { format, values };
-}
-
-/** A format's starting values: remembered where they still fit, else defaults. */
-function startingValues(form, stored) {
-  const values = {};
-  for (const option of form.options) {
-    const kept = stored?.[option.name];
-    values[option.name] = kept !== undefined && fits(option, kept) ? kept : defaultValue(option);
-  }
-  return values;
-}
-
-function controlFor(option, value) {
-  const id = `export-option-${option.name}`;
-  switch (option.kind) {
-    case "bool":
-      return `<input type="checkbox" id="${id}" ${value === true ? "checked" : ""} />`;
-    case "number":
-      return `<input type="text" inputmode="decimal" id="${id}" value="${escapeHtml(value)}" />`;
-    case "enum":
-      return `<select id="${id}">${option.choices
-        .map((choice) => `<option value="${escapeHtml(choice)}" ${choice === value ? "selected" : ""}>${escapeHtml(choice)}</option>`)
-        .join("")}</select>`;
-    case "text":
-      return `<input type="text" id="${id}" value="${escapeHtml(value)}"
-                     placeholder="${option.optional === true ? "None" : ""}" spellcheck="false" />`;
-    default:
-      // Shown so nothing is hidden, and left at its default because the dialog
-      // could not write anything else back as Python.
-      return `<input type="text" id="${id}" value="${escapeHtml(option.default)}" disabled />`;
-  }
-}
-
-function readControl(option) {
-  const element = document.getElementById(`export-option-${option.name}`);
-  if (element === null) {
-    return undefined;
-  }
-  if (option.kind === "bool") {
-    return element.checked;
-  }
-  return element.value;
 }
 
 /**
@@ -211,7 +159,7 @@ export async function openExportDialog(target) {
     const form = formFor(current);
     const values = valuesByFormat.get(current);
     for (const option of form.options) {
-      const value = readControl(option);
+      const value = readControl(option, PREFIX);
       if (value !== undefined && option.kind !== "fixed") {
         values[option.name] = value;
       }
@@ -225,15 +173,7 @@ export async function openExportDialog(target) {
     note.textContent = NOTES[form.format] ?? "";
     note.hidden = note.textContent === "";
     const options = overlay.querySelector("#export-options");
-    options.innerHTML = form.options.length === 0
-      ? `<p class="info-note">${escapeHtml(form.function)} has no options.</p>`
-      : form.options
-        .map((option) => `
-          <label class="settings-viewer-row" title="${escapeHtml(option.doc ?? "")}">
-            <span class="settings-viewer-name">${escapeHtml(option.name)}</span>
-            ${controlFor(option, values[option.name])}
-          </label>`)
-        .join("");
+    options.innerHTML = optionRows(form, values, PREFIX);
     overlay.querySelector("#export-problems").hidden = true;
   };
 

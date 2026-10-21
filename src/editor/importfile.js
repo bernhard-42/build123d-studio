@@ -21,6 +21,11 @@ const IMPORTERS = {
   svg: "import_svg",
 };
 
+/** The extensions build123d imports, for an open dialog's filter. */
+export function importExtensions() {
+  return Object.keys(IMPORTERS);
+}
+
 /**
  * The importer for a path, by its extension, or null when the file is not one
  * of build123d's.

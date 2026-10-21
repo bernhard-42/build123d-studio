@@ -106,8 +106,18 @@ test("File carries the items tabs will need, separated into groups", () => {
     file.map((entry) => entry.text),
     ["New", "Open File…", "Open Folder…", "-",
       "Save", "Save As…", "Save All", "-",
-      "Close", "Close All", "Close Folder"],
+      "Close", "Close All", "Close Folder", "-",
+      "Import…"],
   );
+});
+
+test("Import… is at the foot of File, above Exit where there is one", () => {
+  const mac = submenu(menu("Darwin"), "menu.file");
+  assert.equal(mac.at(-1).id, MENU.IMPORT);
+  for (const platform of ["Windows", "Linux"]) {
+    const file = submenu(menu(platform), "menu.file").map((entry) => entry.text);
+    assert.deepEqual(file.slice(-3), ["Import…", "-", "Exit"], platform);
+  }
 });
 
 test("View carries the layout toggles and the parameter panel", () => {

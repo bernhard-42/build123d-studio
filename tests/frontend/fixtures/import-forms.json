@@ -1,0 +1,87 @@
+{
+  "_comment": "importing.forms() captured from build123d 0.13.0; recapture when the import_* signatures change",
+  "forms": [
+    {
+      "format": "BREP",
+      "function": "import_brep",
+      "available": true,
+      "options": []
+    },
+    {
+      "format": "DXF",
+      "function": "import_dxf",
+      "available": true,
+      "options": []
+    },
+    {
+      "format": "STEP",
+      "function": "import_step",
+      "available": true,
+      "options": []
+    },
+    {
+      "format": "STL",
+      "function": "import_stl",
+      "available": true,
+      "options": [
+        {
+          "name": "model_unit",
+          "kind": "enum",
+          "enum": "Unit",
+          "choices": [
+            "MC",
+            "MM",
+            "CM",
+            "M",
+            "IN",
+            "FT",
+            "G",
+            "KG",
+            "LB"
+          ],
+          "default": "MM",
+          "doc": "the default unit used when creating the model. For example, Blender defaults to Unit.M. Defaults to Unit.MM."
+        }
+      ]
+    },
+    {
+      "format": "SVG",
+      "function": "import_svg",
+      "available": true,
+      "options": [
+        {
+          "name": "flip_y",
+          "kind": "bool",
+          "default": true,
+          "doc": "flip objects to compensate for svg orientation. Defaults to True."
+        },
+        {
+          "name": "align",
+          "kind": "enum",
+          "enum": "Align",
+          "choices": [
+            "MIN",
+            "CENTER",
+            "MAX",
+            "NONE"
+          ],
+          "default": "MIN",
+          "doc": "alignment of the SVG's viewbox, if None, the viewbox's origin will be at `(0,0,0)`. Defaults to Align.MIN."
+        },
+        {
+          "name": "ignore_visibility",
+          "kind": "bool",
+          "default": false,
+          "doc": "Defaults to False."
+        },
+        {
+          "name": "label_by",
+          "kind": "text",
+          "optional": false,
+          "default": "id",
+          "doc": "XML attribute to use for imported shapes' `label` property. Defaults to \"id\". Use `inkscape:label` to read labels set from Inkscape's \"Layers and Objects\" panel."
+        }
+      ]
+    }
+  ]
+}

@@ -82,6 +82,7 @@ import { followWindowFocus } from "./nativedialog.js";
 import { initViewer, showLogo } from "./viewer/viewer.js";
 import { exportTargetFor, initVariables, selectionFor } from "./vars/explorer.js";
 import { openExportDialog } from "./vars/exportdialog.js";
+import { importFile } from "./editor/importdialog.js";
 import { hasModels, initParams, toggleParamsPanel } from "./params/panel.js";
 import { initCameraShortcut } from "./camerashortcut.js";
 import { awaitKernelRestart, showSettings } from "./settings.js";
@@ -724,6 +725,7 @@ async function main() {
     [MENU.SAVE_ALL]: () => withMenu(saveAll),
     [MENU.CLOSE]: () => withMenu(closeActiveTab),
     [MENU.CLOSE_ALL]: () => withMenu(closeEveryTab),
+    [MENU.IMPORT]: () => void importFile(),
     "run.cell": () => runCell(),
     "run.cell.stay": () => runCell({ advance: false }),
     "run.selectionOrLine": () => runSelectionOrLine(),

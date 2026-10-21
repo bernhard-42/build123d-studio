@@ -16,6 +16,7 @@ import build123d as bd
 
 from build123d_studio import exporting
 from build123d_studio import inspector
+from build123d_studio import signatures
 
 
 def forms():
@@ -83,7 +84,7 @@ class OptionKindsTest(unittest.TestCase):
         parameter = inspect.Parameter(
             "x", inspect.Parameter.POSITIONAL_OR_KEYWORD, default=default, annotation=annotation
         )
-        return exporting._option(bd, parameter)
+        return signatures.option(bd, parameter)
 
     def test_an_enum_build123d_does_not_export_is_shown_fixed(self):
         class Local(enum.Enum):

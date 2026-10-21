@@ -7,15 +7,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import {
-  defaultValue,
-  exportCode,
-  filtersFor,
-  fits,
-  problems,
-  pythonString,
-  suggestedName,
-} from "../../src/vars/exportcode.js";
+import { defaultValue, fits, problems, pythonString } from "../../src/signatureform.js";
+import { exportCode, filtersFor, suggestedName } from "../../src/vars/exportcode.js";
 
 const STEP = {
   format: "STEP",

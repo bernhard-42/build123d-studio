@@ -46,6 +46,7 @@ INSPECTOR = '__import__("build123d_studio.inspector", fromlist=["inspector"])'
 # The Export dialog's options, read from build123d's export_* signatures - the
 # same way in, for the same reason.
 EXPORTER = '__import__("build123d_studio.exporting", fromlist=["exporting"])'
+IMPORTER = '__import__("build123d_studio.importing", fromlist=["importing"])'
 
 
 # Serial lanes for handlers too slow to run on the receive thread. Two, not one,
@@ -346,6 +347,7 @@ class Sidecar:
         self.channel.on("vars.refresh", self.on_vars_refresh, lane=INSPECT)
         self.channel.on("app.info", self.on_app_info, lane=INSPECT)
         self.channel.on("export.forms", self.on_export_forms, lane=INSPECT)
+        self.channel.on("import.forms", self.on_import_forms, lane=INSPECT)
 
         # Inline, and it does not read anything: it claims the name and puts the
         # slow part on the lane itself. Registering it with lane=INSPECT would
@@ -1662,19 +1664,26 @@ class Sidecar:
         self.channel.send("kernel.restarted")
 
     def on_export_forms(self, message):
-        """The Export dialog's formats and options, read from the kernel.
+        """The Export dialog's formats and options, read from the kernel."""
+        self.channel.send("export.forms", id=message.get("id"), forms=self._read_forms(EXPORTER))
 
-        Answered with forms=None when they cannot be read - no kernel, the
-        warm-up still importing build123d_studio, or an inspection that timed
-        out - so the dialog can say so instead of waiting for a reply that is
-        not coming. The warm-up is refused for refresh_variables' reason:
-        importing build123d_studio.exporting while the main thread is still
-        initialising the package is what wedged the kernel at 0% CPU.
+    def on_import_forms(self, message):
+        """The Import dialog's importers and options, read from the kernel."""
+        self.channel.send("import.forms", id=message.get("id"), forms=self._read_forms(IMPORTER))
+
+    def _read_forms(self, module):
+        """A dialog's forms, or None when they cannot be read.
+
+        None for no kernel, for the warm-up still importing build123d_studio,
+        and for an inspection that timed out - so the dialog can say so instead
+        of waiting for a reply that is not coming. The warm-up is refused for
+        refresh_variables' reason: importing a build123d_studio module while
+        the main thread is still initialising the package is what wedged the
+        kernel at 0% CPU.
         """
-        forms = None
-        if self.kernel is not None and self._warm_request is None:
-            forms = self._inspect(f"{EXPORTER}.forms()")
-        self.channel.send("export.forms", id=message.get("id"), forms=forms)
+        if self.kernel is None or self._warm_request is not None:
+            return None
+        return self._inspect(f"{module}.forms()")
 
     def on_app_info(self, _message):
         self.channel.send(

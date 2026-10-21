@@ -55,6 +55,7 @@ export const MENU = {
   SAVE_ALL: "file.saveAll",
   CLOSE: "file.close",
   CLOSE_ALL: "file.closeAll",
+  IMPORT: "file.import",
   TOGGLE_SIDEBAR: "view.sidebar",
   TOGGLE_BOTTOM: "view.bottom",
   TOGGLE_PARAMS: "view.params",
@@ -287,6 +288,10 @@ export function buildMenu({
         at(MENU.CLOSE, "Close"),
         at(MENU.CLOSE_ALL, "Close All"),
         at(MENU.CLOSE_FOLDER, "Close Folder"),
+        // A CAD file into a variable, through build123d's importer. Last but
+        // for Exit, which stays the foot of File where it is the custom.
+        SEPARATOR,
+        at(MENU.IMPORT, "Import…"),
         ...(mac ? [] : [SEPARATOR, at(MENU.QUIT, "Exit")]),
       ],
     },

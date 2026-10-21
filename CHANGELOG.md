@@ -7,6 +7,7 @@ What changed in each release, for the people using it. Anything not visible from
 - **Features**
     - New setting **Show minimap** under View in the Editor settings (default on): turns the editor's minimap off or on, at once and for the next start
     - **Export…** in the variable explorer's right-click menu writes a build123d shape, an assembly or what a builder built to STEP, STL, BREP, OBJ or GLTF. The dialog shows the options of build123d's `export_*` function for the chosen format with their defaults, remembers the last format and options, and runs the export as a line in the console that can be copied into a script
+    - **Import…** at the foot of the File menu reads a BREP, DXF, STEP, STL or SVG file into a variable: after the file, a dialog asks for the variable's name (the file's, by default) and shows the options of build123d's `import_*` function for that format with their defaults, and the import runs as `name = import_…(…)` in the console. Cancel in either dialog ends it
 
 - **Changes**
     - The Python environment depends on `build123d>=0.13.0` (was `>=0.11.1`), which runs on OCP 8 (`cadquery-ocp-novtk` 8.0); the OCP type stubs move to 8.0 with it
