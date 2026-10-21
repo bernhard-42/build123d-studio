@@ -58,7 +58,13 @@ export function chooseTarget({ consoleFocused, editorFocused, fieldFocused }) {
  * every other application does: an item that vanishes teaches nobody that it
  * exists, and the menu jumping between one row and two is worse than a grey one.
  */
-export function contextMenuItems({ pane, hasSelection, platform, hasVariable = false }) {
+export function contextMenuItems({
+  pane,
+  hasSelection,
+  platform,
+  hasVariable = false,
+  canExport = false,
+}) {
   const copy = { id: "copy", label: "Copy", shortcut: shortcutFor("C", platform),
     enabled: hasSelection === true };
 
@@ -81,6 +87,11 @@ export function contextMenuItems({ pane, hasSelection, platform, hasVariable = f
       // greyed rather than absent - the menu should look the same wherever
       // it opens.
       { id: "show", label: "Show", shortcut: null, enabled: hasVariable === true },
+      { separator: true },
+      // One object to a file: enabled for a single selected row the kernel
+      // marked as a build123d shape or builder - see exporting.py - and greyed
+      // like Show everywhere else.
+      { id: "export", label: "Export…", shortcut: null, enabled: canExport === true },
     ];
   }
   return [];

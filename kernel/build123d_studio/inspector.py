@@ -38,6 +38,8 @@ import types
 from collections.abc import Iterable, Iterator, Mapping, Sequence, Sized
 from itertools import islice
 
+from .exporting import export_target
+
 # Names that are always noise in this context: IPython's own machinery and the
 # names the app pre-imports to make the first run fast - show and its siblings
 # come from the kernel-side package, not from anything the user wrote.
@@ -596,6 +598,9 @@ def variables():
                 # somewhere. An int with a twisty is a promise the row cannot
                 # keep.
                 "expandable": _expandable(value),
+                # What the row's Export... exports: "" for the variable itself,
+                # ".part" and the like for a builder, None for no Export.
+                "export": export_target(value),
             }
         )
     rows.sort(key=lambda row: row["name"].lower())
@@ -614,6 +619,7 @@ def variables():
             "repr": "not shown",
             "label": "",
             "expandable": False,
+            "export": None,
         })
     return json.dumps(rows)
 

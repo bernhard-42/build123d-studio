@@ -1,0 +1,179 @@
+{
+  "_comment": "exporting.forms() captured from build123d 0.13.0; recapture when the export_* signatures change",
+  "forms": [
+    {
+      "format": "STEP",
+      "function": "export_step",
+      "extension": ".step",
+      "available": true,
+      "options": [
+        {
+          "name": "unit",
+          "kind": "enum",
+          "enum": "Unit",
+          "choices": [
+            "MC",
+            "MM",
+            "CM",
+            "M",
+            "IN",
+            "FT",
+            "G",
+            "KG",
+            "LB"
+          ],
+          "default": "MM",
+          "doc": "shape units. Defaults to Unit.MM."
+        },
+        {
+          "name": "write_pcurves",
+          "kind": "bool",
+          "default": true,
+          "doc": "write parametric curves to the STEP file. Defaults to True."
+        },
+        {
+          "name": "precision_mode",
+          "kind": "enum",
+          "enum": "PrecisionMode",
+          "choices": [
+            "SESSION",
+            "GREATEST",
+            "AVERAGE",
+            "LEAST"
+          ],
+          "default": "AVERAGE",
+          "doc": "geometric data precision. Defaults to PrecisionMode.AVERAGE."
+        },
+        {
+          "name": "timestamp",
+          "kind": "text",
+          "optional": true,
+          "default": null,
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "format": "STL",
+      "function": "export_stl",
+      "extension": ".stl",
+      "available": true,
+      "options": [
+        {
+          "name": "tolerance",
+          "kind": "number",
+          "integer": false,
+          "default": 0.001,
+          "doc": "A linear deflection setting which limits the distance between a curve and its tessellation. Setting this value too low will result in large meshes that can consume computing resources. Setting the value too high can result in meshes with a level of detail that is too low. The default is a good starting point for a range of cases. Defaults to 1e-3."
+        },
+        {
+          "name": "angular_tolerance",
+          "kind": "number",
+          "integer": false,
+          "default": 0.1,
+          "doc": "Angular deflection setting which limits the angle between subsequent segments in a polyline. Defaults to 0.1."
+        },
+        {
+          "name": "ascii_format",
+          "kind": "bool",
+          "default": false,
+          "doc": "Export the file as ASCII (True) or binary (False) STL format. Defaults to False (binary)."
+        }
+      ]
+    },
+    {
+      "format": "BREP",
+      "function": "export_brep",
+      "extension": ".brep",
+      "available": true,
+      "options": []
+    },
+    {
+      "format": "OBJ",
+      "function": "export_obj",
+      "extension": ".obj",
+      "available": true,
+      "options": [
+        {
+          "name": "linear_deflection",
+          "kind": "number",
+          "integer": false,
+          "default": 0.001,
+          "doc": "Tessellation linear deflection. Defaults to 1e-3."
+        },
+        {
+          "name": "angular_deflection",
+          "kind": "number",
+          "integer": false,
+          "default": 0.1,
+          "doc": "Tessellation angular deflection. Defaults to 0.1."
+        },
+        {
+          "name": "include_uvs",
+          "kind": "bool",
+          "default": true,
+          "doc": "Include UV texture coordinates. Defaults to True."
+        },
+        {
+          "name": "atlas_packing",
+          "kind": "bool",
+          "default": true,
+          "doc": "Pack per-face UVs into a single atlas. Only used when *include_uvs* is True. Defaults to True."
+        },
+        {
+          "name": "atlas_gutter",
+          "kind": "number",
+          "integer": false,
+          "default": 0.0,
+          "doc": "Normalized empty margin around each UV island in a packed atlas. Only used when *atlas_packing* is True. Defaults to 0.0."
+        }
+      ]
+    },
+    {
+      "format": "GLTF",
+      "function": "export_gltf",
+      "extension": ".gltf",
+      "available": true,
+      "options": [
+        {
+          "name": "unit",
+          "kind": "enum",
+          "enum": "Unit",
+          "choices": [
+            "MC",
+            "MM",
+            "CM",
+            "M",
+            "IN",
+            "FT",
+            "G",
+            "KG",
+            "LB"
+          ],
+          "default": "MM",
+          "doc": "shape units. Defaults to Unit.MM."
+        },
+        {
+          "name": "binary",
+          "kind": "bool",
+          "default": false,
+          "doc": "output format. Defaults to False."
+        },
+        {
+          "name": "linear_deflection",
+          "kind": "number",
+          "integer": false,
+          "default": 0.001,
+          "doc": "A linear deflection setting which limits the distance between a curve and its tessellation. Setting this value too low will result in large meshes that can consume computing resources. Setting the value too high can result in meshes with a level of detail that is too low. The default is a good starting point for a range of cases. Defaults to 1e-3."
+        },
+        {
+          "name": "angular_deflection",
+          "kind": "number",
+          "integer": false,
+          "default": 0.1,
+          "doc": "Angular deflection setting which limits the angle between subsequent segments in a polyline. Defaults to 0.1."
+        }
+      ]
+    }
+  ]
+}

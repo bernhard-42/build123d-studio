@@ -43,6 +43,10 @@ from stall import StallWatch
 # namespace - the variable explorer would otherwise list its own helper.
 INSPECTOR = '__import__("build123d_studio.inspector", fromlist=["inspector"])'
 
+# The Export dialog's options, read from build123d's export_* signatures - the
+# same way in, for the same reason.
+EXPORTER = '__import__("build123d_studio.exporting", fromlist=["exporting"])'
+
 
 # Serial lanes for handlers too slow to run on the receive thread. Two, not one,
 # so a restart cannot queue behind an inspection - see the registrations below.
@@ -341,6 +345,7 @@ class Sidecar:
         self.channel.on("viewer.screenshot", self.on_viewer_screenshot, lane=MEASURE)
         self.channel.on("vars.refresh", self.on_vars_refresh, lane=INSPECT)
         self.channel.on("app.info", self.on_app_info, lane=INSPECT)
+        self.channel.on("export.forms", self.on_export_forms, lane=INSPECT)
 
         # Inline, and it does not read anything: it claims the name and puts the
         # slow part on the lane itself. Registering it with lane=INSPECT would
@@ -1655,6 +1660,21 @@ class Sidecar:
             return
         self.report("kernel", "ready", "restarted")
         self.channel.send("kernel.restarted")
+
+    def on_export_forms(self, message):
+        """The Export dialog's formats and options, read from the kernel.
+
+        Answered with forms=None when they cannot be read - no kernel, the
+        warm-up still importing build123d_studio, or an inspection that timed
+        out - so the dialog can say so instead of waiting for a reply that is
+        not coming. The warm-up is refused for refresh_variables' reason:
+        importing build123d_studio.exporting while the main thread is still
+        initialising the package is what wedged the kernel at 0% CPU.
+        """
+        forms = None
+        if self.kernel is not None and self._warm_request is None:
+            forms = self._inspect(f"{EXPORTER}.forms()")
+        self.channel.send("export.forms", id=message.get("id"), forms=forms)
 
     def on_app_info(self, _message):
         self.channel.send(

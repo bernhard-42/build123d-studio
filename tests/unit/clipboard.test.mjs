@@ -117,15 +117,27 @@ test("the variable explorer offers Copy, and Show for a row that is a variable",
     [
       { id: "copy", label: "Copy", shortcut: "\u2318C", enabled: true },
       { id: "show", label: "Show", shortcut: null, enabled: true },
+      { separator: true },
+      { id: "export", label: "Export…", shortcut: null, enabled: false },
     ],
   );
+});
+
+test("Export is enabled only where the row can be exported", () => {
+  const items = contextMenuItems({
+    pane: "variables", hasSelection: true, platform: "Darwin", hasVariable: true, canExport: true,
+  });
+  assert.equal(items.find((item) => item.id === "export").enabled, true);
 });
 
 test("Show is greyed, not absent, where the row has no name to show", () => {
   // A child row is addressed by position and has no Python expression; the
   // menu keeps its shape so nothing jumps between rows.
   const items = contextMenuItems({ pane: "variables", hasSelection: false, platform: "Darwin" });
-  assert.deepEqual(items.map((item) => [item.id, item.enabled]), [["copy", false], ["show", false]]);
+  assert.deepEqual(
+    items.filter((item) => item.separator !== true).map((item) => [item.id, item.enabled]),
+    [["copy", false], ["show", false], ["export", false]],
+  );
 });
 
 test("the chord is written the way each platform writes it", () => {

@@ -34,6 +34,22 @@ const dirs = new Set(["/"]);
 /** Where the harness is told to answer a dialog from, one answer per call. */
 const dialogAnswers = [];
 
+// A save panel held open until the test answers it - see holdSavePanel. While
+// it is held, the page is exactly where it is while a real panel is up.
+let holdNextSavePanel = false;
+let releaseHeldPanel = null;
+
+/** The next save panel's answer: from the queue, or when the test releases it. */
+async function savePanelAnswer() {
+  if (holdNextSavePanel) {
+    holdNextSavePanel = false;
+    return new Promise((resolve) => {
+      releaseHeldPanel = resolve;
+    });
+  }
+  return dialogAnswers.length > 0 ? dialogAnswers.shift() : "";
+}
+
 // How long a native focus call takes; see window.focus below.
 let focusDelayMs = 0;
 
@@ -162,6 +178,18 @@ globalThis.__NEUTRALINO_STUB__ = {
   // No trash on this volume, which is the second question's case.
   trashFails: () => { trashBroken = true; },
   calls: () => calls.map((call) => ({ ...call })),
+  // Keep the next save panel open until releaseSavePanel answers it, so a test
+  // can look at the page while the panel is up - which a queued answer, given
+  // the moment the panel is asked, never allows.
+  holdSavePanel: () => { holdNextSavePanel = true; },
+  releaseSavePanel: (answer) => {
+    const release = releaseHeldPanel;
+    releaseHeldPanel = null;
+    if (release !== null) {
+      release(answer);
+    }
+  },
+  savePanelHeld: () => releaseHeldPanel !== null,
   reset: () => reset(),
 };
 
@@ -472,7 +500,7 @@ export const os = {
 
   async showSaveDialog(title, options) {
     record("showSaveDialog", [title, options]);
-    return dialogAnswers.length > 0 ? dialogAnswers.shift() : "";
+    return savePanelAnswer();
   },
 
   /**
@@ -519,7 +547,7 @@ export const os = {
     if (!command.startsWith("osascript ") || !command.includes("choose file name")) {
       return { pid: 0, stdOut: "", stdErr: `unexpected command: ${command}`, exitCode: 127 };
     }
-    const answer = dialogAnswers.length > 0 ? dialogAnswers.shift() : "";
+    const answer = await savePanelAnswer();
     return { pid: 0, stdOut: `${typeof answer === "string" ? answer : ""}\n`, stdErr: "", exitCode: 0 };
   },
 

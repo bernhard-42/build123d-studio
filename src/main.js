@@ -80,7 +80,8 @@ import { chordsFor } from "./keybindings.js";
 import { handleKey } from "./titlebar/titlebar.js";
 import { followWindowFocus } from "./nativedialog.js";
 import { initViewer, showLogo } from "./viewer/viewer.js";
-import { initVariables, selectionFor } from "./vars/explorer.js";
+import { exportTargetFor, initVariables, selectionFor } from "./vars/explorer.js";
+import { openExportDialog } from "./vars/exportdialog.js";
 import { hasModels, initParams, toggleParamsPanel } from "./params/panel.js";
 import { initCameraShortcut } from "./camerashortcut.js";
 import { awaitKernelRestart, showSettings } from "./settings.js";
@@ -675,7 +676,8 @@ async function main() {
     // this pane, so a drag that reached another one copies only this part.
     selectedText: () => textWithin(varsPane),
     variablesAt: selectionFor,
-    onPick: (id, text, variables) => {
+    exportAt: exportTargetFor,
+    onPick: (id, text, variables, exportTarget) => {
       if (id === "copy") {
         // The selected names as a list - `a, b, c` - which is what a Copy of
         // variables is for: pasting them into a show() or a tuple. With no
@@ -688,6 +690,8 @@ async function main() {
         // says "plate" rather than "Solid".
         const names = variables.map((name) => JSON.stringify(name)).join(", ");
         execute(`from build123d_studio import show; show(${variables.join(", ")}, names=[${names}])`);
+      } else if (id === "export" && exportTarget !== null) {
+        openExportDialog(exportTarget);
       }
     },
   });

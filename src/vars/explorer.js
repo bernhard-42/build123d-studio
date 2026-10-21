@@ -348,6 +348,12 @@ function rowsFor(row, path, depth) {
   // a child row carries no name and the menu's Show is greyed out on it.
   if (depth === 0) {
     head.dataset.variable = row.name;
+    // What Export... writes for this row: "" for the variable itself, ".part"
+    // for a builder. Absent where the kernel said it cannot be exported, and
+    // on every row a debug frame lists - those are not in the kernel at all.
+    if (typeof row.export === "string") {
+      head.dataset.export = row.export;
+    }
   }
 
   const name = document.createElement("td");
@@ -594,6 +600,25 @@ function select(name, event) {
 /** The top-level names in the order the pane shows them. */
 function visibleNames() {
   return sortRows(filterRows(rows, filter), order).map((row) => row.name);
+}
+
+/**
+ * What Export... would export for the row that was right-clicked, or null.
+ *
+ * Only a top-level row the kernel marked as exportable has one. The expression
+ * is the variable, or for a builder the attribute holding what it built.
+ *
+ * @param {EventTarget} target what was right-clicked
+ * @returns {{name: string, expression: string}|null}
+ */
+export function exportTargetFor(target) {
+  const row = typeof target?.closest === "function" ? target.closest("tr.var-row") : null;
+  const name = row?.dataset.variable;
+  const suffix = row?.dataset.export;
+  if (typeof name !== "string" || name === "" || typeof suffix !== "string") {
+    return null;
+  }
+  return { name, expression: `${name}${suffix}` };
 }
 
 /**

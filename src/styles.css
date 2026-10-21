@@ -2039,6 +2039,20 @@ html body {
   filter: brightness(1.15);
 }
 
+/* = = = Export dialog = = = */
+
+/* One variable, one format: narrower than Settings, and the rows are the
+   Viewer tab's - a name on the left, its control lined up on the right. */
+.export-panel {
+  width: min(100%, 460px);
+}
+
+/* The viewer rows size every input to 11em, which is right for a field and
+   wrong for a checkbox. */
+.export-panel .settings-viewer-row input[type="checkbox"] {
+  width: auto;
+}
+
 /* = = = Busy modal = = = */
 
 /*

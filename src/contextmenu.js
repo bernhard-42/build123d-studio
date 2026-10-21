@@ -187,7 +187,9 @@ window.addEventListener("resize", closeContextMenu);
  * @param {() => string} selectedText what a Copy would copy, read at click time
  * @param {(target: EventTarget) => string[]} [variablesAt] the variables the
  *   right-click acts on - the explorer's selection, see explorer.js
- * @param {(id: string, text: string, variables: string[]) => void} onPick
+ * @param {(target: EventTarget) => object|null} [exportAt] what Export would
+ *   export for the row, or null - see exportTargetFor in explorer.js
+ * @param {(id: string, text: string, variables: string[], exportTarget: object|null) => void} onPick
  */
 export function attachContextMenu({
   element,
@@ -195,6 +197,7 @@ export function attachContextMenu({
   platform,
   selectedText,
   variablesAt = () => [],
+  exportAt = () => null,
   onPick,
 }) {
   element.addEventListener("contextmenu", (event) => {
@@ -202,6 +205,9 @@ export function attachContextMenu({
     // from here. This one is ours and is shown instead.
     const text = selectedText();
     const variables = variablesAt(event.target);
+    // Export writes one object, so it is offered only when exactly the row
+    // under the pointer is selected.
+    const exportTarget = variables.length === 1 ? exportAt(event.target) : null;
     showContextMenu({
       x: event.clientX,
       y: event.clientY,
@@ -210,8 +216,9 @@ export function attachContextMenu({
         hasSelection: text !== "" || variables.length > 0,
         platform,
         hasVariable: variables.length > 0,
+        canExport: exportTarget !== null && exportTarget.name === variables[0],
       }),
-      onPick: (id) => onPick(id, text, variables),
+      onPick: (id) => onPick(id, text, variables, exportTarget),
     });
   });
 }
