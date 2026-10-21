@@ -13,7 +13,7 @@
 name = "build123d-studio-runtime"
 # The build123d Studio release this file came from. A different one is how the
 # application notices that the groups below are out of date.
-version = "0.9.0"
+version = "0.10.0"
 description = "Encapsulated Python environment for the build123d-studio application"
 requires-python = "==3.14.*"
 
@@ -54,17 +54,20 @@ app = [
 # Upgrade moves them as far as the ranges here allow.
 core_cad = [
     "ocp-viewer-core>=1.1.2,<1.2.0",
-    "build123d>=0.11.1",
+    "build123d>=0.13.0",
 
-    # Type information for the OpenCascade bindings
-    "cadquery-ocp-stubs>=7.9.3, <7.10",
+    # Type information for the OpenCascade bindings, matching the OCP that
+    # build123d requires (cadquery-ocp-novtk 8.0)
+    "cadquery-ocp-stubs>=8.0, <8.1",
 
     # What ocp-viewer-core brings with it, named so Upgrade reaches them - a fix
     # in the tessellator is a fix in what the viewer draws, and it can arrive
-    # without ocp-viewer-core moving at all. No versions: ocp-viewer-core owns
-    # their ranges through its own metadata, and uv would intersect a second
-    # opinion here with that one.
-    "ocp-tessellate",
+    # without ocp-viewer-core moving at all. ocp-viewer-core owns their ranges
+    # through its own metadata. The one floor here is ocp-tessellate's: a
+    # release that ships a newer tessellator than ocp-viewer-core requires
+    # raises it, because an environment keeps the version it has locked while
+    # that still satisfies the range. uv intersects it with ocp-viewer-core's.
+    "ocp-tessellate>=3.6.3",
     "pillow",
     "threejs-materials",
 ]

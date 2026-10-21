@@ -7,6 +7,13 @@ What changed in each release, for the people using it. Anything not visible from
 - **Features**
     - New setting **Show minimap** under View in the Editor settings (default on): turns the editor's minimap off or on, at once and for the next start
 
+- **Changes**
+    - The Python environment depends on `build123d>=0.13.0` (was `>=0.11.1`), which runs on OCP 8 (`cadquery-ocp-novtk` 8.0); the OCP type stubs move to 8.0 with it
+    - uv 0.13.4 (was 0.12.7), which replaces a root certificate whose intermediate was compromised ([GHSA-hq85-5cpj-mr62](https://github.com/astral-sh/uv/security/advisories/GHSA-hq85-5cpj-mr62)). An existing installation replaces its uv at the next start
+
+- **Fixes**
+    - Showing an unchanged shape again, or a moved or rotated copy of it, takes its tessellation from the cache instead of computing it again (ocp-tessellate 3.6.3, now the minimum)
+
 ## 0.9.0 (2026-10-13)
 
 - **Features**
