@@ -157,7 +157,9 @@ export async function chooseSaveName({ os, log, platform }, title, { folder, nam
   // Deliberately without `filters`: `choose file name` has no type parameter to
   // give them to. Nothing is lost, because Neutralino's own dialog does not
   // apply them here either - typing a name with no extension into it produces a
-  // file with no extension, which is why saveBuffer adds .py afterwards.
+  // file with no extension. Callers take the name as typed and add nothing to
+  // it: the panel asks before replacing a file and can only ask about the name
+  // it was given (see saveBuffer in editor/files.js).
   const command = saveCommand(saveScript({ title, name: named ? name : null, folder }));
   let result;
   try {
