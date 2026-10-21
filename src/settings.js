@@ -28,7 +28,7 @@ import {
   findChordConflicts,
 } from "./keys.js";
 import { chordsFor, setChordsFor } from "./keybindings.js";
-import { applyCellActions, rebindRunActions } from "./editor/monaco.js";
+import { applyCellActions, applyMinimap, rebindRunActions } from "./editor/monaco.js";
 import { refreshMenu } from "./menubar.js";
 import {
   applyPackageSources,
@@ -54,6 +54,7 @@ import {
   LINE_LENGTH_KEY,
 } from "./editor/formatting.js";
 import { CELL_ACTIONS_KEY, cellActionsShown } from "./editor/cellactions.js";
+import { MINIMAP_KEY, minimapShown } from "./editor/minimap.js";
 import { DEFAULT_NEW_FILE_TEMPLATE } from "./editor/starters.js";
 import {
   JUST_MY_CODE_KEY,
@@ -557,6 +558,15 @@ export async function showSettings({ tab = null } = {}) {
             <input type="checkbox" id="settings-cell-actions" />
             <span>Show cell actions</span>
           </label>
+          <p class="settings-group">View</p>
+          <p class="info-note">
+            The minimap is the scaled-down view of the whole buffer at the
+            editor's right edge.
+          </p>
+          <label class="settings-check">
+            <input type="checkbox" id="settings-minimap" />
+            <span>Show minimap</span>
+          </label>
           <p class="info-note" id="settings-editor-problems" hidden></p>
 
         </section>
@@ -910,6 +920,7 @@ ${VIEWER_GROUPS.map(
   document.getElementById("settings-line-length").value = String(formatLineLength());
   document.getElementById("settings-format-on-save").checked = formatOnSave();
   document.getElementById("settings-cell-actions").checked = cellActionsShown();
+  document.getElementById("settings-minimap").checked = minimapShown();
   document.getElementById("settings-just-my-code").checked = justMyCode();
   document.getElementById("settings-test-ignore-warnings").checked = ignoreWarnings();
   document.getElementById("settings-on-stop").value = onStopExpression();
@@ -1013,6 +1024,13 @@ ${VIEWER_GROUPS.map(
       // The editor is already open behind this dialog, so the switch has to
       // reach it rather than wait for a restart.
       applyCellActions();
+    }
+
+    const minimap = document.getElementById("settings-minimap").checked;
+    if (minimap !== minimapShown()) {
+      await setSetting(MINIMAP_KEY, minimap);
+      // Like the cell actions: the editor is open behind the dialog.
+      applyMinimap();
     }
 
     const template = document.getElementById("settings-new-template").value;

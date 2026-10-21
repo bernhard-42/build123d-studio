@@ -152,6 +152,7 @@ import { languageFor } from "./filetype.js";
 import { MAX_FORMAT_LINES, formatEdits, tooLargeToFormat } from "./format.js";
 import { showConsolePanel } from "../debug/console.js";
 import { cellActionsShown } from "./cellactions.js";
+import { minimapShown } from "./minimap.js";
 import { formatLineLength } from "./formatting.js";
 import { hoverContents } from "./hover.js";
 import { signatureHelp } from "./signature.js";
@@ -1101,7 +1102,7 @@ export function initEditor() {
     // default in Monaco, and a decoration asking to be drawn there is simply
     // not drawn without it - no error, no mark.
     glyphMargin: true,
-    minimap: { enabled: true },
+    minimap: { enabled: minimapShown() },
     // Flag characters that are invisible or that can be mistaken for another,
     // and say nothing about the rest. The default for nonBasicASCII is
     // "inUntrustedWorkspace", which has no meaning outside VS Code, so what it
@@ -1346,6 +1347,14 @@ export function applyCellActions() {
     return;
   }
   editor.updateOptions({ codeLens: cellActionsShown() });
+}
+
+/** Show or hide the minimap, which is a setting rather than a rebuild. */
+export function applyMinimap() {
+  if (editor === null || editor === undefined) {
+    return;
+  }
+  editor.updateOptions({ minimap: { enabled: minimapShown() } });
 }
 
 function registerLanguageFeatures() {

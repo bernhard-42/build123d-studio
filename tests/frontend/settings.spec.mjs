@@ -236,6 +236,46 @@ test.describe("the Editor tab", () => {
       .toMatchObject({ formatLineLength: 120, formatOnSave: false });
   });
 
+  test("the minimap is on by default, and drawn", async ({ page }) => {
+    await openSettings(page);
+    await page.locator("#tab-editor").click();
+
+    await expect(page.locator("#settings-minimap")).toBeChecked();
+    await expect(page.locator("#editor-host .minimap")).toBeVisible();
+  });
+
+  test("turning the minimap off is stored, and takes it away at once", async ({ page }) => {
+    await openSettings(page);
+    await page.locator("#tab-editor").click();
+
+    await page.locator("#settings-minimap").uncheck();
+    await page.locator("#settings-apply").click();
+
+    await expect(page.locator("#settings-apply")).toBeHidden();
+    await expect(page.locator("#editor-host .minimap")).toBeHidden();
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          JSON.parse(
+            String(
+              globalThis.__NEUTRALINO_STUB__.wrote(
+                "/appdata/build123d-studio/settings.json",
+              ) ?? "{}",
+            ),
+          ),
+        ),
+      )
+      .toMatchObject({ minimap: false });
+  });
+
+  test("and a stored off opens the editor without it", async ({ page }) => {
+    await openSettings(page, { minimap: false });
+    await page.locator("#tab-editor").click();
+
+    await expect(page.locator("#settings-minimap")).not.toBeChecked();
+    await expect(page.locator("#editor-host .minimap")).toBeHidden();
+  });
+
   test("dark mode pins nothing unless it is changed", async ({ page }) => {
     // The trap this avoids: opening the dialog and pressing Apply would
     // otherwise pin a preference that had been following the desktop, and the
