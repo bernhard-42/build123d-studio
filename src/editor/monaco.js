@@ -1035,14 +1035,23 @@ function placeCaret(state) {
   }
 }
 
+/**
+ * Give the editor the keyboard, at a given position or where the caret is.
+ *
+ * Without a state the caret stays where it is. That is what every caller that
+ * merely hands the keyboard back wants - after a native dialog, when the window
+ * is activated - and the caret of a buffer just opened was placed when it was
+ * shown, see showBuffer. Placing it here without a state would move it to
+ * line 1, and the next key typed would land at the top of the file.
+ *
+ * @param {{line: number, column: number, scrollTop: number}|null} state
+ */
 export function focusAt(state = null) {
-  if (currentModel() === null) {
-    // No file open, so there is no caret to place. Focus still belongs here:
-    // the editor pane is where typing should go the moment one is opened.
-    editor.focus();
-    return;
+  if (currentModel() !== null && state !== null) {
+    placeCaret(state);
   }
-  placeCaret(state);
+  // With no file open there is no caret, but focus still belongs here: the
+  // editor pane is where typing should go the moment one is opened.
   editor.focus();
 }
 

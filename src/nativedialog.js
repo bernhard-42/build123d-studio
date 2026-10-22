@@ -114,14 +114,14 @@ async function claimKeyboard() {
  * platform loses focus, because the answer differs and the cost of asking is a
  * focus call nobody notices.
  *
- * **This moves the caret, and it does so asynchronously.** `neuWindow.focus()`
+ * **This moves the focus, and it does so asynchronously.** `neuWindow.focus()`
  * is a native call taking milliseconds, so `focusAt(null)` lands some way into
  * whatever the caller went on to do - and so does the `windowFocus` the
  * operating system sends when it activates the window again, which arrives
- * whenever it arrives. Anything that cannot survive the caret moving under it
- * must not depend on this having finished; awaiting the promise below is not
- * enough, because the event is not ours. See formatBufferFor, which is not
- * routed through Monaco's format action for exactly this reason.
+ * whenever it arrives. The caret stays where it was; the focus changing
+ * underneath is still something to allow for, and awaiting the promise below
+ * is not enough, because the event is not ours. See formatBufferFor, which is
+ * not routed through Monaco's format action for this reason.
  *
  * The promise is returned rather than swallowed so a caller *can* wait, which
  * some have reason to. Most have nothing after this and are right not to.
