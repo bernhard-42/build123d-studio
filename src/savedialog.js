@@ -19,6 +19,7 @@
 // it makes the script that is built - the part with the quoting in it - testable
 // from node, where no webview exists.
 
+import { whileNativeDialog } from "./nativelink.js";
 import { quoteFor } from "./quoting.js";
 
 // What AppleScript's cancel is. `choose file name` raises rather than returning
@@ -142,7 +143,12 @@ export function pathFromOutput(stdOut) {
  * @param {{folder: string|null, name: string|null, filters: object[]|undefined}} placement
  * @returns {Promise<string>} the chosen path, or "" for cancel.
  */
-export async function chooseSaveName({ os, log, platform }, title, { folder, name, filters }) {
+export function chooseSaveName(services, title, placement) {
+  // The link held while the panel is up - it is modal, see whileNativeDialog.
+  return whileNativeDialog(() => askSaveName(services, title, placement));
+}
+
+async function askSaveName({ os, log, platform }, title, { folder, name, filters }) {
   const named = typeof name === "string" && name !== "";
 
   if (platform !== "Darwin") {

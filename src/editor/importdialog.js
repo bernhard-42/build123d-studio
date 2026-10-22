@@ -11,6 +11,7 @@
 import { os } from "@neutralinojs/lib";
 
 import * as ipc from "../ipc.js";
+import { whileNativeDialog } from "../nativelink.js";
 import { currentFolder } from "./files.js";
 import { bufferText, caretPosition, execute, hasBuffer, insertBlockAtCaret } from "./monaco.js";
 import { afterNativeDialog } from "../nativedialog.js";
@@ -62,11 +63,11 @@ export async function importFile() {
   const folder = currentFolder() ?? (await os.getPath("documents"));
   let entries = [];
   try {
-    entries = await os.showOpenDialog("Import a CAD file", {
+    entries = await whileNativeDialog(() => os.showOpenDialog("Import a CAD file", {
       defaultPath: folder,
       filters: importFilters(),
       multiSelections: false,
-    });
+    }));
   } finally {
     afterNativeDialog();
   }

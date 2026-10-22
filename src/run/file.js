@@ -32,6 +32,7 @@ import { notifyFailure } from "../confirm.js";
 import { refreshMenu } from "../menubar.js";
 import * as ipc from "../ipc.js";
 import * as log from "../log.js";
+import { whileNativeDialog } from "../nativelink.js";
 
 let running = false;
 const listeners = new Set();
@@ -189,11 +190,11 @@ export async function runMake(makefile, target) {
 /** Run pytest over one file. */
 export async function testFile() {
   await runPytestOn("Test File", async () => {
-    const entries = await os.showOpenDialog("Select the file to test", {
+    const entries = await whileNativeDialog(() => os.showOpenDialog("Select the file to test", {
       defaultPath: lastTested ?? currentFolder() ?? undefined,
       filters: [{ name: "Python", extensions: ["py"] }],
       multiSelections: false,
-    });
+    }));
     return entries.length === 1 ? entries[0] : "";
   });
 }
@@ -201,9 +202,9 @@ export async function testFile() {
 /** Run pytest over one folder. */
 export async function testFolder() {
   await runPytestOn("Test Folder", () =>
-    os.showFolderDialog("Select the folder to test", {
+    whileNativeDialog(() => os.showFolderDialog("Select the folder to test", {
       defaultPath: lastTested ?? currentFolder() ?? undefined,
-    }));
+    })));
 }
 
 /** Subscribe to what the sidecar says about the run. */

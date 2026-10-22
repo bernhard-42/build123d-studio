@@ -91,6 +91,28 @@ export function holdNativeLink() {
   };
 }
 
+/**
+ * Run a native dialog with the link held for as long as it is open.
+ *
+ * A file chooser, a save panel and a message box are modal on the native side,
+ * so the probe goes unanswered until the dialog closes - and somebody who sat
+ * in the Import… chooser for long enough was told the window had lost its link
+ * to the application, with a reload on offer for a window that was fine. The
+ * hold ends with the dialog, however it ends, and the next probe asks again.
+ *
+ * @template T
+ * @param {() => Promise<T>} open the call that shows the dialog
+ * @returns {Promise<T>} what the dialog answered
+ */
+export async function whileNativeDialog(open) {
+  const release = holdNativeLink();
+  try {
+    return await open();
+  } finally {
+    release();
+  }
+}
+
 /** Whether probing is suspended. Exported for the test, which owns the clock. */
 export function nativeLinkHeld() {
   return held > 0;

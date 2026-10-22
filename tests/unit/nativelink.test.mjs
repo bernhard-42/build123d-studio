@@ -20,6 +20,7 @@ import {
   holdNativeLink,
   nativeLinkHeld,
   watchNativeLink,
+  whileNativeDialog,
 } from "../../src/nativelink.js";
 
 /** A probe that answers, or hangs, depending on a switch the test holds. */
@@ -236,4 +237,22 @@ test("holdNativeLink nests, so an action inside an action still holds", () => {
   assert.equal(nativeLinkHeld(), false);
   outer();
   assert.equal(nativeLinkHeld(), false, "releasing twice went negative");
+});
+
+test("a native dialog holds the link for as long as it is open", async () => {
+  // A modal chooser leaves the probe unanswered; somebody who sat in the
+  // Import... chooser long enough was told the window had lost its link.
+  assert.equal(nativeLinkHeld(), false);
+  let close;
+  const answered = whileNativeDialog(() => new Promise((done) => { close = done; }));
+  assert.equal(nativeLinkHeld(), true, "the dialog is open and the link is not held");
+
+  close(["/work/frame.step"]);
+  assert.deepEqual(await answered, ["/work/frame.step"]);
+  assert.equal(nativeLinkHeld(), false, "the hold outlived the dialog");
+});
+
+test("and releases it when the dialog fails", async () => {
+  await assert.rejects(whileNativeDialog(() => Promise.reject(new Error("no dialog"))), /no dialog/);
+  assert.equal(nativeLinkHeld(), false);
 });

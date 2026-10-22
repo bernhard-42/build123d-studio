@@ -74,7 +74,7 @@ import { askTwoWay } from "./confirm.js";
 import { escapeHtml } from "./escape.js";
 import { afterNativeDialog, bounceActivation } from "./nativedialog.js";
 import { closeOnBackdropClick } from "./backdrop.js";
-import { holdNativeLink } from "./nativelink.js";
+import { holdNativeLink, whileNativeDialog } from "./nativelink.js";
 import { refreshToolbarTitles } from "./toolbar.js";
 import { setThemePreference, themePreference } from "./theme.js";
 import {
@@ -749,9 +749,9 @@ ${VIEWER_GROUPS.map(
   // obvious way for this to be annoying.
   for (const p of PACKAGES) {
     document.getElementById(`choose-${p.name}`).addEventListener("click", async () => {
-      const chosen = await os.showFolderDialog(`Where is your ${p.name} checkout?`, {
+      const chosen = await whileNativeDialog(() => os.showFolderDialog(`Where is your ${p.name} checkout?`, {
         defaultPath: document.getElementById(`local-${p.name}`).value || undefined,
-      });
+      }));
       afterNativeDialog();
       if (NL_OS === "Windows") {
         // The same chooser openFolder uses, and it leaves the keyboard at the

@@ -1,6 +1,7 @@
 import { os } from "@neutralinojs/lib";
 
 import * as log from "./log.js";
+import { whileNativeDialog } from "./nativelink.js";
 
 // A three-way confirmation, built in the page rather than with a native dialog.
 //
@@ -175,7 +176,7 @@ async function showBox(title, detail, kind) {
     // which serialises as {} - is an uncaught C++ throw that aborts the whole
     // application, measured twice in the crash reports of 2026-09-18. An
     // Error's message is what its author meant to show.
-    await os.showMessageBox(asText(title), asText(detail), "OK", kind);
+    await whileNativeDialog(() => os.showMessageBox(asText(title), asText(detail), "OK", kind));
   } catch (error) {
     // The dialog itself failing must not replace what it was reporting.
     log.error("Could not show a message box:", error, "- the message was:", title, detail);

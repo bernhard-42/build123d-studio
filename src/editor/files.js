@@ -98,6 +98,7 @@ import { liveWindows } from "../liveness.js";
 import { baseName } from "./tree.js";
 import * as ipc from "../ipc.js";
 import * as log from "../log.js";
+import { whileNativeDialog } from "../nativelink.js";
 
 const FILTERS = [
   { name: "Python", extensions: ["py"] },
@@ -188,9 +189,8 @@ export async function closeEveryTab() {
  * @returns {Promise<boolean>} false if cancelled, at the chooser or at a prompt
  */
 export async function openFolder() {
-  const chosen = await os.showFolderDialog("Open a project folder", {
-    defaultPath: folder ?? (await startingFolder()),
-  });
+  const defaultPath = folder ?? (await startingFolder());
+  const chosen = await whileNativeDialog(() => os.showFolderDialog("Open a project folder", { defaultPath }));
   afterNativeDialog();
   if (NL_OS === "Windows") {
     // The one chooser that leaves the keyboard at the frame, cancelled or not.
@@ -768,11 +768,12 @@ export async function restoreWorkspace() {
 export async function openFile() {
   // It used to ask about the open buffer before showing the chooser, because
   // opening replaced it. Opening adds a tab now, so there is nothing at risk.
-  const entries = await os.showOpenDialog("Open a Python file", {
-    defaultPath: await startingFolder(),
+  const defaultPath = await startingFolder();
+  const entries = await whileNativeDialog(() => os.showOpenDialog("Open a Python file", {
+    defaultPath,
     filters: FILTERS,
     multiSelections: false,
-  });
+  }));
   afterNativeDialog();
   if (entries.length !== 1) {
     return null;
