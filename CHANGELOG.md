@@ -15,6 +15,7 @@ What changed in each release, for the people using it. Anything not visible from
 
 - **Fixes**
     - Showing an unchanged shape again, or a moved or rotated copy of it, takes its tessellation from the cache instead of computing it again (ocp-tessellate 3.6.3, now the minimum)
+    - Studio could miss the moment the kernel finished starting, and then not read the viewer defaults or the Import and Export options for the rest of the session ("could not be read from the kernel" on an idle kernel). It now notices either of the two signals the kernel sends
 
 ## 0.9.0 (2026-10-13)
 

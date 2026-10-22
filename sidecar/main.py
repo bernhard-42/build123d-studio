@@ -189,9 +189,12 @@ class Sidecar:
         # The kernel warm-up is held back until the console is up; see
         # warm_kernel.
         self._warmed = threading.Event()
-        # The warm-up's request id, held until its idle: that idle is the first
-        # moment the kernel can answer what its viewer defaults are.
+        # The warm-up's request id, held until its idle or its reply: either is
+        # the first moment the kernel can answer what its viewer defaults are.
         self._warm_request = None
+        # Taken by warm_kernel and warm_up_finished, which run on different
+        # threads - see warm_up_finished.
+        self._warm_lock = threading.Lock()
         # Set while an idle-triggered refresh is queued or running, so repeats
         # collapse into one. See request_refresh.
         self._refresh_queued = threading.Event()
@@ -651,8 +654,15 @@ class Sidecar:
         try:
             # Watched, because this is the line that went unanswered for two
             # minutes on 2026-08-15 and the log said nothing more about it.
-            self._warm_request = self.kernel.warm_up()
-            self.watch_stall(self._warm_request, "Kernel warm-up")
+            #
+            # Under the lock, because the warm-up's reply arrives on the shell
+            # thread and can do so before the id is stored here - see
+            # warm_up_finished. The reply cannot come before the send, and the
+            # send is all warm_up waits for, so the shell thread is never
+            # waiting on this lock while this waits on it.
+            with self._warm_lock:
+                self._warm_request = self.kernel.warm_up(on_finished=self.warm_up_finished)
+                self.watch_stall(self._warm_request, "Kernel warm-up")
         except Exception as exc:  # noqa: BLE001 - a failed warm-up only costs speed
             log(f"Kernel warm-up failed: {exc}")
 
@@ -677,12 +687,7 @@ class Sidecar:
         # after that return would never be cancelled at all.
         if msg_type == "status" and content.get("execution_state") == "idle":
             self.finish_stall(message["parent_header"].get("msg_id"))
-            # The first refresh. Every later one is booked by an execute idle,
-            # and the warm-up is internal - so without this the defaults control
-            # would show nothing until the first run.
-            if self._warm_request is not None and message["parent_header"].get("msg_id") == self._warm_request:
-                self._warm_request = None
-                self.request_refresh()
+            self.warm_up_finished(message["parent_header"].get("msg_id"))
 
         # Warm-up and inspection requests produce status traffic of their own.
         # Treating that as user activity would make the explorer refresh in
@@ -910,6 +915,26 @@ class Sidecar:
         return {"error": f"unknown command: {command or kind}"}
 
     # --- when something takes too long ---
+
+    def warm_up_finished(self, msg_id):
+        """The warm-up is over, by its idle on iopub or its reply on shell.
+
+        Either is enough, and the first one wins: the import has finished, so
+        what _warm_request holds back - reads into build123d_studio on the
+        subshell - is safe again. Called from both threads, hence the lock; a
+        msg_id that is not the current warm-up's is ignored, so the second of
+        the pair, or a previous kernel's, does nothing.
+
+        It also books the first refresh. Every later one is booked by an execute
+        idle, and the warm-up is internal - so without this the defaults
+        control would show nothing until the first run.
+        """
+        with self._warm_lock:
+            if msg_id is None or msg_id != self._warm_request:
+                return
+            self._warm_request = None
+        self.finish_stall(msg_id)
+        self.request_refresh()
 
     def watch_stall(self, msg_id, what):
         """Watch one kernel request, and say what is going on if it does not end.

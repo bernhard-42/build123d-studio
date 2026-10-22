@@ -801,7 +801,7 @@ class Kernel:
             "connection_file": self.connection_file,
         }
 
-    def warm_up(self):
+    def warm_up(self, on_finished=None):
         """Import the heavy modules while the user is still reading the screen.
 
         Call this only once the console has finished its own handshake: the
@@ -820,7 +820,7 @@ class Kernel:
         modules land in sys.modules either way, which is what makes the user's
         own `from build123d import *` return instantly.
         """
-        msg_id = self._send_execute(
+        request = self._submit(
             "\n".join(
                 [
                     '__import__("importlib").import_module("build123d")',
@@ -844,9 +844,11 @@ class Kernel:
                 ]
             ),
             internal=True,
+            want_reply=True,
             silent=True,
             store_history=False,
         )
+        msg_id = request.sent.result(timeout=SEND_TIMEOUT)
         # Not covered by _internal_lock, and it does not need to be: losing this
         # race costs the "warm-up finished" line, not a refresh loop. It is the
         # same shape as the defect that lock exists for, so if a warm-up ever
@@ -854,10 +856,18 @@ class Kernel:
         self._warm_msg_id = msg_id
         self._warm_started = time.monotonic()
         log("Kernel warm-up started: importing build123d")
+        # The reply as well as the idle. Either one means the import is over,
+        # and on 2026-10-22 the idle never arrived: the kernel had imported
+        # build123d and was idle, the shell reply had come back, and the sidecar
+        # went on waiting for a status message for the rest of the session -
+        # refusing everything the warm-up gates. Whichever comes first ends it.
+        if on_finished is not None:
+            request.reply.add_done_callback(
+                lambda done: on_finished(msg_id) if done.exception() is None else None
+            )
         # Returned so the caller can watch for the other half of that sentence.
-        # This is a send, not a wait - the import finishes when its idle comes
-        # back on iopub - so "the warm-up hung" is only ever observable by
-        # somebody holding this id. See Sidecar.warm_kernel.
+        # This is a send, not a wait, so "the warm-up hung" is only ever
+        # observable by somebody holding this id. See Sidecar.warm_kernel.
         return msg_id
 
     def _check_alive(self, generation):
