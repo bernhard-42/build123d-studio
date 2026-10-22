@@ -9,9 +9,12 @@ import { test } from "node:test";
 
 import { defaultValue } from "../../src/signatureform.js";
 import {
+  bufferLines,
   defaultVariableName,
   importCode,
+  importedNames,
   importFilters,
+  importLines,
   variableProblem,
 } from "../../src/editor/importcode.js";
 
@@ -40,26 +43,39 @@ function defaultsOf(form) {
   return Object.fromEntries(form.options.map((option) => [option.name, defaultValue(option)]));
 }
 
-test("a STEP file is assigned with nothing but its path, after an announcing comment", () => {
+test("a STEP file is assigned with nothing but its path and shown, after an announcing comment", () => {
   assert.deepEqual(importCode(STEP, "frame", "/work/frame.step", {}), [
     "# Importing frame.step as frame ...",
-    'from build123d import import_step\nframe = import_step("/work/frame.step")',
+    [
+      "from build123d import import_step",
+      "from build123d_studio import show, Camera",
+      'frame = import_step("/work/frame.step")',
+      'show(frame, names=["frame"], reset_camera=Camera.RESET)',
+    ].join("\n"),
   ]);
 });
 
+test("the lines for the buffer are the import without the announcing comment", () => {
+  const [, run] = importCode(STEP, "frame", "/work/frame.step", {});
+  assert.equal(importLines(STEP, "frame", "/work/frame.step", {}), run);
+});
+
 test("a changed option is passed, and an enum brings its class into the import", () => {
-  const [, code] = importCode(STL, "bracket", "/work/b.stl", { model_unit: "IN" });
-  assert.equal(code, 'from build123d import import_stl, Unit\nbracket = import_stl("/work/b.stl", model_unit=Unit.IN)');
-  const [, plain] = importCode(STL, "bracket", "/work/b.stl", defaultsOf(STL));
-  assert.equal(plain, 'from build123d import import_stl\nbracket = import_stl("/work/b.stl")');
+  const code = importLines(STL, "bracket", "/work/b.stl", { model_unit: "IN" }).split("\n");
+  assert.equal(code[0], "from build123d import import_stl, Unit");
+  assert.equal(code[2], 'bracket = import_stl("/work/b.stl", model_unit=Unit.IN)');
+  const plain = importLines(STL, "bracket", "/work/b.stl", defaultsOf(STL)).split("\n");
+  assert.equal(plain[0], "from build123d import import_stl");
+  assert.equal(plain[2], 'bracket = import_stl("/work/b.stl")');
 });
 
 test("keyword-only options are passed by name like any other", () => {
   const values = { ...defaultsOf(SVG), flip_y: false, align: "CENTER", label_by: "class" };
-  const [, code] = importCode(SVG, "logo", "C:\\art\\logo.svg", values);
+  const code = importLines(SVG, "logo", "C:\\art\\logo.svg", values).split("\n");
+  assert.equal(code[0], "from build123d import import_svg, Align");
   assert.equal(
-    code,
-    'from build123d import import_svg, Align\nlogo = import_svg("C:\\\\art\\\\logo.svg", flip_y=False, align=Align.CENTER, label_by="class")',
+    code[2],
+    'logo = import_svg("C:\\\\art\\\\logo.svg", flip_y=False, align=Align.CENTER, label_by="class")',
   );
 });
 
@@ -89,4 +105,58 @@ test("the open dialog filters for every file build123d imports", () => {
   const [cad, all] = importFilters();
   assert.deepEqual([...cad.extensions].sort(), ["brep", "dxf", "step", "stl", "stp", "svg"]);
   assert.deepEqual(all, { name: "All files", extensions: ["*"] });
+});
+
+const ASSIGN = 'frame = import_step("/work/frame.step")';
+
+test("the buffer gets the import statement alone, with its import line when missing", () => {
+  assert.equal(
+    bufferLines(STEP, "frame", "/work/frame.step", {}, "x = 1\n"),
+    ["from build123d import import_step", ASSIGN].join("\n"),
+  );
+});
+
+test("no show() goes into the buffer, and nothing from build123d_studio", () => {
+  const lines = bufferLines(STEP, "frame", "/work/frame.step", {}, "");
+  assert.doesNotMatch(lines, /show\(|build123d_studio/);
+});
+
+test("a star import covers build123d", () => {
+  assert.equal(bufferLines(STEP, "frame", "/work/frame.step", {}, "from build123d import *\n"), ASSIGN);
+});
+
+test("only the names the buffer lacks are imported", () => {
+  // An enum an option needs is a name like any other.
+  const stl = bufferLines(STL, "b", "/b.stl", { model_unit: "IN" }, "from build123d import import_stl\n");
+  assert.equal(stl, 'from build123d import Unit\nb = import_stl("/b.stl", model_unit=Unit.IN)');
+});
+
+test("the names are read from every form an import takes", () => {
+  const source = [
+    "from build123d import *",
+    "# from build123d_studio import show",
+    "from build123d_studio import (",
+    "    show,  # the viewer",
+    "    Camera as Cam,",
+    ")",
+    "from build123d_studio import set_defaults, \\",
+    "    Animation",
+  ].join("\n");
+  const names = importedNames(source);
+  assert.deepEqual([...names.get("build123d")], ["*"]);
+  assert.deepEqual([...names.get("build123d_studio")], ["show", "Cam", "set_defaults", "Animation"]);
+});
+
+test("an alias does not count as the name it renames", () => {
+  const source = "from build123d import import_step as load\n";
+  assert.equal(
+    bufferLines(STEP, "frame", "/work/frame.step", {}, source),
+    ["from build123d import import_step", ASSIGN].join("\n"),
+  );
+});
+
+test("the console's lines always carry every import", () => {
+  const [, run] = importCode(STEP, "frame", "/work/frame.step", {});
+  assert.equal(run.split("\n").slice(0, 2).join("\n"),
+    "from build123d import import_step\nfrom build123d_studio import show, Camera");
 });

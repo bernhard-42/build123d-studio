@@ -1760,6 +1760,68 @@ export function selectedText() {
   return editor.getModel().getValueInRange(selection);
 }
 
+/** Whether a buffer is open for a block to be inserted into. */
+export function hasBuffer() {
+  return currentModel() !== null;
+}
+
+/** The text of the buffer on screen, or "" with none open. */
+export function bufferText() {
+  const model = currentModel();
+  return model === null ? "" : model.getValue();
+}
+
+/**
+ * Where the caret is now, to insert at later - after dialogs that may have
+ * given the keyboard to something else in between.
+ *
+ * @returns {{lineNumber: number, column: number}|null}
+ */
+export function caretPosition() {
+  const position = currentModel() === null ? null : editor.getPosition();
+  return position === null ? null : { lineNumber: position.lineNumber, column: position.column };
+}
+
+/**
+ * Put lines of code at a caret position, on lines of their own.
+ *
+ * At the caret rather than over the selection: what is selected stays. A caret
+ * in the middle of a line gets the block on the next line, so a line is never
+ * split. Through executeEdits, so it is one step of undo and marks the buffer
+ * dirty, like typing.
+ *
+ * @param {string} text the lines, without a trailing newline
+ * @param {{lineNumber: number, column: number}|null} [where] a position taken
+ *   earlier with caretPosition; the caret as it is now when left out
+ * @returns {boolean} false when no buffer is open
+ */
+export function insertBlockAtCaret(text, where = null) {
+  const model = currentModel();
+  if (model === null) {
+    return false;
+  }
+  // Clamped, in case the buffer changed since the position was taken.
+  const asked = where ?? editor.getPosition();
+  if (asked === null) {
+    return false;
+  }
+  const lineNumber = Math.min(Math.max(1, asked.lineNumber), model.getLineCount());
+  const position = { lineNumber, column: Math.min(Math.max(1, asked.column), model.getLineMaxColumn(lineNumber)) };
+  let at = position;
+  let block = `${text}\n`;
+  if (position.column !== 1) {
+    // After whatever the line holds, as the start of the next one. The last
+    // line of a file has no newline of its own to keep the block apart from.
+    at = { lineNumber: position.lineNumber, column: model.getLineMaxColumn(position.lineNumber) };
+    block = position.lineNumber === model.getLineCount() ? `\n${text}\n` : `\n${text}`;
+  }
+  const range = new monaco.Range(at.lineNumber, at.column, at.lineNumber, at.column);
+  editor.pushUndoStop();
+  editor.executeEdits("import", [{ range, text: block, forceMoveMarkers: true }]);
+  editor.pushUndoStop();
+  return true;
+}
+
 /**
  * Replace the selection, or insert at the caret when there is none.
  *
