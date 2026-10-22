@@ -11,7 +11,9 @@ What changed in each release, for the people using it. Anything not visible from
 
 - **Changes**
     - The Python environment depends on `build123d>=0.13.0` (was `>=0.11.1`), which runs on OCP 8 (`cadquery-ocp-novtk` 8.0); the OCP type stubs move to 8.0 with it
-    - uv 0.13.4 (was 0.12.7), which replaces a root certificate whose intermediate was compromised ([GHSA-hq85-5cpj-mr62](https://github.com/astral-sh/uv/security/advisories/GHSA-hq85-5cpj-mr62)). An existing installation replaces its uv at the next start
+    - uv 0.13.5 (was 0.12.7), which no longer trusts a root certificate whose intermediate was compromised and rejects certificate chains containing the compromised intermediate keys ([GHSA-hq85-5cpj-mr62](https://github.com/astral-sh/uv/security/advisories/GHSA-hq85-5cpj-mr62)). An existing installation replaces its uv at the next start
+    - CPython 3.14.9 (was 3.14.6), the security release whose bundled pip trusts the same root no longer. An existing environment is rebuilt on it at the next start: a few seconds from the download cache, then the libraries are checked once, as after any package change
+    - `certifi>=2026.10.19`, so HTTPS made from Python - `requests`, which build123d brings - no longer trusts that root either
 
 - **Fixes**
     - Showing an unchanged shape again, or a moved or rotated copy of it, takes its tessellation from the cache instead of computing it again (ocp-tessellate 3.6.3, now the minimum)

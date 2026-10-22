@@ -63,13 +63,19 @@ core_cad = [
     # What ocp-viewer-core brings with it, named so Upgrade reaches them - a fix
     # in the tessellator is a fix in what the viewer draws, and it can arrive
     # without ocp-viewer-core moving at all. ocp-viewer-core owns their ranges
-    # through its own metadata. The one floor here is ocp-tessellate's: a
+    # through its own metadata. The one floor among them is ocp-tessellate's: a
     # release that ships a newer tessellator than ocp-viewer-core requires
     # raises it, because an environment keeps the version it has locked while
     # that still satisfies the range. uv intersects it with ocp-viewer-core's.
     "ocp-tessellate>=3.6.3",
     "pillow",
     "threejs-materials",
+
+    # Not imported by anything here: build123d's `requests` brings it. Named for
+    # its minimum alone - 2026.10.19 no longer trusts the eMudhra/emSign root
+    # whose intermediate was compromised (GHSA-hq85-5cpj-mr62) - which an
+    # environment that has an older one locked would otherwise keep.
+    "certifi>=2026.10.19",
 ]
 
 # --- Yours: the "Additional packages" field in Settings writes here ---
