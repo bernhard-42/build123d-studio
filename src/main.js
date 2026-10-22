@@ -512,6 +512,22 @@ async function main() {
   // guessing from whether an exception was thrown, and shown in the pane the
   // user is already looking at.
   ipc.on("subsystem", (frame) => recordHealth(frame.name, frame.state, frame.detail));
+
+  // Linux with no program to draw file dialogs - see sidecar/dialogs.py. Here,
+  // with the subsystem reports, because it arrives during the sidecar's start,
+  // before startSidecar resolves. Said once per session: a sidecar that is
+  // replaced says it again, and a banner somebody dismissed stays dismissed.
+  const dialogsBanner = document.getElementById("dialogs-banner");
+  let dialogsDismissed = false;
+  ipc.on("dialogs.missing", () => {
+    if (!dialogsDismissed) {
+      dialogsBanner.hidden = false;
+    }
+  });
+  document.getElementById("dialogs-banner-dismiss").addEventListener("click", () => {
+    dialogsDismissed = true;
+    dialogsBanner.hidden = true;
+  });
   // A replacement sidecar describes itself from scratch, so the dead one's
   // picture goes with it. Without this, `reset` had no caller at all and the
   // toolbar could carry a failure belonging to a process that no longer

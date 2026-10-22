@@ -19,6 +19,7 @@ What changed in each release, for the people using it. Anything not visible from
     - Showing an unchanged shape again, or a moved or rotated copy of it, takes its tessellation from the cache instead of computing it again (ocp-tessellate 3.6.3, now the minimum)
     - After Save As or another file dialog, and when the window comes back to the front, typing continues where the caret was; it used to land at the top of the file
     - Staying in a file dialog or a message box for half a minute or more no longer brings up "This window lost its link to the application": the check of that link pauses while such a dialog is open
+    - On Linux, when none of zenity, kdialog, matedialog or qarma is installed - the programs that draw file dialogs there - a banner says so and names what to install. Open, Save As, Import and Export did nothing without one, with no message
     - Studio could miss the moment the kernel finished starting, and then not read the viewer defaults or the Import and Export options for the rest of the session ("could not be read from the kernel" on an idle kernel). It now notices either of the two signals the kernel sends
 
 ## 0.9.0 (2026-10-13)

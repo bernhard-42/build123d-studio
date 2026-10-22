@@ -327,6 +327,18 @@
       <button type="button" class="backend-banner-action" id="backend-banner-restart"></button>
     </div>
 
+    <!-- Linux only, when no program to draw file dialogs is installed - see
+         sidecar/dialogs.py. Without one, Open, Save As, Import and Export do
+         nothing at all, so the window says why and what to install. -->
+    <div id="dialogs-banner" class="backend-banner" hidden>
+      <span class="backend-banner-text">
+        File dialogs cannot open: none of zenity, kdialog, matedialog or qarma is
+        installed, so Open, Save As, Import… and Export… do nothing. Install one, for
+        example <code>sudo apt install zenity</code>, and restart build123d Studio.
+      </span>
+      <button type="button" class="backend-banner-action" id="dialogs-banner-dismiss">Dismiss</button>
+    </div>
+
     <div id="busy" class="busy-overlay" hidden>
       <div class="busy-box">
         <p class="busy-message" id="busy-message"></p>

@@ -28,6 +28,7 @@ import appinfo
 from channel import KIND_CONSOLE, KIND_MODEL, Channel, flush_logs, log
 from shellpath import adopt_path
 from completer import Completer
+from dialogs import dialog_helper
 from debugger import DebugSession, debug_python
 from formatter import format_source
 from runner import RunSession
@@ -485,6 +486,8 @@ class Sidecar:
         self.console_start()
         self.report("console", "ready", "")
 
+        self.announce_file_dialogs(dialog_helper())
+
         # jedi's first call builds its view of the environment and costs half a
         # second. On the lane, so it is paid while the splash is still up rather
         # than by whoever types the first character - the same argument the
@@ -935,6 +938,20 @@ class Sidecar:
             self._warm_request = None
         self.finish_stall(msg_id)
         self.request_refresh()
+
+    def announce_file_dialogs(self, helper):
+        """Say which program draws file dialogs, and tell the window if none can.
+
+        On Linux the file dialogs need an outside program, and without one
+        every Open, Save, Import and Export silently does nothing - see
+        dialogs.py. That is said to the window as a message of its own, which
+        it shows as a banner naming what to install, rather than as a degraded
+        subsystem: a chip reading "degraded" sends somebody looking, where a
+        sentence tells them what to do.
+        """
+        log(f"File dialogs: {helper if helper is not None else 'no program to draw them'}")
+        if helper is None:
+            self.channel.send("dialogs.missing")
 
     def watch_stall(self, msg_id, what):
         """Watch one kernel request, and say what is going on if it does not end.
