@@ -140,6 +140,40 @@ class ExportTargetTest(unittest.TestCase):
         self.assertEqual(rows["probe_box"]["export"], "")
         self.assertIsNone(rows["probe_number"]["export"])
 
+    def test_so_do_the_rows_below_them(self):
+        """A part in a list, a builder in a dict, a box inside an assembly inside an assembly, a part's Solid."""
+        import __main__
+
+        namespace = __main__.__dict__
+        with bd.BuildPart() as builder:
+            bd.Box(1, 1, 1)
+        upper = bd.Box(1, 1, 1)
+        upper.label = "upper"
+        leg = bd.Compound(label="leg", children=[upper])
+        added = {
+            "probe_list": [bd.Box(1, 1, 1), 7],
+            "probe_dict": {"builder": builder},
+            "probe_asm": bd.Compound(label="asm", children=[bd.Box(2, 2, 2), leg]),
+        }
+        namespace.update(added)
+        try:
+            listed = json.loads(inspector.detail(["probe_list"]))["children"]
+            mapped = json.loads(inspector.detail(["probe_dict"]))["children"]
+            nested = json.loads(inspector.detail(["probe_asm", 1]))["children"]
+            topology = json.loads(inspector.detail(["probe_asm", 0]))["children"]
+            solid = eval(topology[0]["expression"], namespace)
+            walked = inspector._walk(namespace, ["probe_asm", 0, 0])
+        finally:
+            for name in added:
+                namespace.pop(name, None)
+
+        self.assertEqual([(c["expression"], c["export"]) for c in listed], [("probe_list[0]", ""), ("probe_list[1]", None)])
+        self.assertEqual([(c["expression"], c["export"]) for c in mapped], [("probe_dict['builder']", ".part")])
+        self.assertEqual([(c["expression"], c["export"], c["label"]) for c in nested], [("probe_asm.children[1].children[0]", "", "upper")])
+        # The part's Solid: not a child, its topology - reached by position.
+        self.assertEqual([(c["type"], c["expression"], c["export"]) for c in topology], [("Solid", "list(probe_asm.children[0])[0]", "")])
+        self.assertTrue(solid.wrapped.IsSame(walked.wrapped))
+
 
 if __name__ == "__main__":
     unittest.main()

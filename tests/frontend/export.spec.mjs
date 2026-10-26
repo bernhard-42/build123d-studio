@@ -166,6 +166,39 @@ test.describe("Export… in the variable explorer", () => {
     expect(frame.code).toContain(`if export_stl(bp.part, "${PROJECT}/bp.stl"):`);
   });
 
+  test("a part inside an assembly exports by its expression, under its label", async ({ page }) => {
+    // Proof, at writing: with exportTargetFor taking the name from
+    // dataset.variable again, this fails on the suggested name.
+    const { sidecar } = await openApp(page);
+    sidecar.send("vars.data", { variables: [...VARIABLES, {
+      name: "asm", type: "Compound", module: "build123d", size: 2, repr: "", label: "asm", expandable: true, export: "",
+    }] });
+    await page.locator(".var-row", { hasText: "Compound" }).locator(".var-twisty").click();
+    const asked = await sidecar.waitFor("vars.detail");
+    const part = { type: "Box", module: "build123d", size: null, repr: "Box", expandable: false, export: "" };
+    sidecar.send("vars.detail", { detail: { path: asked.path, type: "Compound", attributes: {}, offset: 0, total: 2, page: 50, children: [
+      { ...part, name: "0", label: "base/plate", expression: "asm.children[0]" },
+      { ...part, name: "1", label: "", expression: "asm.children[1]" },
+    ] } });
+
+    for (const [label, expression, suggested] of [
+      ["base/plate", "asm.children[0]", "base_plate.step"],
+      [/^1$/, "asm.children[1]", "asm.children[1].step"],
+    ]) {
+      await page.locator(".var-row", { has: page.locator(".var-child-name", { hasText: label }) }).click({ button: "right" });
+      await page.locator(".context-menu-item", { hasText: "Export…" }).click();
+      await expect(page.locator(".info-title")).toHaveText(`Export ${expression}`);
+      await holdSavePanel(page);
+      await page.locator("#export-run").click();
+      await answerSavePanel(page, `${PROJECT}/${suggested}`);
+
+      const panel = await page.evaluate(() =>
+        globalThis.__NEUTRALINO_STUB__.calls().filter((call) => call.name === "execCommand").map((call) => call.args[0]));
+      expect(panel.at(-1)).toContain(suggested);
+      await expect.poll(() => executed(sidecar).at(-1) ?? "").toContain(`if export_step(${expression}, "${PROJECT}/${suggested}"):`);
+    }
+  });
+
   test("closing the save panel cancels the export, and the options are kept for next time", async ({ page }) => {
     const { sidecar } = await openApp(page);
     await openExport(page, "b");

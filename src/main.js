@@ -695,18 +695,20 @@ async function main() {
     variablesAt: selectionFor,
     exportAt: exportTargetFor,
     onPick: (id, text, variables, exportTarget) => {
+      const expressions = variables.map((variable) => variable.expression).join(", ");
       if (id === "copy") {
-        // The selected names as a list - `a, b, c` - which is what a Copy of
-        // variables is for: pasting them into a show() or a tuple. With no
-        // row selected, whatever text was dragged across, as before.
-        copyText(variables.length > 0 ? variables.join(", ") : text);
+        // The selected rows as a list - `a, asm.children[1]` - which is what a
+        // Copy of variables is for: pasting them into a show() or a tuple. With
+        // no row selected, whatever text was dragged across, as before.
+        copyText(variables.length > 0 ? expressions : text);
       } else if (id === "show" && variables.length > 0) {
         // One show of all of them, through the same execute as a Run, echoed
         // into the console. The import is there for a namespace that never
         // imported show itself. The names travel too, so the viewer's tree
-        // says "plate" rather than "Solid".
-        const names = variables.map((name) => JSON.stringify(name)).join(", ");
-        execute(`from build123d_studio import show; show(${variables.join(", ")}, names=[${names}])`);
+        // says "plate" rather than "Solid" - and a part inside an assembly is
+        // called by its label rather than by `asm.children[1]`.
+        const names = variables.map((variable) => JSON.stringify(variable.name)).join(", ");
+        execute(`from build123d_studio import show; show(${expressions}, names=[${names}])`);
       } else if (id === "export" && exportTarget !== null) {
         openExportDialog(exportTarget);
       }

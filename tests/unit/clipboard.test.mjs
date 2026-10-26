@@ -131,8 +131,8 @@ test("Export is enabled only where the row can be exported", () => {
 });
 
 test("Show is greyed, not absent, where the row has no name to show", () => {
-  // A child row is addressed by position and has no Python expression; the
-  // menu keeps its shape so nothing jumps between rows.
+  // A row with no Python expression; the menu keeps its shape so nothing
+  // jumps between rows.
   const items = contextMenuItems({ pane: "variables", hasSelection: false, platform: "Darwin" });
   assert.deepEqual(
     items.filter((item) => item.separator !== true).map((item) => [item.id, item.enabled]),

@@ -15,6 +15,7 @@ Two levels of dict inside a dict inside a dict, which the pane could not reach
 at all before: expanding a row showed one level of reprs and stopped.
 """
 
+import enum
 import json
 import sys
 import threading
@@ -745,6 +746,112 @@ class InspectorTest(NamespaceFixture, unittest.TestCase):
         self.given(odd=Odd())
 
         self.assertEqual([c["repr"] for c in self.detail(["odd"])["children"]], ["'real'"])
+
+    # --- expressions, so Show and Export reach below the top level ---
+
+    def expressions(self, path, offset=0):
+        return [child["expression"] for child in self.detail(path, offset)["children"]]
+
+    def assert_leads_to_the_row(self, path, offset=0):
+        """Every expression evaluates to the object the row's own path walks to."""
+        for index, expression in enumerate(self.expressions(path, offset)):
+            walked = inspector._walk(self.namespace, [*path, offset + index])
+            self.assertIs(eval(expression, self.namespace), walked, expression)
+
+    def test_a_dict_is_indexed_by_its_keys_all_the_way_down(self):
+        self.given(a=NESTED)
+
+        self.assertEqual(self.expressions(["a"]), ["a['a']", "a['b']", "a['c']", "a['d']"])
+        self.assertEqual(self.expressions(["a", 3, 0]), ["a['d']['x']['aa']", "a['d']['x']['bb']"])
+        self.assert_leads_to_the_row(["a", 3, 0])
+
+    def test_a_list_inside_a_dict_is_indexed_by_position_in_the_expression_too(self):
+        self.given(a=NESTED)
+
+        self.assertEqual(self.expressions(["a", 2])[:2], ["a['c'][0]", "a['c'][1]"])
+        self.assert_leads_to_the_row(["a", 2])
+
+    def test_a_later_page_is_indexed_from_where_it_starts(self):
+        self.given(points=[[i] for i in range(5043)])
+
+        self.assertEqual(self.expressions(["points"], 5000)[0], "points[5000]")
+        self.assert_leads_to_the_row(["points"], 5000)
+
+    def test_an_assembly_is_reached_through_its_children(self):
+        leg = _Assembly("left_middle_leg", [_Labelled(label="upper_leg")])
+        self.given(hexapod=_Assembly("hexapod", [_Labelled(label="bottom"), leg]))
+
+        self.assertEqual(self.expressions(["hexapod"]), ["hexapod.children[0]", "hexapod.children[1]"])
+        self.assertEqual(self.expressions(["hexapod", 1]), ["hexapod.children[1].children[0]"])
+        self.assert_leads_to_the_row(["hexapod", 1])
+
+    def test_a_key_that_reads_back_as_source_is_written_as_one(self):
+        self.given(a={(1, "x"): [0], 2.5: [1], None: [2], True: [3], "it's": [4]})
+
+        self.assertEqual(
+            self.expressions(["a"]),
+            ["a[(1, 'x')]", "a[2.5]", "a[None]", "a[True]", '''a["it's"]'''],
+        )
+        self.assert_leads_to_the_row(["a"])
+
+    def test_a_key_that_does_not_is_reached_by_its_position(self):
+        """A frozenset, a nan, an IntEnum member - whose repr is `<Color.RED: 1>`."""
+        class Color(enum.IntEnum):
+            RED = 1
+
+        self.given(a={"plain": "p", frozenset({3}): "edge", float("nan"): "nan", Color.RED: "red"})
+
+        self.assertEqual(
+            self.expressions(["a"]),
+            ["a['plain']", "list(a.values())[1]", "list(a.values())[2]", "list(a.values())[3]"],
+        )
+        self.assert_leads_to_the_row(["a"])
+
+    def test_and_so_is_everything_under_one(self):
+        self.given(a={frozenset({3}): [[1, 2]]})
+
+        self.assertEqual(self.expressions(["a", 0, 0]), ["list(a.values())[0][0][0]", "list(a.values())[0][0][1]"])
+        self.assert_leads_to_the_row(["a", 0, 0])
+
+    def test_a_set_is_reached_by_its_position_in_iteration(self):
+        """The order the row itself is opened by - see test_a_set_can_be_opened."""
+        self.given(a={"one", "two", "three"})
+
+        self.assertEqual(self.expressions(["a"]), ["list(a)[0]", "list(a)[1]", "list(a)[2]"])
+        self.assert_leads_to_the_row(["a"])
+
+    def test_so_is_any_iterable_that_is_not_a_sequence(self):
+        """Which is what a build123d shape's topology is: a Compound iterates its sub-shapes."""
+        class Bag:
+            def __init__(self, items):
+                self.items = items
+
+            def __iter__(self):
+                return iter(self.items)
+
+            def __len__(self):
+                return len(self.items)
+
+        self.given(bag=Bag([Bag([[1]]), Bag([[2]])]))
+
+        self.assertEqual(self.expressions(["bag"]), ["list(bag)[0]", "list(bag)[1]"])
+        self.assertEqual(self.expressions(["bag", 1]), ["list(list(bag)[1])[0]"])
+        self.assert_leads_to_the_row(["bag", 1])
+
+    def test_an_assembly_part_s_topology_is_reached_through_its_children(self):
+        """hexapod > bottom > its Solid: children first, then the topology."""
+        bottom = _Assembly("bottom", [], topology=[["a solid"]])
+        self.given(hexapod=_Assembly("hexapod", [bottom]))
+
+        self.assertEqual(self.expressions(["hexapod", 0]), ["list(hexapod.children[0])[0]"])
+        self.assert_leads_to_the_row(["hexapod", 0])
+
+    def test_only_a_name_that_is_not_an_identifier_has_no_expression(self):
+        """Possible through globals(), and `not one` is no expression for it."""
+        self.given(**{"not one": [[1]]})
+
+        children = self.detail(["not one"])["children"]
+        self.assertEqual([(child["expression"], child["export"]) for child in children], [(None, None)])
 
     # --- paths that no longer lead anywhere ---
 

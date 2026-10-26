@@ -35,10 +35,10 @@ export function exportCode(form, expression, path, values) {
 }
 
 /**
- * The name the save panel suggests: the variable, with the format's extension.
+ * The name the save panel suggests: the row's name, with the format's extension.
  *
- * The variable's name rather than the expression, so a builder `bp` suggests
- * `bp.step`, not `bp.part.step`.
+ * The row's name rather than the expression, so a builder `bp` suggests
+ * `bp.step`, not `bp.part.step`, and a part inside an assembly its label.
  */
 export function suggestedName(name, form) {
   return `${name}${form.extension}`;

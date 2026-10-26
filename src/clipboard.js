@@ -81,9 +81,8 @@ export function contextMenuItems({
   if (pane === "variables") {
     return [
       copy,
-      // show(<name>) on the kernel, for the row under the pointer. Only a row
-      // that is a variable of the namespace has a name to show; a child row
-      // is addressed by position and has no expression, so it is offered
+      // show(<expression>) on the kernel, for the selected rows. Only a row
+      // Python can name has an expression to show; elsewhere it is offered
       // greyed rather than absent - the menu should look the same wherever
       // it opens.
       { id: "show", label: "Show", shortcut: null, enabled: hasVariable === true },

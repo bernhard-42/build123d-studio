@@ -44,6 +44,20 @@ async function openApp(page) {
   return open(page, { files: FILES, settings: { workspace: WORKSPACE } });
 }
 
+const CHILD = { type: "Box", module: "build123d", size: null, repr: "Box", expandable: false, export: "" };
+
+/** List the variables, open `b`, and answer with these children. */
+async function openB(page, sidecar, children) {
+  sidecar.send("vars.data", { variables: VARIABLES });
+  await expect(page.locator(".var-row .var-name")).toHaveCount(2);
+  await page.locator(".var-row", { hasText: "Box at" }).locator(".var-twisty").click();
+  const asked = await sidecar.waitFor("vars.detail");
+  sidecar.send("vars.detail", {
+    detail: { path: asked.path, type: "Box", attributes: {}, children, offset: 0, total: children.length, page: 50 },
+  });
+  await expect(page.locator(".var-child-name")).toHaveCount(children.length);
+}
+
 test.describe("the console shows what the kernel printed", () => {
   test("bytes arriving as a binary frame reach the terminal", async ({ page }) => {
     // The hot path, and the reason it is binary: pty output and tessellated
@@ -99,7 +113,9 @@ test.describe("the variable explorer shows the namespace", () => {
     expect(frame.code).toBe('from build123d_studio import show; show(count, names=["count"])');
   });
 
-  test("but Show is greyed out on a row below a variable", async ({ page }) => {
+  test("but Show is greyed out on a row below a variable that Python cannot name", async ({ page }) => {
+    // A row the kernel sends no expression for: one below a name that is not
+    // an identifier, and every row of a debug frame.
     const { sidecar } = await openApp(page);
     sidecar.send("vars.data", { variables: VARIABLES });
     await expect(page.locator(".var-row .var-name")).toHaveCount(2);
@@ -265,6 +281,69 @@ test.describe("the variable explorer shows the namespace", () => {
       rows.nth(1).locator(".var-twisty .icon-chevron"),
       "an int was offered a chevron it cannot keep",
     ).toHaveCount(0);
+  });
+
+  test("a row below a variable that Python can name is shown under its label", async ({ page }) => {
+    const { sidecar } = await openApp(page);
+    await openB(page, sidecar, [
+      { ...CHILD, name: "0", label: "base", expression: "b.children[0]" },
+      { ...CHILD, name: "1", label: "", expression: "b.children[1]" },
+    ]);
+
+    await page.locator(".var-row", { hasText: "base" }).click({ button: "right" });
+    const show = page.locator(".context-menu-item", { hasText: "Show" });
+    await expect(show).toBeEnabled();
+    await show.click();
+    const frame = await sidecar.waitFor("kernel.execute");
+    expect(frame.code).toBe('from build123d_studio import show; show(b.children[0], names=["base"])');
+  });
+
+  test("and the selection reaches across levels, in the order the rows are shown", async ({ page }) => {
+    // Proof, at writing: with the child rows' `selectable` back to depth === 0
+    // in explorer.js, this fails on the selected count.
+    const { sidecar } = await openApp(page);
+    await openB(page, sidecar, [
+      { ...CHILD, name: "0", label: "base", expression: "b.children[0]" },
+      { ...CHILD, name: "1", label: "", expression: "b.children[1]" },
+    ]);
+
+    await page.locator(".var-row", { hasText: "count" }).click();
+    await page.locator(".var-child-name", { hasText: /^1$/ }).click({ modifiers: ["Meta"] });
+    await page.locator(".var-row", { hasText: "base" }).click({ modifiers: ["Meta"] });
+    await expect(page.locator(".var-row.var-selected")).toHaveCount(3);
+
+    await page.locator(".var-row", { hasText: "count" }).click({ button: "right" });
+    await page.locator(".context-menu-item", { hasText: "Copy" }).click();
+    const copied = await page.evaluate(() =>
+      globalThis.__NEUTRALINO_STUB__.calls().filter((c) => c.name === "clipboard.writeText").map((c) => c.args[0]));
+    expect(copied).toEqual(["b.children[0], b.children[1], count"]);
+
+    await page.locator(".var-row", { hasText: "count" }).click({ button: "right" });
+    await page.locator(".context-menu-item", { hasText: "Show" }).click();
+    const frame = await sidecar.waitFor("kernel.execute");
+    expect(frame.code).toBe(
+      'from build123d_studio import show; show(b.children[0], b.children[1], count, names=["base", "b.children[1]", "count"])');
+  });
+
+  test("closing a row takes the selection under it along", async ({ page }) => {
+    // Proof, at writing: with the selected-pruning loop in toggle() removed,
+    // this fails on the selected count - b.children[0] comes back selected
+    // with the row.
+    const { sidecar } = await openApp(page);
+    await openB(page, sidecar, [{ ...CHILD, name: "0", label: "base", expression: "b.children[0]" }]);
+
+    await page.locator(".var-row", { hasText: "base" }).click();
+    await page.locator(".var-row", { hasText: "count" }).click({ modifiers: ["Meta"] });
+    await page.locator(".var-row", { hasText: "Box at" }).locator(".var-twisty").click();
+    await expect(page.locator(".var-child-name")).toHaveCount(0);
+    await page.locator(".var-row", { hasText: "Box at" }).locator(".var-twisty").click();
+    await expect(page.locator(".var-child-name")).toHaveCount(1);
+
+    await expect(page.locator(".var-row.var-selected")).toHaveCount(1);
+    await page.locator(".var-row", { hasText: "count" }).click({ button: "right" });
+    await page.locator(".context-menu-item", { hasText: "Show" }).click();
+    const frame = await sidecar.waitFor("kernel.execute");
+    expect(frame.code).toBe('from build123d_studio import show; show(count, names=["count"])');
   });
 
   test("expanding a row asks the sidecar for its detail", async ({ page }) => {

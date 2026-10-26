@@ -31,6 +31,7 @@ string has nothing for the printer to truncate.
 
 import inspect
 import json
+import math
 import reprlib
 import sys
 import time
@@ -369,7 +370,7 @@ def _child_at(value, index):
     raise Mutating(type(value).__name__)
 
 
-def _children(value, offset, limit):
+def _children(value, offset, limit, expression=None):
     """One page of a container's children, and how many there are in all.
 
     Ordinals rather than keys, all the way down. A dict key can be any hashable
@@ -383,6 +384,7 @@ def _children(value, offset, limit):
     describes the namespace at the moment it was asked, and the next idle asks
     again.
     """
+    container = _container_expression(value, expression)
     value = _elements(value)
     if not _unrolls(value):
         return None, 0
@@ -411,22 +413,31 @@ def _children(value, offset, limit):
         except Exception:  # noqa: BLE001 - somebody else's __iter__ or __getitem__
             return None, 0
 
-    children = [
-        {
-            "name": name,
-            "type": type(item).__name__,
-            "size": _size_of(item),
-            "repr": _row_repr(item),
-            "label": _label_of(item),
-            "expandable": _expandable(item),
-        }
-        for name, item in pairs
-    ]
+    children = []
+    for position, (name, item, key) in enumerate(pairs):
+        child_expression = _child_expression(value, container, key, offset + position)
+        children.append(
+            {
+                "name": name,
+                "type": type(item).__name__,
+                "size": _size_of(item),
+                "repr": _row_repr(item),
+                "label": _label_of(item),
+                "expandable": _expandable(item),
+                # How Python reaches this row, so Show and Export work below
+                # the top level.
+                "expression": child_expression,
+                "export": None if child_expression is None else export_target(item),
+            }
+        )
     return children, total
 
 
 def _page(value, offset, limit):
-    """One page of (name, item) pairs, by whatever means the container offers.
+    """One page of (name, item, key) triples, by whatever means the container offers.
+
+    The key is what a Python expression would index with: the dict key for a
+    mapping, the position for anything else - see _child_expression.
 
     Separated from _children so the retry above has one expression to repeat.
     Raises whatever the container raises, including the RuntimeError that says
@@ -434,14 +445,14 @@ def _page(value, offset, limit):
     """
     if isinstance(value, Mapping):
         page = islice(value.items(), offset, offset + limit)
-        return [(str(key), item) for key, item in page]
+        return [(str(key), item, key) for key, item in page]
     if isinstance(value, Sequence):
         return [
-            (str(offset + i), item)
+            (str(offset + i), item, offset + i)
             for i, item in enumerate(value[offset:offset + limit])
         ]
     page = islice(iter(value), offset, offset + limit)
-    return [(str(offset + i), item) for i, item in enumerate(page)]
+    return [(str(offset + i), item, offset + i) for i, item in enumerate(page)]
 
 
 def _walk(namespace, path):
@@ -462,6 +473,89 @@ def _walk(namespace, path):
     for step in path[1:]:
         value = _child_at(value, int(step))
     return value
+
+
+def _expression_at(namespace, path):
+    """The Python expression for the value a path leads to, or None.
+
+    Built step by step the way _child_at walks, so that every row the pane can
+    open has one - see _child_expression for the forms it takes.
+    """
+    expression = str(path[0])
+    if not expression.isidentifier():
+        return None  # globals()[42] is legal, and `42` is not its expression
+    value = namespace[expression]
+    for step in path[1:]:
+        index = int(step)
+        container = _container_expression(value, expression)
+        elements = _elements(value)
+        key = index
+        if isinstance(elements, Mapping):
+            key = next(islice(elements.keys(), index, index + 1))
+        expression = _child_expression(elements, container, key, index)
+        value = _child_at(value, index)
+    return expression
+
+
+def _expression_or_none(namespace, path):
+    """_expression_at, or None when the namespace moved since the walk.
+
+    detail() has just walked the same path, but the kernel's own code may be
+    changing what it leads through; an expression that cannot be built is no
+    expression, not a failed expansion.
+    """
+    try:
+        return _expression_at(namespace, path)
+    except Exception:  # noqa: BLE001 - somebody else's mapping or sequence
+        return None
+
+
+def _container_expression(value, expression):
+    """The expression for what a row unrolls into - see _elements.
+
+    An assembly unrolls into `.children`, everything else into itself.
+    """
+    if expression is None:
+        return None
+    if _elements(value) is not value:
+        return f"{expression}.children"
+    return expression
+
+
+def _literal(key):
+    """Whether repr(key) reads back as an equal key in Python source.
+
+    Exact types, not isinstance: an IntEnum member is an int whose repr is
+    `<Color.RED: 1>`, and a subclass may override __repr__ however it likes.
+    """
+    if key is None or type(key) in (bool, int, str):
+        return True
+    if type(key) is float:
+        return math.isfinite(key)
+    if type(key) is tuple:
+        return all(_literal(item) for item in key)
+    return False
+
+
+def _child_expression(elements, container, key, index):
+    """The expression for one child, from the expression for its container.
+
+    A mapping by its key where the key reads back as source, a sequence by its
+    index. Anything else by its position in iteration - `list(x)[i]` - which is
+    the ordinal _child_at walks by: a Compound's topology, a set, a dict key
+    such as a frozenset or an enum member (`list(d.values())[i]`). The same
+    positions the pane already relies on to open the row, so the expression is
+    exactly as faithful as the row it is written for.
+    """
+    if container is None:
+        return None
+    if isinstance(elements, Mapping):
+        if _literal(key):
+            return f"{container}[{key!r}]"
+        return f"list({container}.values())[{index}]"
+    if isinstance(elements, Sequence):
+        return f"{container}[{index}]"
+    return f"list({container})[{index}]"
 
 
 def _size_of(value):
@@ -833,7 +927,7 @@ def detail(path, offset=0):
         result["attributes"] = _build123d_details(value)
 
     try:
-        children, total = _children(value, offset, PAGE)
+        children, total = _children(value, offset, PAGE, _expression_or_none(namespace, path))
     except Mutating:
         # Being written by the code the kernel is running. Said out loud, and
         # said as something that will pass: the next idle refreshes this pane

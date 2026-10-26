@@ -48,9 +48,11 @@ function paneElement() {
 let filter = "";
 let order = null;
 
-// The selected top-level rows, by name, and the one a Shift-click extends
-// from. Selection is what Show and Copy act on. Only top-level rows can be
-// selected: a child is addressed by position and has no name to show or copy.
+// The selected rows, by path key, and the one a Shift-click extends from.
+// Selection is what Show, Copy and Export act on. A row can be selected when
+// Python can name it: every top-level row, and a child the kernel gave an
+// expression - `asm.children[1]`, `parts['lid']`, `list(asm.children[0])[0]`.
+// A debug frame's rows have none.
 const selected = new Set();
 let anchor = null;
 
@@ -343,12 +345,17 @@ function rowsFor(row, path, depth) {
 
   const head = document.createElement("tr");
   head.className = "var-row";
-  // Only a top-level row names something Python can be asked to show. Below
-  // it the path is ordinals - the third item of a dict has no expression - so
-  // a child row carries no name and the menu's Show is greyed out on it.
-  if (depth === 0) {
-    head.dataset.variable = row.name;
-    // What Export... writes for this row: "" for the variable itself, ".part"
+  // What Python calls this row. The variable's name at the top; below it the
+  // expression the kernel built from the keys and indices on the way down. A
+  // debug frame's rows have none - they are not in the kernel - so they cannot
+  // be selected and the menu's Show is greyed out on them.
+  const expression = depth === 0 ? row.name : row.expression;
+  const selectable = typeof expression === "string" && expression !== "";
+  if (selectable) {
+    head.dataset.path = key;
+    head.dataset.variable = expression;
+    head.dataset.name = depth === 0 ? row.name : nameOf(row);
+    // What Export... writes for this row: "" for the object itself, ".part"
     // for a builder. Absent where the kernel said it cannot be exported, and
     // on every row a debug frame lists - those are not in the kernel at all.
     if (typeof row.export === "string") {
@@ -409,8 +416,8 @@ function rowsFor(row, path, depth) {
       toggle(path);
     });
   }
-  if (depth === 0) {
-    if (selected.has(row.name)) {
+  if (selectable) {
+    if (selected.has(key)) {
       head.classList.add("var-selected");
     }
     // A Shift-click is a range of rows, not a range of text: the browser would
@@ -422,7 +429,7 @@ function rowsFor(row, path, depth) {
         event.preventDefault();
       }
     });
-    head.addEventListener("click", (event) => select(row.name, event));
+    head.addEventListener("click", (event) => select(key, event));
   }
   out.push(head);
 
@@ -564,14 +571,26 @@ function startResize(event, column) {
 }
 
 /**
- * A click on a top-level row: plain selects it alone, Cmd/Ctrl toggles it,
+ * What a child row is called where a name is wanted: in the viewer's tree, and
+ * as the suggested file name. Its label when it has one - the name somebody gave
+ * the part - and otherwise the expression that reaches it.
+ */
+function nameOf(row) {
+  if (typeof row.label === "string" && row.label !== "") {
+    return row.label;
+  }
+  return row.expression;
+}
+
+/**
+ * A click on a selectable row: plain selects it alone, Cmd/Ctrl toggles it,
  * Shift extends from the last plain click over the rows as shown.
  */
-function select(name, event) {
+function select(key, event) {
   const toggling = event.metaKey || event.ctrlKey;
   if (event.shiftKey && anchor !== null) {
-    const shown = visibleNames();
-    const [from, to] = [shown.indexOf(anchor), shown.indexOf(name)];
+    const shown = shownRows().map((row) => row.dataset.path);
+    const [from, to] = [shown.indexOf(anchor), shown.indexOf(key)];
     if (from !== -1 && to !== -1) {
       if (!toggling) {
         selected.clear();
@@ -584,65 +603,81 @@ function select(name, event) {
     }
   }
   if (toggling) {
-    if (selected.has(name)) {
-      selected.delete(name);
+    if (selected.has(key)) {
+      selected.delete(key);
     } else {
-      selected.add(name);
+      selected.add(key);
     }
   } else {
     selected.clear();
-    selected.add(name);
+    selected.add(key);
   }
-  anchor = name;
+  anchor = key;
   render();
 }
 
-/** The top-level names in the order the pane shows them. */
-function visibleNames() {
-  return sortRows(filterRows(rows, filter), order).map((row) => row.name);
+/**
+ * The selectable rows in the order the pane shows them, at every depth.
+ *
+ * Read from the table rather than from `rows`, because the order a nested row
+ * is shown in is the tree's - sorted and filtered at the top, in the kernel's
+ * order below - and the table is the one place that already has it.
+ */
+function shownRows() {
+  return [...bodyElement().querySelectorAll("tr.var-row[data-path]")];
+}
+
+/** A file name from a row's name: a label may hold a slash, an expression quotes. */
+function fileNameOf(name) {
+  return name.replace(/[\\/:*?"<>|\x00-\x1f]/g, "_");
 }
 
 /**
  * What Export... would export for the row that was right-clicked, or null.
  *
- * Only a top-level row the kernel marked as exportable has one. The expression
- * is the variable, or for a builder the attribute holding what it built.
+ * Only a row the kernel marked as exportable has one. The expression is the
+ * row's own, or for a builder the attribute holding what it built.
  *
  * @param {EventTarget} target what was right-clicked
- * @returns {{name: string, expression: string}|null}
+ * @returns {{variable: string, name: string, expression: string}|null}
+ *   `variable` is what selectionFor lists for the row, `name` the suggested
+ *   file name without its extension
  */
 export function exportTargetFor(target) {
   const row = typeof target?.closest === "function" ? target.closest("tr.var-row") : null;
-  const name = row?.dataset.variable;
+  const variable = row?.dataset.variable;
   const suffix = row?.dataset.export;
-  if (typeof name !== "string" || name === "" || typeof suffix !== "string") {
+  if (typeof variable !== "string" || variable === "" || typeof suffix !== "string") {
     return null;
   }
-  return { name, expression: `${name}${suffix}` };
+  return { variable, name: fileNameOf(row.dataset.name), expression: `${variable}${suffix}` };
 }
 
 /**
- * The names a right-click acts on, in the order the pane shows them.
+ * What a right-click acts on, in the order the pane shows it.
  *
  * A right-click on a row outside the selection selects that row alone first -
  * what every list does - so what the menu offers is what is highlighted.
  *
  * @param {EventTarget} target what was right-clicked
- * @returns {string[]} empty when the click was not on a top-level row
+ * @returns {{expression: string, name: string}[]} empty when the click was not
+ *   on a selectable row; `name` is what the viewer's tree calls it
  */
 export function selectionFor(target) {
   const row = typeof target?.closest === "function" ? target.closest("tr.var-row") : null;
-  const name = row?.dataset.variable;
-  if (typeof name !== "string" || name === "") {
+  const key = row?.dataset.path;
+  if (typeof key !== "string" || key === "") {
     return [];
   }
-  if (!selected.has(name)) {
+  if (!selected.has(key)) {
     selected.clear();
-    selected.add(name);
-    anchor = name;
+    selected.add(key);
+    anchor = key;
     render();
   }
-  return visibleNames().filter((shown) => selected.has(shown));
+  return shownRows()
+    .filter((shown) => selected.has(shown.dataset.path))
+    .map((shown) => ({ expression: shown.dataset.variable, name: shown.dataset.name }));
 }
 
 function toggle(path) {
@@ -651,12 +686,18 @@ function toggle(path) {
     expanded.delete(key);
     // Everything underneath goes with it. Left behind, reopening the row would
     // show the subtree as it was some executions ago, and the memory would grow
-    // by every branch ever opened.
+    // by every branch ever opened. A selection there goes too: Show must not
+    // act on rows nobody can see.
     for (const other of [...expanded]) {
       if (isUnder(JSON.parse(other), path)) {
         expanded.delete(other);
         details.delete(other);
         pages.delete(other);
+      }
+    }
+    for (const other of [...selected]) {
+      if (isUnder(JSON.parse(other), path)) {
+        selected.delete(other);
       }
     }
     render();
@@ -724,9 +765,9 @@ export function initVariables() {
     // A name that has gone, or been rebound, must not show stale detail - and
     // neither must anything that was open underneath it.
     const present = new Set(rows.map((row) => row.name));
-    for (const name of [...selected]) {
-      if (!present.has(name)) {
-        selected.delete(name);
+    for (const key of [...selected]) {
+      if (!present.has(JSON.parse(key)[0])) {
+        selected.delete(key);
       }
     }
     for (const key of [...expanded]) {
