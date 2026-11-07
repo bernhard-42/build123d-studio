@@ -164,7 +164,8 @@ test.describe("File > Import…", () => {
     await page.locator("#import-run").click();
 
     await expect.poll(() => executed(sidecar)).toHaveLength(2);
-    expect(await editorText(page)).toBe("PART = 1");
+    // Waited for rather than read once, which could catch the lines undrawn.
+    await expect.poll(() => editorText(page)).toBe("PART = 1");
   });
 
   // What goes into the file: the import statement alone.

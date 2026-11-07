@@ -212,11 +212,18 @@ test.describe("each file keeps its own history", () => {
     // note below. This one fails the moment the models are shared.
     await open(page, { files: FILES, settings: { workspace: WORKSPACE } });
 
+    // Each read waits for the file's own text to be drawn first: straight
+    // after a switch Monaco has not drawn the lines yet, and a single read saw
+    // an empty editor.
     await expect(page.locator(".tab-active .tab-label")).toHaveText("part.py");
+    await expect.poll(() => editorText(page), { message: "part.py is not showing its own contents" })
+      .toContain("Box");
     const partText = await editorText(page);
 
     await page.locator(".tab", { hasText: "plate.py" }).click();
     await expect(page.locator(".tab-active .tab-label")).toHaveText("plate.py");
+    await expect.poll(() => editorText(page), { message: "plate.py is not showing its own contents" })
+      .toContain("PLATE");
     const plateText = await editorText(page);
 
     expect(partText, "part.py is not showing its own contents").toContain("Box");
