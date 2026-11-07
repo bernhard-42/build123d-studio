@@ -348,6 +348,9 @@ class Sidecar:
         # About dialog walks the installed distributions.
         self.channel.on("viewer.changes", self.on_viewer_changes, lane=MEASURE)
         self.channel.on("viewer.screenshot", self.on_viewer_screenshot, lane=MEASURE)
+        # On the measure lane, so it is ordered against the selections it would
+        # otherwise pull a process out from under.
+        self.channel.on("measure.restart", self.on_restart_measure, lane=MEASURE)
         self.channel.on("vars.refresh", self.on_vars_refresh, lane=INSPECT)
         self.channel.on("app.info", self.on_app_info, lane=INSPECT)
         self.channel.on("export.forms", self.on_export_forms, lane=INSPECT)
@@ -1599,6 +1602,20 @@ class Sidecar:
             log(f"Language server restart failed: {exc}")
             detail = f"failed: {exc}"
         self.channel.send("editor.restartLanguageServer", id=message.get("id"), detail=detail)
+
+    def on_restart_measure(self, message):
+        """Replace the measure process, and say whether the new one answers.
+
+        Asked for after a package is installed, upgraded or reinstalled, and by
+        the button in Settings. It has imported the backend and any kernel
+        plugin, so it describes the environment as it was. Not on a kernel
+        restart, for the language server's reason.
+        """
+        self.measurements.restart()
+        ready = self.measurements.warm()
+        log("measure: " + ("The measurement backend is ready" if ready
+                           else "The measurement backend did not answer"))
+        self.channel.send("measure.restart", id=message.get("id"), ready=ready)
 
     def on_format(self, message):
         """Format the whole buffer, or answer with nothing to do.

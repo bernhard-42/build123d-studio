@@ -280,6 +280,18 @@ function packageRow(pkg, selection, gitPresent, localPath) {
  * on the environment and return to where they were pressed - on success as well
  * as on failure, so the rule is one sentence rather than two.
  */
+/**
+ * Replace the measurement process, and answer whether the new one came back.
+ *
+ * The timeout is longer than the sidecar's own 60 seconds for a backend that
+ * does not answer, so a wedged one is reported from there rather than guessed
+ * at here. A cold import is seconds of it, measured at 10 s on Windows.
+ */
+async function restartMeasurementBackend() {
+  const answer = await ipc.request("measure.restart", {}, { timeout: 90000 });
+  return answer !== null && answer.ready === true;
+}
+
 async function runEnvironmentAction({ status, done, work }) {
   close();
   showSplash();
@@ -314,6 +326,14 @@ async function runEnvironmentAction({ status, done, work }) {
     } catch (error) {
       log.warn("The language server did not restart:", error);
       appendLog("The language server did not restart; completions may be stale.");
+    }
+
+    // The measurement backend has imported what was replaced, too - build123d,
+    // and any kernel plugin. Like the language server, reported rather than
+    // fatal: it costs the measure tools, not the operation being performed.
+    setStatus("Restarting the measurement backend…");
+    if (!(await restartMeasurementBackend())) {
+      appendLog("The measurement backend did not restart; see the Backend tab.");
     }
 
     // The running kernel has already imported whatever was replaced.
@@ -679,6 +699,18 @@ ${VIEWER_GROUPS.map(
             </select>
           </label>
           <p class="info-note" id="settings-log-path"></p>
+
+          <p class="settings-group">Backend</p>
+          <p class="info-note">
+            The measurement backend answers the viewer's Distance and Properties
+            tools from a process of its own. Restarting it loads its libraries
+            and kernel plugins again; the model on screen and the active tool
+            carry over. Installing or upgrading packages does this by itself.
+          </p>
+          <button class="settings-btn settings-action" id="settings-restart-backend">
+            Restart backend
+          </button>
+          <p class="info-note" id="settings-backend-status" hidden></p>
         </section>
 
         <section class="settings-panel" data-panel="shortcuts" hidden>
@@ -1149,6 +1181,21 @@ ${VIEWER_GROUPS.map(
     if (await saveEverything()) {
       await updatePackages();
     }
+  });
+
+  // At once rather than on Apply, like Update and Upgrade, and with the dialog
+  // left open: nothing in it is being changed, and the answer belongs here.
+  document.getElementById("settings-restart-backend").addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    const status = document.getElementById("settings-backend-status");
+    button.disabled = true;
+    status.hidden = false;
+    status.textContent = "Restarting…";
+    const ready = await restartMeasurementBackend();
+    button.disabled = false;
+    status.textContent = ready
+      ? "Restarted."
+      : "It did not come back; see the Backend tab.";
   });
 
   document.getElementById("settings-upgrade").addEventListener("click", async () => {

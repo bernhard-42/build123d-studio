@@ -65,6 +65,12 @@ class MeasurementService:
         self._mapping = None
         self._sent = False
 
+        # The tool the viewer last named, and whether this process has heard it.
+        # The same two facts for the same reason: the viewer says it once, when
+        # the tool is switched on, and a process started since has not heard it.
+        self._tool = None
+        self._tool_told = False
+
         # The last thing said about it, so that saying it again says nothing.
         # See _announce.
         self._state = None
@@ -123,6 +129,7 @@ class MeasurementService:
         # What it has been told is a fact about the process, not about the
         # model, so a respawn has to be told again.
         self._sent = False
+        self._tool_told = False
         threading.Thread(
             target=self._relay_errors, args=(self._process,), name="measure-log", daemon=True
         ).start()
@@ -151,11 +158,12 @@ class MeasurementService:
             if started is not None:
                 log(f"Measurement backend ready in {time.monotonic() - started:.2f}s")
             self._announce("ready", "")
-        else:
-            # It did not answer, which is the case worth saying out loud: every
-            # measurement afterwards silently produces nothing, and until now
-            # the only trace was this line's absence.
-            self._announce("failed", "the backend did not answer its first ping")
+            return True
+        # It did not answer, which is the case worth saying out loud: every
+        # measurement afterwards silently produces nothing, and until now the
+        # only trace was this line's absence.
+        self._announce("failed", "the backend did not answer its first ping")
+        return False
 
     def state(self):
         """What the backend is doing, for a report about a stall.
@@ -202,21 +210,27 @@ class MeasurementService:
         """
         self._stopping.set()
         process, self._process = self._process, None
-        if process is None:
+        _end(process)
+
+    def restart(self):
+        """Replace the process, which has already imported what it was started with.
+
+        The model and the tool are kept: they are the sidecar's to hold, and the
+        next selection tells the new process both. Nothing is announced, because
+        a process replaced on request has not failed; warm() says how the new
+        one is doing.
+
+        On the measure lane, like every request, so no round trip is in flight.
+        """
+        if self._stopping.is_set():
             return
-        try:
-            process.kill()
-        except OSError:
-            pass
-        try:
-            process.wait(timeout=2)
-        except Exception:  # noqa: BLE001 - this runs on the way out
-            pass
-        # Both ends, and after the kill: a flush that would have blocked now
-        # fails with a broken pipe instead, which _close swallows. stderr closes
-        # itself in the relay thread when the process ends.
-        _close(process.stdin)
-        _close(process.stdout)
+        # With this prefix, like the process's own lines, so it reads in the
+        # backend log beside what the old process said and what the new one will.
+        log("measure: Restarting the measurement backend")
+        with self._lock:
+            process, self._process = self._process, None
+            _end(process)
+            self._spawn()
 
     # --- what the sidecar calls ---
 
@@ -298,6 +312,22 @@ class MeasurementService:
                 self._sent = True
                 log(f"Measurement model sent: {size} B in "
                     f"{(time.monotonic() - started) * 1000:.0f} ms")
+
+            if message.get("command") == "changes":
+                changes = message.get("changes", {})
+                if "activeTool" in changes:
+                    self._tool = changes["activeTool"]
+                    self._tool_told = True
+                elif not self._tool_told and self._tool not in (None, "None"):
+                    # The viewer will not say it again - as far as it knows the
+                    # tool is still on - so a process started since would answer
+                    # every selection with nothing until it was toggled.
+                    if self._exchange({
+                        "command": "changes",
+                        "changes": {"activeTool": self._tool},
+                    }) is None:
+                        return None
+                    self._tool_told = True
 
             started = time.monotonic()
             reply = self._exchange(message)
@@ -399,6 +429,25 @@ class MeasurementService:
         if body is None:
             raise EOFError("the measurement backend closed mid-reply")
         return orjson.loads(body)
+
+
+def _end(process):
+    """Kill a measurement process and close its pipes. None is nothing to do."""
+    if process is None:
+        return
+    try:
+        process.kill()
+    except OSError:
+        pass
+    try:
+        process.wait(timeout=2)
+    except Exception:  # noqa: BLE001 - this runs on the way out
+        pass
+    # Both ends, and after the kill: a flush that would have blocked now fails
+    # with a broken pipe instead, which _close swallows. stderr closes itself in
+    # the relay thread when the process ends.
+    _close(process.stdin)
+    _close(process.stdout)
 
 
 def _close(stream):

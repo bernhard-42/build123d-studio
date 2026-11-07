@@ -24,8 +24,9 @@ whenever it likes, on every platform, and nothing waits for it - the sidecar
 spawns this alongside the kernel and carries on.
 
 **The protocol.** Length-prefixed JSON both ways on stdin and stdout, one
-request at a time. stdout carries that and nothing else; logs go to stderr,
-which the sidecar relays into its own log so this process is not invisible.
+request at a time. The pipe stdout was started on carries that and nothing else;
+logs go to stderr, which the sidecar relays into its own log so this process is
+not invisible.
 Binary would be faster and there is nothing here worth optimising: a mapping
 crosses once per measurement session rather than once per show, and a selection
 is a handful of ids.
@@ -35,14 +36,36 @@ import os
 import struct
 import sys
 
-import orjson
+# The protocol's pipe, taken before anything can write to it, and then closed
+# off: from here on descriptor 1 and `sys.stdout` both *are* stderr, so anything
+# that writes to stdout ends up in the log beside every other line this process
+# writes.
+#
+# Descriptor 1 as well as `sys.stdout`, and before the imports below. A kernel
+# plugin is native code, and what C++ prints goes to the descriptor without ever
+# seeing Python's `sys.stdout`; and an import that prints a banner runs before
+# anything in main() could.
+#
+# This is not tidiness. The shared backend prints what it is doing -
+# "Identifiers received '/Group/Solid/edges/edges_4'" - because in OCP CAD
+# Viewer that stream is a terminal somebody watches. Here it is the protocol:
+# length-prefixed JSON, one reply per request. A single printed sentence is read
+# by the sidecar as a length prefix, and it then waits for a message that will
+# never come - measurements stop answering, and because that read holds the lock
+# a freshly shown model needs, the next `show()` blocks with it. One `print` in a
+# library, and the application appears to hang minutes later.
+PROTOCOL = os.fdopen(os.dup(sys.stdout.fileno()), "wb")
+os.dup2(sys.stderr.fileno(), sys.stdout.fileno())
+sys.stdout = sys.stderr
+
+import orjson  # noqa: E402 - after the redirect above, which is its whole point
 
 # At module scope, where every import in this project belongs. If the backend
 # cannot be imported this process dies here with a traceback on stderr, which
 # the sidecar relays into its own log - the same outcome as reporting it down
 # the pipe, and without a second code path that only runs when something is
 # already broken.
-from measure import Measurements
+from measure import Measurements  # noqa: E402 - after the redirect above
 
 LENGTH = struct.Struct("<I")
 
@@ -97,22 +120,6 @@ def main():
     the first answered ping - it knows both ends and this does not need to.
     """
     stdin = sys.stdin.buffer
-    # The real stdout, taken before anything can print to it, and then closed
-    # off: from here on `sys.stdout` *is* stderr, so anything that prints ends
-    # up in the log beside every other line this process writes.
-    #
-    # This is not tidiness. The shared backend prints what it is doing -
-    # "Identifiers received '/Group/Solid/edges/edges_4'" - because in OCP CAD
-    # Viewer that stream is a terminal somebody watches. Here stdout is the
-    # protocol: length-prefixed JSON, one reply per request. A single printed
-    # sentence is read by the sidecar as a length prefix, and it then waits for
-    # a message that will never come - measurements stop answering, and because
-    # that read holds the lock a freshly shown model needs, the next `show()`
-    # blocks with it. One `print` in a library, and the application appears to
-    # hang minutes later.
-    stdout = os.fdopen(os.dup(sys.stdout.fileno()), "wb")
-    sys.stdout = sys.stderr
-
     measurements = Measurements()
 
     while True:
@@ -120,7 +127,7 @@ def main():
         if request is None:
             # stdin closed: the sidecar has gone, and so should this.
             return
-        write_message(stdout, answer(measurements, request))
+        write_message(PROTOCOL, answer(measurements, request))
 
 
 def answer(measurements, request):

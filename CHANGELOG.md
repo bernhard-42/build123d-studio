@@ -2,6 +2,16 @@
 
 What changed in each release, for the people using it. Anything not visible from the outside is in the git log.
 
+## unreleased
+
+- **Features**
+    - **Restart backend** in a new Backend section of the Application settings restarts the measurement backend, which loads its libraries and kernel plugins again; the model on screen and the active tool carry over
+
+- **Fixes**
+    - Installing or upgrading packages also restarts the measurement backend. It used to keep the old libraries until Studio was restarted
+    - The measurement backend no longer hangs when a library or a kernel plugin prints to stdout, from native code or while it is being imported
+    - After the measurement backend restarts, the active Distance or Properties tool keeps answering; it used to answer nothing until the tool was switched off and on
+
 ## 0.10.0 (2026-10-21)
 
 - **Features**

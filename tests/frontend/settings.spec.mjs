@@ -128,6 +128,34 @@ test.describe("the four buttons", () => {
 });
 
 test.describe("the tabs", () => {
+  test("Restart backend asks for it at once, says how it went, and leaves the dialog open", async ({ page }) => {
+    const { sidecar } = await open(page, { files: FILES, settings: { workspace: WORKSPACE } });
+    await page.evaluate(() =>
+      globalThis.__NEUTRALINO_STUB__.emit("mainMenuItemClicked", { id: "app.settings" }),
+    );
+    await page.locator("#tab-application").click();
+
+    await page.locator("#settings-restart-backend").click();
+
+    await sidecar.waitFor("measure.restart");
+    await expect(page.locator("#settings-backend-status")).toHaveText("Restarted.");
+    await expect(page.locator("#settings-restart-backend")).toBeEnabled();
+    await expect(page.locator("#settings-apply")).toBeVisible();
+  });
+
+  test("and says so when the backend did not come back", async ({ page }) => {
+    const { sidecar } = await open(page, { files: FILES, settings: { workspace: WORKSPACE } });
+    sidecar.answer("measure.restart", () => ({ ready: false }));
+    await page.evaluate(() =>
+      globalThis.__NEUTRALINO_STUB__.emit("mainMenuItemClicked", { id: "app.settings" }),
+    );
+    await page.locator("#tab-application").click();
+
+    await page.locator("#settings-restart-backend").click();
+
+    await expect(page.locator("#settings-backend-status")).toContainText("did not come back");
+  });
+
   test("every tab reaches its own panel", async ({ page }) => {
     await openSettings(page);
 
@@ -476,6 +504,8 @@ test.describe("what a package change tells the language server", () => {
     await page.locator("#settings-update").click();
 
     await expect.poll(() => asked(sidecar, "editor.restartLanguageServer")).toBe(1);
+    // The measurement process has imported the same packages.
+    await expect.poll(() => asked(sidecar, "measure.restart")).toBe(1);
   });
 
   test("but restarting the kernel does not", async ({ page }) => {
@@ -489,6 +519,7 @@ test.describe("what a package change tells the language server", () => {
     await sidecar.waitFor("kernel.restart");
     await page.waitForTimeout(300);
     expect(asked(sidecar, "editor.restartLanguageServer")).toBe(0);
+    expect(asked(sidecar, "measure.restart")).toBe(0);
   });
 });
 

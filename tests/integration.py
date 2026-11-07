@@ -1220,6 +1220,22 @@ def main():
     reindexed = side.wait_log("Measurement model indexed", 60, count=2)[0] is not None
     check("a newly shown model is indexed again", reindexed)
 
+    # A package change replaces the process, which has imported what was
+    # replaced. The model and the tool belong to the sidecar, so the next
+    # selection tells the new process both: it answers without the tool being
+    # switched on again, which the viewer would have no reason to do.
+    side.send("measure.restart", id="restart-1")
+    _, restarted = side.wait_frame_where(
+        "measure.restart", lambda f: f.get("id") == "restart-1", 60
+    )
+    check("a restarted measurement backend says it is back",
+          restarted is not None and restarted.get("ready") is True)
+    check("and says so where the backend's own lines go",
+          side.wait_log("measure: The measurement backend is ready", 5)[0] is not None)
+    side.send("viewer.changes", changes={"selectedShapeIDs": []})
+    told = side.wait_log("Measurement model indexed", 60, count=3)[0] is not None
+    check("and is told the model and the tool at the next selection", told)
+
     # --- the model socket, from a peer that is not the kernel ---
     #
     # Reachable by any process on this machine, which is the premise the token

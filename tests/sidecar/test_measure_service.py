@@ -16,6 +16,7 @@ least important thing in the window.
 """
 
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -250,6 +251,24 @@ class SayingSoTest(unittest.TestCase):
         self.service.handle_changes({"tool": "distance"})
         self.assertEqual(self.said[-1][0], "ready", self.said)
 
+    def test_a_restart_on_request_is_not_reported_as_a_fault(self):
+        self.service.start()
+        self.service.warm()
+        self.said.clear()
+
+        self.service.restart()
+        self.service.warm()
+
+        self.assertEqual(self.said, [])
+
+    def test_a_restart_on_the_way_out_starts_nothing(self):
+        self.service.start()
+        self.service.stop()
+
+        self.service.restart()
+
+        self.assertIsNone(self.service._process)
+
     def test_the_way_out_is_not_reported_as_a_fault(self):
         # stop() kills it, which is the same broken round trip seen from the
         # inside - and a subsystem report into a channel that is closing is
@@ -362,6 +381,76 @@ class MeasureProcessTest(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 
+class ProtocolPipeTest(unittest.TestCase):
+    """Nothing written to stdout reaches the protocol, whoever writes it.
+
+    The real measure_process.py beside a stub of the backend, so a kernel plugin
+    is not needed to write what one would. One such write is read as a length
+    word, so the bounded timeout below is what a failure looks like.
+    """
+
+    STUB = """
+import ctypes, os, sys
+where, how = os.environ["PROBE"].split(":")
+
+def write():
+    if how == "python":
+        print("from Python")
+    elif how == "descriptor":
+        os.write(1, b"straight to descriptor 1\\n")
+    elif how == "native":
+        libc = ctypes.CDLL(None)
+        libc.puts(b"from C")
+        libc.fflush(None)
+
+if where == "import":
+    write()
+
+class Measurements:
+    def load(self, mapping):
+        pass
+    def handle_changes(self, changes):
+        if where == "request":
+            write()
+        return {"answered": True}
+"""
+
+    def answers(self, probe):
+        folder = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, folder)
+        script = os.path.join(folder, "measure_process.py")
+        shutil.copy(os.path.join(SIDECAR, "sidecar", "measure_process.py"), script)
+        with open(os.path.join(folder, "measure.py"), "w") as handle:
+            handle.write(self.STUB)
+        os.environ["PROBE"] = probe
+        self.addCleanup(os.environ.pop, "PROBE")
+        service = MeasurementService(script=script)
+        service.REPLY_TIMEOUT = 10
+        self.addCleanup(service.stop)
+        service.start()
+        return service.handle_changes({"activeTool": "Distance"})
+
+    def test_python_during_a_request(self):
+        self.assertEqual(self.answers("request:python"), {"answered": True})
+
+    def test_the_descriptor_during_a_request(self):
+        self.assertEqual(self.answers("request:descriptor"), {"answered": True})
+
+    def test_python_at_import(self):
+        self.assertEqual(self.answers("import:python"), {"answered": True})
+
+    def test_the_descriptor_at_import(self):
+        self.assertEqual(self.answers("import:descriptor"), {"answered": True})
+
+    @unittest.skipIf(sys.platform == "win32", "ctypes.CDLL(None) is POSIX")
+    def test_native_code_during_a_request(self):
+        self.assertEqual(self.answers("request:native"), {"answered": True})
+
+    @unittest.skipIf(sys.platform == "win32", "ctypes.CDLL(None) is POSIX")
+    def test_native_code_at_import(self):
+        self.assertEqual(self.answers("import:native"), {"answered": True})
+
+
 class RealMeasurementTest(unittest.TestCase):
     """A measurement of a real model, through the real process.
 
@@ -427,6 +516,49 @@ class RealMeasurementTest(unittest.TestCase):
 
         self.assertIsNotNone(answer, "the measurement produced no answer at all")
         self.assertEqual(answer.get("subtype"), "tool_response")
+
+    def select_a_face(self):
+        return self.service.handle_changes({
+            "selectedShapeIDs": ["/Group/Solid/faces/faces_0", False],
+        })
+
+    def test_a_process_started_since_is_told_the_tool_and_the_model(self):
+        """The viewer says the tool once, and as far as it knows it is still on."""
+        self.service.start()
+        self.service.load(self.mapping)
+        self.service.handle_changes({"activeTool": "PropertiesMeasurement"})
+        self.assertIsNotNone(self.select_a_face())
+
+        self.service._process.kill()
+        self.service._process.wait()
+
+        answer = self.select_a_face()
+        self.assertIsNotNone(answer, "the new process does not know the tool is on")
+        self.assertEqual(answer.get("subtype"), "tool_response")
+
+    def test_but_not_a_tool_that_was_switched_off(self):
+        self.service.start()
+        self.service.load(self.mapping)
+        self.service.handle_changes({"activeTool": "PropertiesMeasurement"})
+        self.service.handle_changes({"activeTool": "None"})
+
+        self.service._process.kill()
+        self.service._process.wait()
+
+        self.assertIsNone(self.select_a_face())
+
+    def test_a_restart_is_a_new_process_with_the_same_model_and_tool(self):
+        self.service.start()
+        self.service.load(self.mapping)
+        self.service.handle_changes({"activeTool": "PropertiesMeasurement"})
+        before = self.service._process
+
+        self.service.restart()
+
+        self.assertIsNot(self.service._process, before)
+        self.assertIsNotNone(before.poll(), "the old process is still running")
+        self.assertTrue(self.service.warm())
+        self.assertIsNotNone(self.select_a_face())
 
     def test_the_splash_is_measurable_before_anything_is_shown(self):
         """The logo is a real model, so it can be measured like one.

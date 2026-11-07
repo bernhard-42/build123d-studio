@@ -91,6 +91,9 @@ class FakeSidecar {
     if (!this._answers.has("editor.restartLanguageServer")) {
       this._answers.set("editor.restartLanguageServer", () => ({ detail: "restarted" }));
     }
+    if (!this._answers.has("measure.restart")) {
+      this._answers.set("measure.restart", () => ({ ready: true }));
+    }
   }
 
   /** Answer every request of a type, the way the sidecar's lanes do.
