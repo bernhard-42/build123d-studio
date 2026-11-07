@@ -24,7 +24,7 @@
 // neither may own them: this file draws the dialog, and the transport answers
 // `workspace_config()` with the *whole* set - every host does, because a key
 // left out is not a default but a key the renderer never hears about. Two
-// copies of 37 numbers would drift, and they would drift silently.
+// copies of 39 numbers would drift, and they would drift silently.
 // The import attribute is required by node, which runs the tests; vite and
 // esbuild take it too.
 import DEFAULTS from "../kernel/build123d_studio/viewer_defaults.json" with { type: "json" };
@@ -69,6 +69,13 @@ export const GROUPS = [
         label: "Zoom speed" },
       { key: "pan_speed", type: "number", min: 0.1, max: 10, step: 0.1,
         label: "Pan speed" },
+      // three-cad-viewer 5.2. A drag that starts on the background turns around
+      // the centre of the visible objects; off, both go back to the target and
+      // the centre of the view.
+      { key: "cursor_pivot", type: "boolean",
+        label: "Rotate around the point under the cursor" },
+      { key: "zoom_to_cursor", type: "boolean",
+        label: "Zoom towards the cursor" },
       { key: "modifier_keys", type: "keymap", label: "Modifier keys" },
     ],
   },

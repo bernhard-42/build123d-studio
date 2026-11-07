@@ -316,3 +316,38 @@ test.describe("the modifier keys the viewer is built with", () => {
     expect(html).toContain("&lt;ctrl&gt; + &lt;left mouse button&gt; double");
   });
 });
+
+test.describe("rotating and zooming at the cursor", () => {
+  // The kernel answers workspace_config() from Settings, so a show's header
+  // carries both options under their viewer names, and createPage hands them
+  // to the viewer. three-cad-viewer's help says which way cursorPivot is: with
+  // it on, the gesture that sets the camera target does nothing, and its row
+  // is hidden.
+  const rendered = async (page, sidecar, config, count) => {
+    sidecar.sendBinary(KIND_MODEL, PAYLOAD, {
+      ...MODEL.header,
+      config: { ...(MODEL.header.config ?? {}), ...config },
+    });
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          String(globalThis.__NEUTRALINO_STUB__.wrote("/appdata/build123d-studio/build123d-studio.log") ?? "")
+            .split("Model rendered").length - 1))
+      .toBe(count);
+  };
+  const targetRow = (page) =>
+    page.evaluate(() => document.querySelector(".tcv_help_camera_target")?.style.display ?? null);
+
+  test("cursorPivot in a show's header reaches the viewer, in both directions", async ({ page }) => {
+    const { sidecar } = await openApp(page);
+
+    await rendered(page, sidecar, { cursorPivot: true }, 1);
+    expect(await targetRow(page)).toBe("none");
+
+    await rendered(page, sidecar, { cursorPivot: false }, 2);
+    expect(await targetRow(page)).toBe("");
+
+    await rendered(page, sidecar, { cursorPivot: true }, 3);
+    expect(await targetRow(page)).toBe("none");
+  });
+});

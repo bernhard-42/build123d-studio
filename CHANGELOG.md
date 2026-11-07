@@ -5,6 +5,7 @@ What changed in each release, for the people using it. Anything not visible from
 ## unreleased
 
 - **Features**
+    - A rotate drag that starts on the model turns around the point under the cursor, and one that starts on the background around the centre of the visible objects; the wheel, trackpad pinch and middle-button drag zoom towards the cursor (three-cad-viewer 5.2). Both are on by default and switch separately: settings **Rotate around the point under the cursor** and **Zoom towards the cursor** under Camera and controls in the Viewer settings, and keywords `cursor_pivot` and `zoom_to_cursor` of `show`, `show_object`, `show_objects` and `set_defaults`
     - **Restart backend** in a new Backend section of the Application settings restarts the measurement backend, which loads its libraries and kernel plugins again; the model on screen and the active tool carry over
 
 - **Changes**

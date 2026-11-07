@@ -19,7 +19,7 @@ stays - and after startup what it holds is the splash logo's own configuration.
 VS Code's does, and the defaults are read from `viewer_defaults.json` beside
 this file. That file is the one source for both halves of the application: the
 Settings dialog draws its controls from it, and this assembles the answer from
-it, so 37 numbers are written down once.
+it, so 39 numbers are written down once.
 
 One of those settings differs by platform, and the file says so rather than
 either half computing it: `modifier_keys` holds a map per platform. See

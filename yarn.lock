@@ -1048,10 +1048,9 @@ node-gyp-build@^4.3.0:
   resolved "https://registry.yarnpkg.com/node-gyp-build/-/node-gyp-build-4.8.4.tgz#8a70ee85464ae52327772a90d66c6077a900cfc8"
   integrity sha512-LA4ZjwlnUblHVgq0oBF3Jl/6h/Nvs5fzBLwdEF4nuxnFdsfajde4WfxtJr3CaiH+F6ewcIB/q4jQ4UzPyid+CQ==
 
-ocp-viewer-core@1.1.0:
-  version "1.1.0"
-  resolved "https://registry.yarnpkg.com/ocp-viewer-core/-/ocp-viewer-core-1.1.0.tgz#9438aa86d7f42e49ae045426a63175af37e62bcc"
-  integrity sha512-S3PUvzhv0X+Y158Jg3gaDuCHeoOIcGMeLU7smhhxcarLa+pgB7FegnOq1K/8M6dcv1A/EkDw6UptWeLXNmrZ4Q==
+ocp-viewer-core@../ocp-viewer-core/dist/ocp-viewer-core-v1.2.0.tgz:
+  version "1.2.0"
+  resolved "../ocp-viewer-core/dist/ocp-viewer-core-v1.2.0.tgz#d69601231a4503868612ab5decd1072597163ae7"
 
 once@^1.3.0:
   version "1.4.0"
@@ -1156,10 +1155,10 @@ postject@1.0.0-alpha.6:
   dependencies:
     commander "^9.4.0"
 
-postprocessing@6.39.0:
-  version "6.39.0"
-  resolved "https://registry.yarnpkg.com/postprocessing/-/postprocessing-6.39.0.tgz#168841ed60eb4228332e42303cb61ea192a1dd52"
-  integrity sha512-/G6JY8hs426lcto/pBZlnFSkyEo1fHsh4gy7FPJtq1SaSUOzJgDW6f6f1K/+aMOYzK/eQEefyOb3++jPPIUeDA==
+postprocessing@6.39.6:
+  version "6.39.6"
+  resolved "https://registry.yarnpkg.com/postprocessing/-/postprocessing-6.39.6.tgz#fcc4d2e5501d08a38ed731cb979ccf94f26670a6"
+  integrity sha512-HIVhnU8R9tF2YBMXOF2x+TKt3ia+caSHGsycSqrfkd426vH/jwm7w19YQCWsA8jMQJXvAsniLYMiJaNugxUFtA==
 
 prelude-ls@^1.2.1:
   version "1.2.1"
@@ -1276,19 +1275,18 @@ tcp-port-used@^1.0.2:
     debug "4.3.1"
     is2 "2.0.1"
 
-three-cad-viewer@5.1.3:
-  version "5.1.3"
-  resolved "https://registry.yarnpkg.com/three-cad-viewer/-/three-cad-viewer-5.1.3.tgz#c5ebce85a49a131aa437e86ef1d3f861ddbcbaa3"
-  integrity sha512-M4NNX8HyL94O81imLBCW9bFXAmQIUSaR323ROWlkxtg7+lWW+HpkxHUiCWiV2xfxky6hLbsSE0hPz2hW9ap+rg==
+three-cad-viewer@../three-cad-viewer/three-cad-viewer-5.2.0.tgz:
+  version "5.2.0"
+  resolved "../three-cad-viewer/three-cad-viewer-5.2.0.tgz#e3c8f1cea2a4895aae4ac212cd10f217aeece77b"
   dependencies:
     n8ao "1.10.1"
-    postprocessing "6.39.0"
-    three "0.184.0"
+    postprocessing "6.39.6"
+    three "0.187.0"
 
-three@0.184.0:
-  version "0.184.0"
-  resolved "https://registry.yarnpkg.com/three/-/three-0.184.0.tgz#5bca0a3851eea5345e4c205567b40dfa49b791b5"
-  integrity sha512-wtTRjG92pM5eUg/KuUnHsqSAlPM296brTOcLgMRqEeylYTh/CdtvKUvCyyCQTzFuStieWxvZb8mVTMvdPyUpxg==
+three@0.187.0:
+  version "0.187.0"
+  resolved "https://registry.yarnpkg.com/three/-/three-0.187.0.tgz#face29ee2de9bcc31a1b573a76f224e35e0b2894"
+  integrity sha512-Qiu7R+Cmh8CstZsY1uJOSWnVlfo7ZtNLV7mF8Jltk3LB3AtDu9cRZlcnRKkAk8Y4z6KKw35z7Y7Urd7jWY8etA==
 
 tinyglobby@^0.2.17:
   version "0.2.17"

@@ -161,7 +161,7 @@ function rememberedTab() {
 /**
  * One viewer setting as a control.
  *
- * Generated from the schema rather than written out, because the list is 37
+ * Generated from the schema rather than written out, because the list is 39
  * settings long and taken key for key from OCP CAD Viewer's own - hand-writing
  * it here would be a second copy to keep in step, and the way those two drift
  * is that nobody notices.
@@ -374,7 +374,7 @@ function upgradeAndResync() {
  * What the Viewer tab's controls currently say.
  *
  * Reads by schema rather than by hand, for the same reason the panel is
- * generated: 37 settings hand-read is 37 chances to forget one, and a
+ * generated: 39 settings hand-read is 39 chances to forget one, and a
  * forgotten one is a control that appears to work and stores nothing.
  *
  * A control that cannot be parsed - an emptied number box - contributes

@@ -41,12 +41,11 @@ class WorkspaceConfigTest(unittest.TestCase):
 
     def test_the_whole_set_is_answered_even_with_nothing_stored(self):
         config = settings.workspace_config(path="/nonexistent")
-        # The dialog's 37, in the renderer's vocabulary: the three grid planes
+        # The dialog's 39, in the renderer's vocabulary: the three grid planes
         # and `orbit_control` are spent on `grid` and `control`, and `theme`
-        # comes from the top level - 37 - 4 + 2 + 1. The transport adds
-        # `_splash`, which makes 37 on the wire, the same count the VS Code
-        # extension and Jupyter CadQuery answer.
-        self.assertEqual(len(config), 36)
+        # comes from the top level - 39 - 4 + 2 + 1. The transport adds
+        # `_splash`, which makes 39 on the wire.
+        self.assertEqual(len(config), 38)
         for key in ("ortho", "grid", "axes", "control", "collapse", "theme", "metalness"):
             self.assertIn(key, config)
 
@@ -57,6 +56,8 @@ class WorkspaceConfigTest(unittest.TestCase):
         self.assertEqual(config["collapse"], "leaves")
         self.assertEqual(config["reset_camera"], "KEEP")
         self.assertEqual(config["tree_width"], 240)
+        self.assertEqual(config["cursor_pivot"], True)
+        self.assertEqual(config["zoom_to_cursor"], True)
 
     def test_the_modifier_keys_depend_on_the_platform(self):
         """`metaKey` is Cmd on macOS and the unusable Win key everywhere else.

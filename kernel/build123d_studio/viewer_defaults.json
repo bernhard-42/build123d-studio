@@ -11,6 +11,8 @@
   "rotate_speed": 1,
   "zoom_speed": 1,
   "pan_speed": 1,
+  "cursor_pivot": true,
+  "zoom_to_cursor": true,
   "modifier_keys": {
     "macOS": {
       "shift": "shiftKey",

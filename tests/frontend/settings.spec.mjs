@@ -128,6 +128,24 @@ test.describe("the four buttons", () => {
 });
 
 test.describe("the tabs", () => {
+  test("rotating and zooming at the cursor are on by default and stored only when turned off", async ({ page }) => {
+    await openSettings(page);
+    await page.locator("#tab-viewer").click();
+    await expect(page.locator("#viewer-cursor_pivot")).toBeChecked();
+    await expect(page.locator("#viewer-zoom_to_cursor")).toBeChecked();
+
+    await page.locator("#viewer-cursor_pivot").uncheck();
+    await page.locator("#viewer-zoom_to_cursor").uncheck();
+    await page.locator("#settings-apply").click();
+    await expect(page.locator("#settings-apply")).toBeHidden();
+
+    await expect.poll(async () => {
+      const stored = await page.evaluate(() =>
+        JSON.parse(String(globalThis.__NEUTRALINO_STUB__.wrote("/appdata/build123d-studio/settings.json") ?? "{}")));
+      return stored.viewer ?? {};
+    }).toEqual({ cursor_pivot: false, zoom_to_cursor: false });
+  });
+
   test("Restart backend asks for it at once, says how it went, and leaves the dialog open", async ({ page }) => {
     const { sidecar } = await open(page, { files: FILES, settings: { workspace: WORKSPACE } });
     await page.evaluate(() =>
