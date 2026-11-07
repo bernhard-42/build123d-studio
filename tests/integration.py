@@ -1162,6 +1162,36 @@ def main():
         check("the session reports the process exiting", exited is not None,
               "silent" if exited is None else f"code {exited.get('code')}")
 
+    # A library that forks: smlibpy runs each kernel step in a forked copy. The
+    # relay has one connection, so a copy that dialled it as debugpy does by
+    # default was refused and died before doing anything.
+    if os.name == "posix":
+        forking = script.replace("b123d-debug-check.py", "b123d-debug-fork.py")
+        with open(forking, "w", encoding="utf-8") as handle:
+            handle.write(
+                "import os\n"
+                "pid = os.fork()\n"
+                "if pid == 0:\n"
+                "    os._exit(7)\n"
+                "print('fork child exit', os.waitstatus_to_exitcode(os.waitpid(pid, 0)[1]))\n"
+            )
+        before = len(side.frames)
+        side.send("debug.start", path=forking)
+        _, started = side.wait_frame("debug.started", ACTION_TIMEOUT, since=before)
+        if started is not None:
+            dap_reply(dap("initialize", clientID="integration", adapterID="debugpy",
+                          pathFormat="path", linesStartAt1=True, columnsStartAt1=True))
+            dap("attach")
+            dap_event("initialized", ACTION_TIMEOUT, since=before)
+            dap_reply(dap("configurationDone"), since=before)
+        _, output = side.wait_frame_where(
+            "debug.output", lambda f: "fork child exit" in f.get("text", ""),
+            ACTION_TIMEOUT, since=before)
+        check("a forked copy runs its own code under the debugger",
+              output is not None and "fork child exit 7" in output["text"],
+              "nothing" if output is None else output["text"].strip())
+        side.wait_frame("debug.exited", ACTION_TIMEOUT, since=before)
+
     # The kernel is untouched by all of it, which is the whole point of two
     # worlds. Asked by path rather than off the listing: by now the namespace
     # holds the eleven hundred names the truncation check made, so anything

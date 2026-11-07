@@ -133,6 +133,14 @@ class DebugSession:
             "-Xfrozen_modules=off",
             "-m", "debugpy",
             "--connect", f"127.0.0.1:{port}",
+            # By default debugpy makes every forked copy and child Python dial
+            # this same port, as a session of its own. This relay has one
+            # connection and closes its listener after it, so the dial is refused
+            # and the child dies before doing anything. Measured with smlibpy,
+            # which runs each kernel step in a forked copy: `shell` failed with
+            # "the kernel step failed in a copy of this process". Off, children
+            # run undebugged, and a breakpoint inside one waits for ever.
+            "--configure-subProcess", "false",
             # Nothing runs until the frontend has set its breakpoints and sent
             # configurationDone. Without this the script would be most of the
             # way through before anyone could ask it to stop.
