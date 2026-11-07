@@ -30,6 +30,12 @@ class StudioComms(Comms[None]):
     nothing - as it does in ocp_vscode and the standalone.
     """
 
+    def __init__(self):
+        super().__init__()
+        # Set when the model just handed over was empty and so was not sent:
+        # the mapping that follows it describes nothing on screen.
+        self._skip_mapping = False
+
     def send_data(self, data, timeit=False):
         """Send a model, as a JSON header and one contiguous block of buffers.
 
@@ -40,10 +46,16 @@ class StudioComms(Comms[None]):
         frontend builds typed-array views straight onto the received frame
         without copying or parsing anything numeric.
 
-        A model with no geometry is refused rather than sent. `_convert` will
-        produce one from a list of floats - a header describing shapes with no
-        buffers behind them - and three-cad-viewer does not come back from it;
-        the application had to be force-quit. Refusing here covers every caller.
+        A model with shapes but no geometry is refused rather than sent.
+        `_convert` produced one from a list of floats - a header describing
+        shapes with no buffers behind them - and three-cad-viewer did not come
+        back from it; the application had to be force-quit. Refusing here
+        covers every caller.
+
+        A model with no shapes at all - `show(1)`, `show((1, 2, 3))` - is
+        dropped without a word, which is what the shared page does with one in
+        every other host, and so is the mapping that follows it: sent, it would
+        replace the measurement model of what is still on screen.
 
         Not every frame is a model, though: `show_clear()` sends a bare
         `{"type": "clear"}` down this same channel, deliberately - it must stay
@@ -53,9 +65,15 @@ class StudioComms(Comms[None]):
         payload_free, payload = split_buffers(data.get("data"))
 
         if data.get("type", "data") == "data" and len(payload) == 0:
+            shapes = payload_free.get("shapes") if isinstance(payload_free, dict) else None
+            parts = shapes.get("parts") if isinstance(shapes, dict) else None
+            if parts is None or len(parts) == 0:
+                self._skip_mapping = True
+                return None
             raise ValueError(
                 "nothing to show: the objects given have no geometry the viewer can draw"
             )
+        self._skip_mapping = False
 
         header = {
             "type": data.get("type", "data"),
@@ -91,6 +109,9 @@ class StudioComms(Comms[None]):
         `load_model` walks an envelope, finds no shapes, indexes nothing, and
         every measurement afterwards answers with nothing at all.
         """
+        if self._skip_mapping:
+            self._skip_mapping = False
+            return
         send_mapping(data.get("model", data) if isinstance(data, dict) else data)
 
     def send_config(self, config, timeit=False):

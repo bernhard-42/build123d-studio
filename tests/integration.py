@@ -1250,6 +1250,36 @@ def main():
     reindexed = side.wait_log("Measurement model indexed", 60, count=2)[0] is not None
     check("a newly shown model is indexed again", reindexed)
 
+    # show() of nothing it can draw is dropped without a word, as the shared
+    # page drops it in every other host - not refused with a traceback - and
+    # nothing reaches the viewer or replaces the measurement model on screen.
+    empty_result = os.path.join(tempfile.gettempdir(), f"b123d-empty-show-{os.getpid()}.txt")
+    before = len(side.binary)
+    before_log = len(side.log)
+    side.send("kernel.execute", code=(
+        "from build123d_studio import show\n"
+        "try:\n"
+        "    show(1)\n"
+        "    show((1, 2, 3))\n"
+        "    _said = 'quiet'\n"
+        "except Exception as _e:\n"
+        "    _said = f'raised {type(_e).__name__}: {_e}'\n"
+        f"open({empty_result!r} + '.part', 'w').write(_said)\n"
+        "import os as _os\n"
+        f"_os.replace({empty_result!r} + '.part', {empty_result!r})\n"
+    ))
+    said = side.wait_file(empty_result, ACTION_TIMEOUT)
+    check("show(1) and show((1, 2, 3)) are dropped without an error",
+          said and open(empty_result).read() == "quiet",
+          "no answer" if not said else open(empty_result).read())
+    time.sleep(1)
+    sent = (side.wait_binary(KIND_MODEL, 0, since=before) is not None
+            or any("Model received" in text for _, text in side.log[before_log:]))
+    check("and send nothing to the viewer or the measurement backend", not sent,
+          "a model frame arrived" if sent else "nothing sent")
+    if said:
+        os.remove(empty_result)
+
     # A package change replaces the process, which has imported what was
     # replaced. The model and the tool belong to the sidecar, so the next
     # selection tells the new process both: it answers without the tool being

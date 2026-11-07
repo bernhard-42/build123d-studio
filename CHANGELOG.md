@@ -11,6 +11,7 @@ What changed in each release, for the people using it. Anything not visible from
     - Installing or upgrading packages also restarts the measurement backend. It used to keep the old libraries until Studio was restarted
     - The measurement backend no longer hangs when a library or a kernel plugin prints to stdout, from native code or while it is being imported
     - After the measurement backend restarts, the active Distance or Properties tool keeps answering; it used to answer nothing until the tool was switched off and on
+    - `show(1)`, `show((1, 2, 3))` and other calls with nothing to draw no longer raise "nothing to show"; they do nothing, as in the other viewers
     - Debugging a script whose libraries fork or start Python child processes works: smlibpy's kernel steps, for example, failed with "the kernel step failed in a copy of this process". The child processes run without the debugger
 
 ## 0.10.0 (2026-10-21)
