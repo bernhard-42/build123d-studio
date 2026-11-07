@@ -277,8 +277,10 @@ test.describe("on Windows", () => {
     await page.keyboard.press("ArrowLeft");
     await page.keyboard.press("Escape");
 
-    const text = await page.locator(".monaco-editor .view-lines").first().innerText();
-    expect(text).toContain("TYPED");
+    // Waited for: Monaco draws the typed text on its next frame, and a single
+    // read straight after typing saw "TYPE" now and then.
+    await expect.poll(() => page.locator(".monaco-editor .view-lines").first().innerText())
+      .toContain("TYPED");
   });
 
 });
