@@ -148,7 +148,10 @@ test.describe("choosing a tab", () => {
     await page.keyboard.type("AAA");
 
     await expect(page.locator(".tab-active .tab-label")).toHaveText("plate.py");
-    expect(await editorText(page), "the keystrokes went somewhere else").toContain("AAA");
+    // Waited for: Monaco draws the typed text on its next frame, and a single
+    // read straight after typing saw "APLATE" about half the time.
+    await expect.poll(() => editorText(page), { message: "the keystrokes went somewhere else" })
+      .toContain("AAA");
   });
 });
 
@@ -240,7 +243,10 @@ test.describe("each file keeps its own history", () => {
     await page.locator(".tab", { hasText: "part.py" }).click();
     await expect(page.locator(".tab-active .tab-label")).toHaveText("part.py");
 
-    expect(await editorText(page), "the unsaved edit was lost switching tabs").toContain("KEEPME");
+    // Waited for, as above: straight after the switch the lines are not drawn
+    // yet, and a single read saw an empty editor.
+    await expect.poll(() => editorText(page), { message: "the unsaved edit was lost switching tabs" })
+      .toContain("KEEPME");
   });
 });
 
