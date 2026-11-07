@@ -7,6 +7,9 @@ What changed in each release, for the people using it. Anything not visible from
 - **Features**
     - **Restart backend** in a new Backend section of the Application settings restarts the measurement backend, which loads its libraries and kernel plugins again; the model on screen and the active tool carry over
 
+- **Changes**
+    - **ocp-viewer-core** has no source picker in the Packages settings any more: to use a local checkout or the GitHub branch, add it to Additional packages like any other package, for example `git+https://github.com/bernhard-42/ocp-viewer-core@main`. A choice made in the picker moves there by itself at the next start
+
 - **Fixes**
     - Installing or upgrading packages also restarts the measurement backend. It used to keep the old libraries until Studio was restarted
     - The measurement backend no longer hangs when a library or a kernel plugin prints to stdout, from native code or while it is being imported

@@ -1,4 +1,4 @@
-// The two source-picker entries in src/packages.js, held at the level a test
+// The source-picker entries in src/packages.js, held at the level a test
 // can reach: the module itself imports the bootstrap, which imports a JSON
 // file without the attribute node insists on, so it cannot be loaded here.
 // The invariant is about a string constant, and the source is where it lives.
@@ -15,7 +15,7 @@ test("every repository is an https URL, because uv reads it as one", () => {
   // base" - which is what choosing GitHub for ocp-viewer-core did. Both
   // repositories are public, so https needs no key on the user's machine.
   const found = [...SOURCE.matchAll(/repository:\s*"([^"]+)"/g)].map((m) => m[1]);
-  assert.equal(found.length, 2, `expected the two picker entries, found ${found.length}`);
+  assert.equal(found.length, 2, `expected the picker and the former picker, found ${found.length}`);
 
   for (const repository of found) {
     let url = null;
@@ -26,3 +26,13 @@ test("every repository is an https URL, because uv reads it as one", () => {
     assert.equal(url.hostname, "github.com");
   }
 });
+
+test("ocp-viewer-core is an ordinary line in the field, with no picker of its own", () => {
+  const declared = /export const DECLARED = \[([\s\S]*?)\];/.exec(SOURCE)[1];
+  const picker = /export const PACKAGES = \[([\s\S]*?)\n\];/.exec(SOURCE)[1];
+
+  assert.ok(!declared.includes("ocp-viewer-core"), "the field would refuse it");
+  assert.ok(!picker.includes("ocp-viewer-core"), "it still has a picker");
+  assert.ok(picker.includes('name: "build123d"'));
+});
+

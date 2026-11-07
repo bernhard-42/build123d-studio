@@ -387,8 +387,11 @@ export function requirementLines(entries, sources) {
 
     const git = /\bgit\s*=\s*"((?:[^"\\]|\\.)*)"/.exec(source);
     if (git !== null) {
-      const rev = /\brev\s*=\s*"([^"]*)"/.exec(source);
-      return rev === null ? git[1] : `${git[1]}@${rev[1]}`;
+      // The field's spelling needs the `git+`, which a source may leave out,
+      // and has one place for a ref, which a source may call a branch.
+      const url = git[1].startsWith("git+") ? git[1] : `git+${git[1]}`;
+      const ref = /\b(?:rev|branch|tag)\s*=\s*"([^"]*)"/.exec(source);
+      return ref === null ? url : `${url}@${ref[1]}`;
     }
 
     // A source shape this cannot spell. Showing the requirement is honest -
@@ -396,4 +399,42 @@ export function requirementLines(entries, sources) {
     // which is why anything unusual belongs in the file rather than here.
     return requirement;
   });
+}
+
+/**
+ * The stored settings once a package has left the source picker, or null when
+ * there is nothing to move.
+ *
+ * What was chosen in the picker becomes the line that says the same thing in
+ * the additional-packages field. A PyPI choice is simply forgotten: that is what
+ * no line means. A line the user already wrote for the package stays as it is.
+ *
+ * @param {{sources: object|null, paths: object|null, custom: string}} stored
+ * @param {{name: string, repository: string, branch: string}} former
+ * @returns {{sources: object, paths: object, custom: string}|null}
+ */
+export function settingsWithoutPicker({ sources, paths, custom }, former) {
+  const chosen = sources?.[former.name];
+  const path = paths?.[former.name];
+  if (chosen === undefined && path === undefined) {
+    return null;
+  }
+
+  const { [former.name]: _chosen, ...otherSources } = sources ?? {};
+  const { [former.name]: _path, ...otherPaths } = paths ?? {};
+
+  let line = null;
+  if (chosen === "github") {
+    line = `git+${former.repository}@${former.branch}`;
+  } else if (chosen === "local" && typeof path === "string" && path !== "") {
+    line = path;
+  }
+
+  const key = normalizeName(former.name);
+  const named = parseRequirements(custom).some((entry) => entry.error === null && entry.key === key);
+  let lines = custom;
+  if (line !== null && !named) {
+    lines = custom.trim() === "" ? line : `${custom.trimEnd()}\n${line}`;
+  }
+  return { sources: otherSources, paths: otherPaths, custom: lines };
 }

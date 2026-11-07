@@ -6,6 +6,7 @@ import { ensureUv } from "./uv.js";
 const UPGRADE_GROUPS = ["app", "core_cad", "user"];
 import {
   PACKAGES,
+  FORMER_PICKER,
   loadPackageSources,
   checkoutsFromSources,
   projectSources,
@@ -21,6 +22,7 @@ import {
   replaceGroup,
   replaceSources,
   sourceEntries,
+  withUserEntryForSource,
   spliceRelease,
 } from "../pyproject.js";
 import { run, quote } from "../proc.js";
@@ -102,6 +104,14 @@ async function stageProjectFiles(envRoot) {
   if (!(await exists(lockPath))) {
     log.info("No lock in the environment; seeding the one this release shipped");
     await filesystem.writeFile(lockPath, await filesystem.readFile(`${await appDir()}/runtime/uv.lock`));
+  }
+
+  // A source chosen in a picker that no longer exists: the one thing a start
+  // writes for the user, once, because the next Apply would lose it otherwise.
+  const migrated = withUserEntryForSource(await filesystem.readFile(projectPath), FORMER_PICKER.name);
+  if (migrated !== null) {
+    log.info(`Added ${FORMER_PICKER.name} to the user group, for the source it already has`);
+    await filesystem.writeFile(projectPath, migrated);
   }
 }
 
@@ -440,9 +450,9 @@ export async function ensureEnvironment() {
   // file, which is what uv will read.
   await loadPackageSources();
   const sources = sourceEntries(await filesystem.readFile(`${envRoot}/pyproject.toml`));
-  for (const p of PACKAGES) {
-    const written = sources[p.name];
-    appendLog(`${p.name}: ${written === undefined ? "PyPI" : written}`);
+  for (const name of [...PACKAGES.map((p) => p.name), FORMER_PICKER.name]) {
+    const written = sources[name];
+    appendLog(`${name}: ${written === undefined ? "PyPI" : written}`);
   }
 
   const python = venvPython(envRoot);

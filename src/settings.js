@@ -88,13 +88,9 @@ import {
 
 // Package sources.
 //
-// A picker per entry in PACKAGES: build123d, and ocp-viewer-core because it is
-// not on PyPI yet, so the location is the only thing that can name a version.
-// Everything else the application declares is frozen on purpose - ocp-viewer-core
-// is tied to the three-cad-viewer build in the frontend, both halves shipping as
-// one version - and offering a switch for the rest would only let people break
-// the viewer. Anything else a user wants goes in the additional-packages field,
-// where the line itself says where the package comes from.
+// A picker per entry in PACKAGES, which is build123d. Anything else a user wants
+// from elsewhere goes in the additional-packages field, where the line itself
+// says where the package comes from.
 //
 // Nothing here checks whether the chosen combination is satisfiable. uv refuses
 // what it cannot resolve and says why far better than a rule encoded here
@@ -514,9 +510,9 @@ export async function showSettings({ tab = null } = {}) {
           <h2 class="info-heading">Restore</h2>
           <p class="info-note">
             Put the environment's <code>pyproject.toml</code> and <code>uv.lock</code> back
-            to what this release ships, and install exactly that — build123d and
-            ocp-viewer-core from PyPI, the additional packages cleared, and any edits you
-            made to those files gone. The same environment a first start builds.
+            to what this release ships, and install exactly that — build123d from PyPI,
+            the additional packages cleared, and any edits you made to those files gone.
+            The same environment a first start builds.
           </p>
           <button class="settings-btn" id="settings-restore">Restore packages</button>
         </section>
@@ -1212,8 +1208,8 @@ ${VIEWER_GROUPS.map(
       title: "Restore factory settings?",
       detail:
         "The environment's pyproject.toml and uv.lock go back to what this release "
-        + "ships. Your additional packages are cleared, build123d and ocp-viewer-core "
-        + "go back to PyPI, and any edits to those two files are lost.",
+        + "ships. Your additional packages are cleared, build123d goes back to PyPI, "
+        + "and any edits to those two files are lost.",
       confirm: "Restore",
     });
     if (!sure) {

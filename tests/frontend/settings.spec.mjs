@@ -568,6 +568,39 @@ test.describe("Settings reads the environment's pyproject.toml", () => {
     await expect(page.locator("#local-build123d")).toHaveValue("/Users/me/src/build123d");
   });
 
+  test("ocp-viewer-core has no picker, and the field takes it like any other package", async ({ page }) => {
+    await open(page, { files: FILES, settings: { workspace: WORKSPACE } });
+    await page.locator("#btn-settings").click();
+    await page.locator('.settings-tab[data-tab="packages"]').click();
+    await expect(page.locator('input[name="src-build123d"]')).toHaveCount(3);
+    await expect(page.locator('input[name="src-ocp-viewer-core"]')).toHaveCount(0);
+
+    await page.locator("#settings-custom").fill("/Users/me/src/ocp-viewer-core");
+    await page.locator("#settings-apply").click();
+
+    await expect(page.locator("#settings-apply")).toBeHidden();
+    await expect.poll(async () => {
+      const stored = await page.evaluate(() =>
+        JSON.parse(String(globalThis.__NEUTRALINO_STUB__.wrote("/appdata/build123d-studio/settings.json") ?? "{}")));
+      return stored.customPackages;
+    }).toBe("/Users/me/src/ocp-viewer-core");
+  });
+
+  test("a source the former picker wrote reads as a line in the field", async ({ page }) => {
+    await open(page, { files: FILES, settings: { workspace: WORKSPACE } });
+    await withProjectFile(page, {
+      user: ["ocp-viewer-core"],
+      app: [],
+      coreCad: [],
+      sources: { "ocp-viewer-core": '{ git = "https://github.com/bernhard-42/ocp-viewer-core", branch = "main" }' },
+    });
+    await page.locator("#btn-settings").click();
+    await page.locator('.settings-tab[data-tab="packages"]').click();
+
+    await expect(page.locator("#settings-custom")).toHaveValue(
+      "git+https://github.com/bernhard-42/ocp-viewer-core@main");
+  });
+
   test("what the release declares is shown, and not as something to type in", async ({ page }) => {
     await open(page, { files: FILES, settings: { workspace: WORKSPACE } });
     await withProjectFile(page, {

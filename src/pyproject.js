@@ -22,6 +22,8 @@
 // Pure, and tested, for the reason keys.js and quoting.js are: every function
 // here is a decision about text, and the ways they go wrong are all silent.
 
+import { normalizeName } from "./requirements.js";
+
 /** The `version` under [project], or null when the file has none. */
 export function projectVersion(text) {
   const table = regionOf(text, "[project]");
@@ -244,6 +246,25 @@ export function sourceEntries(text) {
     entries[name] = value;
   }
   return entries;
+}
+
+/**
+ * The file once a package with a source also has an entry in the `user` group,
+ * or null when nothing needs doing.
+ *
+ * The additional-packages field is read from that group, and Apply rewrites
+ * [tool.uv.sources] from the field. A source with no entry is therefore invisible
+ * in the dialog and is lost at the next Apply - which is what a package that has
+ * left the source picker would otherwise be.
+ */
+export function withUserEntryForSource(text, name) {
+  const key = normalizeName(name);
+  const user = groupEntries(text, "user");
+  if (user === null || sourceEntries(text)[name] === undefined) {
+    return null;
+  }
+  const declared = user.some((entry) => normalizeName(/^[A-Za-z0-9._-]*/.exec(entry)[0]) === key);
+  return declared ? null : replaceGroup(text, "user", [...user, name]);
 }
 
 /**

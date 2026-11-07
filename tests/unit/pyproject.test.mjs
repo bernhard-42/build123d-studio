@@ -17,6 +17,7 @@ import {
   replaceSources,
   sourceEntries,
   spliceRelease,
+  withUserEntryForSource,
 } from "../../src/pyproject.js";
 
 const SHIPPED = readFileSync(new URL("../../runtime/pyproject.toml", import.meta.url), "utf8");
@@ -260,3 +261,28 @@ test("what `uv add` recorded survives a release", () => {
 test("an empty dependencies array on both sides is still idempotent", () => {
   assert.equal(spliceRelease(SHIPPED, SHIPPED), SHIPPED);
 });
+
+// --- a source from a picker that has gone ------------------------------------
+
+const CORE = '{ path = "/src/core", editable = true }';
+const withCoreSource = (text) => replaceSources(text, { "ocp-viewer-core": CORE });
+
+test("a source with no entry in the user group gets one, and keeps its line", () => {
+  const before = withCoreSource(replaceGroup(THEIRS, "user", ["numpy"]));
+  const after = withUserEntryForSource(before, "ocp-viewer-core");
+
+  assert.deepEqual(groupEntries(after, "user"), ["numpy", "ocp-viewer-core"]);
+  assert.equal(sourceEntries(after)["ocp-viewer-core"], CORE);
+});
+
+test("running it again changes nothing, whichever spelling the entry has", () => {
+  for (const entry of ["ocp-viewer-core", "ocp_viewer_core", "OCP-Viewer-Core>=1.2"]) {
+    const text = withCoreSource(replaceGroup(THEIRS, "user", [entry]));
+    assert.equal(withUserEntryForSource(text, "ocp-viewer-core"), null, entry);
+  }
+});
+
+test("no source means nothing to keep", () => {
+  assert.equal(withUserEntryForSource(THEIRS, "ocp-viewer-core"), null);
+});
+

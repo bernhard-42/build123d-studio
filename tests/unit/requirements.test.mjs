@@ -19,6 +19,7 @@ import {
   upgradeFlags,
   renderRequirements,
   requirementLines,
+  settingsWithoutPicker,
   tomlString,
 } from "../../src/requirements.js";
 
@@ -366,6 +367,18 @@ test("a git entry comes back with its ref", () => {
   );
 });
 
+test("a git source named by branch and without git+ comes back in the field's spelling", () => {
+  // What the source picker wrote. The line has to parse back to the same place.
+  const lines = requirementLines(["ocp-viewer-core"], {
+    "ocp-viewer-core": '{ git = "https://github.com/bernhard-42/ocp-viewer-core", branch = "main" }',
+  });
+  assert.deepEqual(lines, ["git+https://github.com/bernhard-42/ocp-viewer-core@main"]);
+
+  const [entry] = parseRequirements(lines[0]);
+  assert.equal(entry.name, "ocp-viewer-core");
+  assert.equal(entry.source.rev, "main");
+});
+
 test("a plain requirement is left exactly as written", () => {
   assert.deepEqual(requirementLines(["mylib>=0.3", "numpy"], {}), ["mylib>=0.3", "numpy"]);
 });
@@ -407,3 +420,59 @@ test("round-tripping a mixed field changes nothing", () => {
   void names;
   assert.deepEqual(requirementLines(entries.map((e) => e.requirement), sources), typed);
 });
+
+// --- what a former picker's choice becomes ----------------------------------
+
+const FORMER = {
+  name: "ocp-viewer-core",
+  repository: "https://github.com/bernhard-42/ocp-viewer-core",
+  branch: "main",
+};
+
+test("a local choice becomes its path, after what is already in the field", () => {
+  const moved = settingsWithoutPicker({
+    sources: { build123d: "local", "ocp-viewer-core": "local" },
+    paths: { build123d: "/src/b", "ocp-viewer-core": "/src/core" },
+    custom: "numpy\n",
+  }, FORMER);
+  assert.deepEqual(moved, {
+    sources: { build123d: "local" },
+    paths: { build123d: "/src/b" },
+    custom: "numpy\n/src/core",
+  });
+});
+
+test("a GitHub choice becomes a line that parses back to the same branch", () => {
+  const moved = settingsWithoutPicker({ sources: { "ocp-viewer-core": "github" }, paths: {}, custom: "" }, FORMER);
+  assert.equal(moved.custom, "git+https://github.com/bernhard-42/ocp-viewer-core@main");
+  const [entry] = parseRequirements(moved.custom);
+  assert.equal(entry.name, "ocp-viewer-core");
+  assert.equal(entry.source.rev, "main");
+});
+
+test("a PyPI choice, or a local one with no folder, is simply forgotten", () => {
+  for (const stored of [
+    { sources: { "ocp-viewer-core": "pypi" }, paths: {}, custom: "numpy" },
+    { sources: { "ocp-viewer-core": "local" }, paths: { "ocp-viewer-core": "" }, custom: "numpy" },
+  ]) {
+    const moved = settingsWithoutPicker(stored, FORMER);
+    assert.deepEqual(moved.sources, {});
+    assert.deepEqual(moved.paths, {});
+    assert.equal(moved.custom, "numpy");
+  }
+});
+
+test("a line already in the field for the package stays as it is", () => {
+  const moved = settingsWithoutPicker({
+    sources: { "ocp-viewer-core": "local" },
+    paths: { "ocp-viewer-core": "/src/core" },
+    custom: "ocp_viewer_core==1.2.0",
+  }, FORMER);
+  assert.equal(moved.custom, "ocp_viewer_core==1.2.0");
+});
+
+test("settings with nothing about the package need nothing done, so it runs once", () => {
+  assert.equal(settingsWithoutPicker({ sources: { build123d: "pypi" }, paths: {}, custom: "" }, FORMER), null);
+  assert.equal(settingsWithoutPicker({ sources: null, paths: null, custom: "" }, FORMER), null);
+});
+

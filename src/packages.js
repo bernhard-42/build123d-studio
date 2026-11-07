@@ -2,6 +2,7 @@ import { getSetting, setSetting } from "./store.js";
 import {
   parseRequirements,
   renderRequirements,
+  settingsWithoutPicker,
   tomlString,
 } from "./requirements.js";
 import * as log from "./log.js";
@@ -9,12 +10,10 @@ import { probeGit } from "./tools.js";
 
 // Which source each upgradable package comes from.
 //
-// Only build123d is offered. Everything else the application declares is frozen:
-// ocp-viewer-core is tied to the three-cad-viewer build in the frontend - both
-// halves of it ship as one version - and it owns ocp_tessellate's range through
-// its own metadata. See runtime/pyproject.toml.
-// Anything else a user wants goes in the additional-packages field, where the
-// line itself says where the package comes from.
+// Only build123d is offered. Anything else a user wants from elsewhere goes in
+// the additional-packages field, where the line itself says where the package
+// comes from - ocp-viewer-core and ocp-tessellate included. See
+// runtime/pyproject.toml for what the application declares.
 //
 // No attempt is made to police which combinations are compatible. uv refuses an
 // unsatisfiable combination on its own and explains it better than a rule here
@@ -36,34 +35,32 @@ export const PACKAGES = [
     // build123d's default branch is "dev", not "main".
     branch: "dev",
   },
-  {
-    // The shared viewer half, on PyPI and pinned like everything else. Offered
-    // here because it is the half most likely to be worked on beside this
-    // application: a uv source wins over whatever the dependency itself says -
-    // measured - so choosing GitHub or a local checkout redirects it entirely.
-    name: "ocp-viewer-core",
-    // https, as build123d's is. The scp-style `git@github.com:...` spelling is
-    // not a URL - uv refused the file with "relative URL without a base" - and
-    // the repository is public, so nothing here needs a key.
-    repository: "https://github.com/bernhard-42/ocp-viewer-core",
-    branch: "main",
-  },
 ];
+
+// A package that had a picker up to 0.10.0 and is an ordinary line in the
+// additional-packages field since. Kept so that what somebody chose in it moves
+// there - see loadPackageSources, and stageProjectFiles for the environment's
+// file. The repository is https because uv reads it as a URL.
+export const FORMER_PICKER = {
+  name: "ocp-viewer-core",
+  repository: "https://github.com/bernhard-42/ocp-viewer-core",
+  branch: "main",
+};
 
 // Everything the application declares for itself, which the additional-packages
 // field may not name. Kept here rather than parsed out of the shipped
 // pyproject.toml: this list is what the *rule* is about, and reading it from a
 // file would make a refusal depend on a parse of TOML we deliberately do not do.
 //
-// ocp-tessellate is deliberately absent. Nothing here imports it - it arrives
-// under ocp-viewer-core, which owns its range - so constraining it is the
-// user's business, and uv enforces the parent's range on top of whatever they
-// write. Anything that *is* on this list must be refused in the
-// additional-packages field, because uv intersects duplicate declarations
-// rather than letting the later one win: a user asking for an older version
-// would get an unsolvable environment instead of their version.
+// ocp-viewer-core and ocp-tessellate are deliberately absent, though both are in
+// the core_cad group: a path or a git line wins over the declared range -
+// measured - which is what the field is for. A plain version outside the range
+// gets uv's own refusal, and the failed change is rolled back. Anything that
+// *is* on this list must be refused in the additional-packages field, because
+// uv intersects duplicate declarations rather than letting the later one win: a
+// user asking for an older version would get an unsolvable environment instead
+// of their version.
 export const DECLARED = [
-  "ocp-viewer-core",
   "jupyter_console",
   "orjson",
   "websockets",
@@ -99,6 +96,18 @@ export function isDefaultSelection(selection = sources) {
 
 
 export async function loadPackageSources() {
+  const moved = settingsWithoutPicker({
+    sources: getSetting(STORAGE_KEY),
+    paths: getSetting(LOCAL_PATH_KEY),
+    custom: typeof getSetting(CUSTOM_KEY) === "string" ? getSetting(CUSTOM_KEY) : "",
+  }, FORMER_PICKER);
+  if (moved !== null) {
+    log.info(`Moved the ${FORMER_PICKER.name} source choice to the additional packages`);
+    await setSetting(STORAGE_KEY, moved.sources);
+    await setSetting(LOCAL_PATH_KEY, moved.paths);
+    await setSetting(CUSTOM_KEY, moved.custom);
+  }
+
   const stored = getSetting(STORAGE_KEY);
   if (typeof stored === "object" && stored !== null) {
     for (const p of PACKAGES) {
@@ -181,7 +190,7 @@ export function userGroupEntries(extras = customPackages()) {
 /**
  * What [tool.uv.sources] should say, as package -> inline table.
  *
- * Both halves of it: the two packages with a source picker, and any entry in
+ * Both halves of it: the package with a source picker, and any entry in
  * the additional-packages field that named a path or a git URL rather than a
  * plain requirement.
  */
@@ -242,7 +251,7 @@ export function checkoutsFromSources(entries) {
  * because the file is what uv reads and therefore what is true. A package with
  * a `git =` source is on its branch, one with a `path =` is a local checkout,
  * and one with no entry at all is on PyPI - which is the whole vocabulary the
- * two radio rows can express.
+ * radio row can express.
  *
  * A source the dialog cannot express - a git URL with a rev, say, or a path
  * that is not editable - still reads as GitHub or Local, because that is what
