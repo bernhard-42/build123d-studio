@@ -560,6 +560,22 @@ class RealMeasurementTest(unittest.TestCase):
         self.assertTrue(self.service.warm())
         self.assertIsNotNone(self.select_a_face())
 
+    def test_after_forget_the_splash_is_measured_again_not_the_old_model(self):
+        """A restarted viewer shows the logo; the backend has to go back to it."""
+        self.service.start()
+        self.service.load(self.mapping)
+        self.service.handle_changes({"activeTool": "PropertiesMeasurement"})
+        self.assertIsNotNone(self.select_a_face(), "the model was not measured first")
+
+        self.service.forget()
+
+        self.assertIsNone(self.select_a_face(), "the tool survived the restart")
+        self.service.handle_changes({"activeTool": "PropertiesMeasurement"})
+        answer = self.service.handle_changes({"selectedShapeIDs": ["/Group/OCP/faces/faces_0", False]})
+        self.assertIsNotNone(answer, "the logo was not measured")
+        self.assertEqual(answer.get("shape_type"), "Face")
+        self.assertIsNone(self.select_a_face(), "the old model is still answered")
+
     def test_the_splash_is_measurable_before_anything_is_shown(self):
         """The logo is a real model, so it can be measured like one.
 

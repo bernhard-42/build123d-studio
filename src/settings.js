@@ -76,6 +76,7 @@ import { afterNativeDialog, bounceActivation } from "./nativedialog.js";
 import { closeOnBackdropClick } from "./backdrop.js";
 import { holdNativeLink, whileNativeDialog } from "./nativelink.js";
 import { refreshToolbarTitles } from "./toolbar.js";
+import { restartViewer } from "./viewer/viewer.js";
 import { setThemePreference, themePreference } from "./theme.js";
 import {
   GROUPS as VIEWER_GROUPS,
@@ -696,6 +697,16 @@ ${VIEWER_GROUPS.map(
           </label>
           <p class="info-note" id="settings-log-path"></p>
 
+          <p class="settings-group">Viewer</p>
+          <p class="info-note">
+            Builds the viewer again from scratch, for when it has stopped responding. It
+            shows the start screen, as at startup; run your code again to show your model.
+          </p>
+          <button class="settings-btn settings-action" id="settings-restart-viewer">
+            Restart viewer
+          </button>
+          <p class="info-note" id="settings-viewer-status" hidden></p>
+
           <p class="settings-group">Backend</p>
           <p class="info-note">
             The measurement backend answers the viewer's Distance and Properties
@@ -1177,6 +1188,15 @@ ${VIEWER_GROUPS.map(
     if (await saveEverything()) {
       await updatePackages();
     }
+  });
+
+  // Like Restart backend below: at once, and with the dialog left open.
+  document.getElementById("settings-restart-viewer").addEventListener("click", () => {
+    const status = document.getElementById("settings-viewer-status");
+    status.hidden = false;
+    status.textContent = restartViewer()
+      ? "Restarted."
+      : "It was restarted, but it cannot draw; see the Backend tab.";
   });
 
   // At once rather than on Apply, like Update and Upgrade, and with the dialog

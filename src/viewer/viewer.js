@@ -274,97 +274,9 @@ export function initViewer() {
     }
   });
 
-  page = createPage({
-    Viewer,
-    Display,
-    Timer,
-    send,
-    overrides: overrides(),
-    theme: resolvedTheme(),
-    // A pane, not a window: our own container, our own size, and no `window`
-    // message or resize event to listen for - models arrive as binary frames
-    // and the surface changes when a splitter moves.
-    container: container(),
-    getSize: paneSize,
-    listen: false,
-  });
+  page = buildPage();
 
-  ipc.onBinary(ipc.KIND_MODEL, (payload, header, buffer, payloadOffset) => {
-    const started = performance.now();
-    // `show_clear()` arrives on the model channel so it stays ordered against
-    // the models it clears. It is the page's own message, not a model, so it
-    // goes to the dispatch before the no-geometry guard below can mistake it
-    // for one.
-    if (header.type === "clear") {
-      page.handleMessage({ type: "clear" });
-      return;
-    }
-    // Animation tracks ride the model channel too, so they stay ordered
-    // against the model they animate. Like `clear` they carry no geometry, so
-    // they must not reach the no-geometry guard below.
-    if (header.type === "animation") {
-      page.handleMessage({
-        type: "animation",
-        data: header.data,
-        config: header.config ?? {},
-      });
-      return;
-    }
-    // A model with no geometry is refused rather than drawn.
-    //
-    // three-cad-viewer does not come back from one: given a header describing
-    // shapes and no buffers behind them, the window stopped responding and had
-    // to be force-quit. The kernel no longer sends such a thing - `show()` of a
-    // list of floats produced one - but a hang is not an acceptable response to
-    // a bad frame from anywhere, and this is the only place that can refuse it.
-    if (payload.byteLength === 0) {
-      log.warn("Ignored a model with no geometry in it");
-      return;
-    }
-    try {
-      // The buffers are views straight onto the frame: the sidecar sends the
-      // tessellation's arrays raw and this rebuilds the tree around them,
-      // which is why nothing here copies or parses a number.
-      const data = rehydrate(header.data, buffer, payloadOffset);
-      // Instances are resolved here rather than by the renderer: its own
-      // `decodeInstancedFormat` base64-decodes every instance first and would
-      // throw on the typed arrays we already hold. 5.0.3 exports the two halves
-      // separately for exactly this, and the second one takes the shapes tree
-      // and the already-decoded instances - `resolveInstances(data)` with the
-      // whole envelope silently produces a tree with no parts, which the page
-      // then drops without a word.
-      const shapes = resolveInstances(data.shapes, data.instances);
-      if (!Array.isArray(shapes?.parts)) {
-        // The page's own guard for this is silent, and a model that vanishes
-        // between the socket and the canvas is the worst thing to debug.
-        log.error("The tessellation has no parts in it; nothing was drawn");
-        return;
-      }
-      page.handleMessage({
-        type: "data",
-        data: { shapes },
-        config: header.config ?? {},
-      });
-      // The keymap this show was computed with, put onto the viewer by hand.
-      // The viewer is built once, and a show re-applies theme, glass and tools
-      // and nothing more - `header.config.keymap` is worked out on every show
-      // and then dropped. It is the merged value the core produced for this
-      // call, workspace setting through show keyword, so applying it here is
-      // exactly the line showViewer does not have, at the same layering.
-      if (header.config?.keymap !== undefined) {
-        applyModifierKeys(header.config.keymap);
-      }
-      const lost = webglLost();
-      log.info(
-        `Model rendered: ${header.count ?? "?"} shapes, ` +
-          `${(payload.byteLength / 1024).toFixed(0)} kB, ` +
-          `${(performance.now() - started).toFixed(0)} ms` +
-          (lost === true ? " - but the WebGL context is lost, so nothing is on screen" : ""),
-      );
-    } catch (error) {
-      log.error("Could not render the model:", error);
-    }
-  });
+  ipc.onBinary(ipc.KIND_MODEL, drawFrame);
 
   // Everything else the sidecar has for the viewer - a config block, a
   // measurement answer, a screenshot request, the animation clock - arrives as
@@ -383,4 +295,130 @@ export function initViewer() {
   // setTheme restyles the existing scene, so the model does not have to be
   // re-sent when the appearance changes.
   onThemeChange((theme) => page.setTheme(theme));
+}
+
+function buildPage() {
+  return createPage({
+    Viewer,
+    Display,
+    Timer,
+    send,
+    overrides: overrides(),
+    theme: resolvedTheme(),
+    // A pane, not a window: our own container, our own size, and no `window`
+    // message or resize event to listen for - models arrive as binary frames
+    // and the surface changes when a splitter moves.
+    container: container(),
+    getSize: paneSize,
+    listen: false,
+  });
+}
+
+/**
+ * Throw the viewer away and build a new one, showing the start screen.
+ *
+ * For a viewer a JavaScript error has left unusable, which used to take a
+ * restart of the whole application. The old page is disposed before the new
+ * one is made: three-cad-viewer keeps every Display's listeners in one shared
+ * manager, so disposing it afterwards would strip the new one's too. The new
+ * viewer shows the logo, as at startup, and the sidecar is told so, so that
+ * what it keeps about the viewer goes back to its startup state as well.
+ *
+ * @returns {boolean} whether the new viewer draws
+ */
+export function restartViewer() {
+  log.info("Restarting the viewer");
+  page.dispose();
+  page = buildPage();
+  showLogo();
+  try {
+    ipc.send("viewer.restarted");
+  } catch (error) {
+    log.warn("Could not tell the sidecar the viewer was restarted:", error);
+  }
+  const draws = webglLost() === false;
+  if (draws && webglGone) {
+    webglGone = false;
+    recordHealth("webgl", "ready");
+  }
+  log.info(draws ? "The viewer was restarted" : "The viewer was restarted, but it cannot draw");
+  return draws;
+}
+
+/** One frame from the model channel, onto the current page. */
+function drawFrame(payload, header, buffer, payloadOffset) {
+  const started = performance.now();
+  // `show_clear()` arrives on the model channel so it stays ordered against
+  // the models it clears. It is the page's own message, not a model, so it
+  // goes to the dispatch before the no-geometry guard below can mistake it
+  // for one.
+  if (header.type === "clear") {
+    page.handleMessage({ type: "clear" });
+    return;
+  }
+  // Animation tracks ride the model channel too, so they stay ordered
+  // against the model they animate. Like `clear` they carry no geometry, so
+  // they must not reach the no-geometry guard below.
+  if (header.type === "animation") {
+    page.handleMessage({
+      type: "animation",
+      data: header.data,
+      config: header.config ?? {},
+    });
+    return;
+  }
+  // A model with no geometry is refused rather than drawn.
+  //
+  // three-cad-viewer does not come back from one: given a header describing
+  // shapes and no buffers behind them, the window stopped responding and had
+  // to be force-quit. The kernel no longer sends such a thing - `show()` of a
+  // list of floats produced one - but a hang is not an acceptable response to
+  // a bad frame from anywhere, and this is the only place that can refuse it.
+  if (payload.byteLength === 0) {
+    log.warn("Ignored a model with no geometry in it");
+    return;
+  }
+  try {
+    // The buffers are views straight onto the frame: the sidecar sends the
+    // tessellation's arrays raw and this rebuilds the tree around them,
+    // which is why nothing here copies or parses a number.
+    const data = rehydrate(header.data, buffer, payloadOffset);
+    // Instances are resolved here rather than by the renderer: its own
+    // `decodeInstancedFormat` base64-decodes every instance first and would
+    // throw on the typed arrays we already hold. 5.0.3 exports the two halves
+    // separately for exactly this, and the second one takes the shapes tree
+    // and the already-decoded instances - `resolveInstances(data)` with the
+    // whole envelope silently produces a tree with no parts, which the page
+    // then drops without a word.
+    const shapes = resolveInstances(data.shapes, data.instances);
+    if (!Array.isArray(shapes?.parts)) {
+      // The page's own guard for this is silent, and a model that vanishes
+      // between the socket and the canvas is the worst thing to debug.
+      log.error("The tessellation has no parts in it; nothing was drawn");
+      return;
+    }
+    page.handleMessage({
+      type: "data",
+      data: { shapes },
+      config: header.config ?? {},
+    });
+    // The keymap this show was computed with, put onto the viewer by hand.
+    // The viewer is built once, and a show re-applies theme, glass and tools
+    // and nothing more - `header.config.keymap` is worked out on every show
+    // and then dropped. It is the merged value the core produced for this
+    // call, workspace setting through show keyword, so applying it here is
+    // exactly the line showViewer does not have, at the same layering.
+    if (header.config?.keymap !== undefined) {
+      applyModifierKeys(header.config.keymap);
+    }
+    const lost = webglLost();
+    log.info(
+      `Model rendered: ${header.count ?? "?"} shapes, ` +
+        `${(payload.byteLength / 1024).toFixed(0)} kB, ` +
+        `${(performance.now() - started).toFixed(0)} ms` +
+        (lost === true ? " - but the WebGL context is lost, so nothing is on screen" : ""),
+    );
+  } catch (error) {
+    log.error("Could not render the model:", error);
+  }
 }

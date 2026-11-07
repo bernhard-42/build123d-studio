@@ -1296,6 +1296,12 @@ def main():
     told = side.wait_log("Measurement model indexed", 60, count=3)[0] is not None
     check("and is told the model and the tool at the next selection", told)
 
+    # A restarted viewer shows the logo, and the sidecar goes back to its
+    # startup state with it - the splash flag and the measurement model.
+    side.send("viewer.restarted")
+    back = side.wait_log("measuring the start screen again", 30)[0] is not None
+    check("a restarted viewer puts the sidecar back to the start screen", back)
+
     # --- the model socket, from a peer that is not the kernel ---
     #
     # Reachable by any process on this machine, which is the premise the token

@@ -351,6 +351,9 @@ class Sidecar:
         # On the measure lane, so it is ordered against the selections it would
         # otherwise pull a process out from under.
         self.channel.on("measure.restart", self.on_restart_measure, lane=MEASURE)
+        # On the measure lane too: it drops the measurement model, and a
+        # selection queued before it must not land in between.
+        self.channel.on("viewer.restarted", self.on_viewer_restarted, lane=MEASURE)
         self.channel.on("vars.refresh", self.on_vars_refresh, lane=INSPECT)
         self.channel.on("app.info", self.on_app_info, lane=INSPECT)
         self.channel.on("export.forms", self.on_export_forms, lane=INSPECT)
@@ -1616,6 +1619,20 @@ class Sidecar:
         log("measure: " + ("The measurement backend is ready" if ready
                            else "The measurement backend did not answer"))
         self.channel.send("measure.restart", id=message.get("id"), ready=ready)
+
+    def on_viewer_restarted(self, message):
+        """The viewer was built again and shows the logo: back to the start.
+
+        Both facts this process keeps about the viewer go back to what they are
+        at startup. The splash flag, so the next show does not inherit the logo's
+        camera under reset_camera=KEEP; and the measurement model, so a
+        selection on the logo is answered from the logo, not from the model that
+        was on screen before.
+        """
+        self._splash = True
+        self._viewer_status = {}
+        self.measurements.forget()
+        log("measure: The viewer was restarted; measuring the start screen again")
 
     def on_format(self, message):
         """Format the whole buffer, or answer with nothing to do.

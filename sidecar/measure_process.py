@@ -142,6 +142,9 @@ def answer(measurements, request):
             reply["ok"] = True
         elif command == "changes":
             reply["response"] = measurements.handle_changes(request.get("changes", {}))
+        elif command == "forget":
+            measurements.forget()
+            reply["ok"] = True
         elif command == "ping":
             reply["ok"] = True
         else:

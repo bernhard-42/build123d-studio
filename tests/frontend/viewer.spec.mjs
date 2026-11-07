@@ -351,3 +351,80 @@ test.describe("rotating and zooming at the cursor", () => {
     expect(await targetRow(page)).toBe("none");
   });
 });
+
+test.describe("Restart viewer", () => {
+  // Count the document's keydown listeners as three-cad-viewer's Display adds
+  // and removes them: a restart that did not dispose the old viewer leaves its
+  // listeners behind and doubles the count. The core's measurement showed a
+  // Ctrl/Cmd-C count cannot see that, so this is what the test reads.
+  const countKeydownListeners = () => {
+    const live = new Set();
+    const add = EventTarget.prototype.addEventListener;
+    const remove = EventTarget.prototype.removeEventListener;
+    EventTarget.prototype.addEventListener = function (type, listener, options) {
+      if (this === document && type === "keydown") live.add(listener);
+      return add.call(this, type, listener, options);
+    };
+    EventTarget.prototype.removeEventListener = function (type, listener, options) {
+      if (this === document && type === "keydown") live.delete(listener);
+      return remove.call(this, type, listener, options);
+    };
+    globalThis.__keydownListeners = () => live.size;
+  };
+  const rendered = (page) =>
+    page.evaluate(() =>
+      String(globalThis.__NEUTRALINO_STUB__.wrote("/appdata/build123d-studio/build123d-studio.log") ?? "")
+        .split("Model rendered").length - 1);
+
+  const logos = (page) =>
+    page.evaluate(() =>
+      String(globalThis.__NEUTRALINO_STUB__.wrote("/appdata/build123d-studio/build123d-studio.log") ?? "")
+        .split("Logo rendered").length - 1);
+
+  test("builds a new viewer showing the start screen, frees the old one, and tells the sidecar", async ({ page }) => {
+    // Proof, at writing: with page.dispose() removed from restartViewer, this
+    // fails on the old canvas's context and on the listener count.
+    await page.addInitScript(countKeydownListeners);
+    const { sidecar } = await openApp(page);
+    sidecar.sendBinary(KIND_MODEL, PAYLOAD, MODEL.header);
+    await expect.poll(() => rendered(page)).toBe(1);
+    const logosBefore = await logos(page);
+    const before = await page.evaluate(() => {
+      globalThis.__oldCanvas = document.querySelector("#pane-viewer canvas");
+      return globalThis.__keydownListeners();
+    });
+
+    await page.locator("#btn-settings").click();
+    await page.locator("#tab-application").click();
+    await page.locator("#settings-restart-viewer").click();
+
+    await expect(page.locator("#settings-viewer-status")).toHaveText("Restarted.");
+    await sidecar.waitFor("viewer.restarted");
+    await expect.poll(() => logos(page)).toBe(logosBefore + 1);
+    expect(await rendered(page), "the old model was drawn again").toBe(1);
+    // Closed before counting: the dialog listens for Escape on the document.
+    await page.locator("#settings-cancel").click();
+    await expect(page.locator("#settings-cancel")).toBeHidden();
+    const after = await page.evaluate(() => ({
+      canvases: document.querySelectorAll("#pane-viewer canvas").length,
+      oldReplaced: document.querySelector("#pane-viewer canvas") !== globalThis.__oldCanvas,
+      oldLost: (globalThis.__oldCanvas.getContext("webgl2") ?? globalThis.__oldCanvas.getContext("webgl"))?.isContextLost() ?? true,
+      listeners: globalThis.__keydownListeners(),
+    }));
+    expect(after).toEqual({ canvases: 1, oldReplaced: true, oldLost: true, listeners: before });
+  });
+
+  test("and a show afterwards reaches the new viewer", async ({ page }) => {
+    const { sidecar } = await openApp(page);
+    await page.locator("#btn-settings").click();
+    await page.locator("#tab-application").click();
+    await page.locator("#settings-restart-viewer").click();
+    await expect(page.locator("#settings-viewer-status")).toHaveText("Restarted.");
+    await page.locator("#settings-cancel").click();
+
+    sidecar.sendBinary(KIND_MODEL, PAYLOAD, MODEL.header);
+    await expect.poll(() => rendered(page)).toBe(1);
+    await expect(page.locator("#pane-viewer canvas")).toHaveCount(1);
+  });
+});
+

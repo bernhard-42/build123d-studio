@@ -244,6 +244,20 @@ class MeasurementService:
             self._mapping = mapping_bytes
             self._sent = False
 
+    def forget(self):
+        """Back to the start: no model, no tool, here and in the process.
+
+        For a restarted viewer, which shows the logo as it does at startup. The
+        process answers a selection from its own splash whenever it has no
+        model, so dropping the model is all it takes to measure the logo again.
+        """
+        with self._lock:
+            self._mapping = None
+            self._sent = False
+            self._tool = None
+            self._tool_told = False
+        self._request({"command": "forget"})
+
     def handle_changes(self, changes):
         """Answer a viewer selection, sending the model first if it is new."""
         reply = self._request({"command": "changes", "changes": changes})

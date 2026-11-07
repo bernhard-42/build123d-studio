@@ -141,6 +141,15 @@ class Measurements:
         """
         self._shown = ShownModel(mapping_bytes)
 
+    def forget(self):
+        """Back to the state this object starts in: no model, no tool.
+
+        What a restarted viewer is showing - the logo - so a selection on it is
+        answered from the splash again, as before the first show.
+        """
+        self._shown = None
+        self._active_tool = None
+
     def handle_changes(self, changes):
         """Handle a UI change notification from the viewer.
 
