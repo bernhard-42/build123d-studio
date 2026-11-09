@@ -61,8 +61,49 @@ const TRIPLES = {
   "win32-x64": "x86_64-pc-windows-msvc",
 };
 
-function platformKey() {
-  const arch = NL_ARCH === "arm64" || NL_ARCH === "arm" ? "arm64" : "x64";
+// Map a machine name (NL_ARCH, or `uname -m`) to our two architectures, or null
+// when it says nothing we recognise.
+export function archFromName(name) {
+  const value = String(name ?? "").trim().toLowerCase();
+  if (["arm64", "arm", "aarch64", "armv8", "armv8l"].includes(value)) {
+    return "arm64";
+  }
+  if (["x64", "x86_64", "amd64"].includes(value)) {
+    return "x64";
+  }
+  return null;
+}
+
+/**
+ * The machine architecture, asking the OS when Neutralino cannot say.
+ *
+ * Neutralino 6.9.0's linux_arm64 binary reports NL_ARCH as "unknown" (and
+ * computer.getCPUInfo().architecture likewise), so trusting NL_ARCH alone sent
+ * every Linux ARM64 machine down the x64 path: it fetched the x86_64 uv, which
+ * then failed to execute. `uname -m` is the authority on Linux and macOS.
+ */
+async function machineArch() {
+  const fromNeutralino = archFromName(typeof NL_ARCH === "string" ? NL_ARCH : "");
+  if (fromNeutralino !== null || NL_OS === "Windows") {
+    return fromNeutralino ?? "x64";
+  }
+  let output = "";
+  try {
+    const code = await run("uname -m", { onLine: (line) => (output += line) });
+    const fromUname = code === 0 ? archFromName(output) : null;
+    if (fromUname !== null) {
+      log.info(`NL_ARCH is ${NL_ARCH}; uname -m says ${output.trim()}`);
+      return fromUname;
+    }
+  } catch (error) {
+    log.warn("uname -m failed:", error?.message ?? error);
+  }
+  log.warn(`Could not determine the architecture (NL_ARCH=${NL_ARCH}); assuming x64`);
+  return "x64";
+}
+
+async function platformKey() {
+  const arch = await machineArch();
   switch (NL_OS) {
     case "Darwin":
       return `darwin-${arch}`;
@@ -267,7 +308,7 @@ export async function ensureUv(envRoot) {
     appendLog(`Replacing uv ${have ?? "(unreadable)"} with the pinned ${wanted}`);
   }
 
-  const triple = TRIPLES[platformKey()];
+  const triple = TRIPLES[await platformKey()];
   const expected = pins.uv.artifacts[triple];
   if (expected === undefined) {
     // A platform we build for but never recorded a checksum for. Refusing is
