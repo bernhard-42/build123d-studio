@@ -35,13 +35,9 @@ Download the latest release from [the Releases page](https://github.com/bernhard
 
 - **macOS**: `shasum -a 256 build123d-studio-*.dmg`
 - **Windows**: `certutil -hashfile build123d-studio-*.zip SHA256`
-- **Linux**: `sha256sum build123d-studio-*.AppImage`
+- **Linux**: ```sha256sum build123d-studio-*.AppImage```
 
-and compare it against the values in `SHA256SUMS.txt` on the same Releases page. With the GitHub CLI [gh](https://cli.github.com/) installed, the build provenance can be verified directly:
-
-```sh
-gh attestation verify build123d-studio-*.dmg --repo bernhard-42/build123d-studio
-```
+and compare it against the values in `SHA256SUMS.txt` on the same Releases page. 
 
 ### Install
 
@@ -51,7 +47,7 @@ The ordinary way for your platform: drag the `.app` to Applications on macOS, un
 
 - **macOS**: builds are signed ad hoc, with no Developer ID and no notarisation, so the first run is blocked with _"Apple could not verify 'build123d Studio' is free of malware"_. Open **System Settings → Privacy & Security**, find _"build123d Studio" was blocked to protect your Mac_ under _Security_, and click **Open Anyway**. Alternatively, run `xattr -dr com.apple.quarantine "/Applications/build123d Studio.app"` before double-clicking the icon.
 - **Windows**: builds are unsigned, so SmartScreen warns on first run. Use **More info → Run anyway**.
-- **Linux**: the application uses the system webview and needs WebKitGTK (`libwebkit2gtk-4.1-0`, or `libwebkit2gtk-4.0-37` on older releases) — install it if it is not already there. Mark the AppImage executable (`chmod +x build123d-studio-*.AppImage`), or the desktop treats it as a data file.
+- **Linux**: Install (`libwebkit2gtk-4.1-0`, or `libwebkit2gtk-4.0-37` on older releases) — install it if it is not already there. Mark the AppImage executable (`chmod +x build123d-studio-*.AppImage`), or the desktop treats it as a data file.
 
 ### The first start
 
