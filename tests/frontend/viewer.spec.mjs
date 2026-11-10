@@ -186,20 +186,24 @@ test.describe("a model with no geometry", () => {
 test.describe("the modifier keys the viewer is built with", () => {
   // The viewer is constructed once, at the splash, and its help overlay is
   // rendered from the keymap it was constructed with - `{{meta}}` in the
-  // template becomes whichever key the map says. Later shows re-apply theme,
-  // glass and tools and nothing more, so what the splash was given is what the
-  // user gets. This host sent only the theme, so on Windows and Linux the help
-  // said <meta> and the chords were on the Win key, which the desktop keeps.
+  // template becomes whichever key the map says, named as the platform's
+  // keyboard labels it. Later shows re-apply theme, glass and tools and nothing
+  // more, so what the splash was given is what the user gets. This host sent
+  // only the theme, so on Windows and Linux the chords were on the Win key,
+  // which the desktop keeps.
   const help = (page) =>
     page.evaluate(() => document.querySelector(".tcv_cad_help_layout")?.innerHTML ?? "");
+  const key = (name) => `<kbd class="tcv_key">${name}</kbd>`;
+  const DRAG = " + &lt;left mouse button drag&gt;";
+  const DOUBLE_CLICK = " + &lt;left mouse button double click&gt;";
 
   test("on Windows the meta chords are on the Alt key, and the help says so", async ({ page }) => {
     await open(page, { platform: "Windows", files: FILES, settings: { workspace: WORKSPACE } });
     await expect(page.locator(".pane-viewer canvas").first()).toBeVisible();
 
     const html = await help(page);
-    expect(html).toContain("&lt;alt&gt; + &lt;left mouse button&gt;");
-    expect(html).not.toContain("&lt;meta&gt;");
+    expect(html).toContain(key("Alt") + DRAG);
+    expect(html).not.toContain(key("Win"));
   });
 
   test("and a show afterwards leaves them there", async ({ page }) => {
@@ -232,8 +236,8 @@ test.describe("the modifier keys the viewer is built with", () => {
       .toContain("Model rendered");
 
     const html = await help(page);
-    expect(html).toContain("&lt;alt&gt; + &lt;left mouse button&gt;");
-    expect(html).not.toContain("&lt;meta&gt;");
+    expect(html).toContain(key("Alt") + DRAG);
+    expect(html).not.toContain(key("Win"));
   });
 
   test("on macOS they stay on Cmd", async ({ page }) => {
@@ -243,7 +247,7 @@ test.describe("the modifier keys the viewer is built with", () => {
     await expect(page.locator(".pane-viewer canvas").first()).toBeVisible();
 
     const html = await help(page);
-    expect(html).toContain("&lt;meta&gt; + &lt;left mouse button&gt;");
+    expect(html).toContain(key("Cmd") + DRAG);
   });
 
   const renderModel = async (page, sidecar) => {
@@ -273,10 +277,10 @@ test.describe("the modifier keys the viewer is built with", () => {
     // dialog changes nothing on screen by itself.
     const { sidecar } = await open(page, { files: FILES, settings: { workspace: WORKSPACE } });
     await renderModel(page, sidecar);
-    expect(await help(page)).toContain("&lt;meta&gt; + &lt;left mouse button&gt;");
+    expect(await help(page)).toContain(key("Cmd") + DRAG);
 
     await changeMetaTo(page, "ctrlKey");
-    expect(await help(page)).toContain("&lt;meta&gt; + &lt;left mouse button&gt;");
+    expect(await help(page)).toContain(key("Cmd") + DRAG);
 
     // The kernel would answer workspace_config() from the file just written;
     // the harness's model carries its header, so give it the changed keymap
@@ -294,8 +298,8 @@ test.describe("the modifier keys the viewer is built with", () => {
       .toBe(2);
 
     const html = await help(page);
-    expect(html).toContain("&lt;ctrl&gt; + &lt;left mouse button&gt; double");
-    expect(html).not.toContain("&lt;meta&gt;");
+    expect(html).toContain(key("Ctrl") + DOUBLE_CLICK);
+    expect(html).not.toContain(key("Cmd"));
   });
 
   test("and a map stored in Settings wins over the platform's default", async ({ page }) => {
@@ -313,7 +317,7 @@ test.describe("the modifier keys the viewer is built with", () => {
     await expect(page.locator(".pane-viewer canvas").first()).toBeVisible();
 
     const html = await help(page);
-    expect(html).toContain("&lt;ctrl&gt; + &lt;left mouse button&gt; double");
+    expect(html).toContain(key("Ctrl") + DOUBLE_CLICK);
   });
 });
 

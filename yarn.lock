@@ -1277,7 +1277,7 @@ tcp-port-used@^1.0.2:
 
 three-cad-viewer@../three-cad-viewer/three-cad-viewer-5.2.0.tgz:
   version "5.2.0"
-  resolved "../three-cad-viewer/three-cad-viewer-5.2.0.tgz#e3c8f1cea2a4895aae4ac212cd10f217aeece77b"
+  resolved "../three-cad-viewer/three-cad-viewer-5.2.0.tgz#5a4a08c131361ecbcde04f602432011b93e70dfc"
   dependencies:
     n8ao "1.10.1"
     postprocessing "6.39.6"

@@ -13,6 +13,7 @@ What changed in each release, for the people using it. Anything not visible from
 - **Changes**
     - **ocp-viewer-core** has no source picker in the Packages settings any more: to use a local checkout or the GitHub branch, add it to Additional packages like any other package, for example `git+https://github.com/bernhard-42/ocp-viewer-core@main`. A choice made in the picker moves there by itself at the next start
     - The Python environment depends on `ocp-viewer-core>=1.2.0,<1.3.0` (was `>=1.1.2,<1.2.0`) and `ocp-tessellate>=3.7.0` (was `>=3.6.3`): ocp-viewer-core 1.2.0 runs on ocp-tessellate 3.7, which brings the kernel plugins
+    - The viewer's help names the modifier keys as the keyboard labels them (Cmd and Option on macOS, Win and Alt on Windows, Super and Alt on Linux) (three-cad-viewer 5.2)
 
 - **Fixes**
     - Installing or upgrading packages also restarts the measurement backend. It used to keep the old libraries until Studio was restarted

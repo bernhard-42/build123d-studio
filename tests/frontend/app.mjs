@@ -5,7 +5,7 @@
  * - `/__neutralino_globals.js`, which the native server injects and a browser
  *   404s. Fulfilled from here rather than committed to public/, because a file
  *   in public/ would be copied into resources/ and shadow the real one in the
- *   packaged application.
+ *   packaged application. It also sets `navigator.platform` to match `NL_OS`.
  * - `@neutralinojs/lib`, aliased to the in-memory stub at build time.
  * - the sidecar's WebSocket, answered by Playwright's own routing rather than
  *   by a server. The application still opens a real socket and still speaks the
@@ -28,8 +28,23 @@ import { decodeBinary, encodeBinary } from "../../src/frame.js";
  */
 const SIDECAR = { type: "listening", port: 45999, token: "harness-token" };
 
-const GLOBALS = (platform, argv) => `
+/** What `navigator.platform` reports on each `NL_OS`.
+ *
+ * three-cad-viewer names the modifier keys in its help after
+ * `navigator.platform` (Cmd and Option on macOS, Win and Alt on Windows, Super
+ * and Alt elsewhere), and the engine running this suite reports the machine it
+ * runs on. A page that says Windows has to report Windows too, or its help
+ * names the Alt key "Option".
+ */
+const NAVIGATOR_PLATFORM = { Darwin: "MacIntel", Windows: "Win32", Linux: "Linux x86_64" };
+
+const GLOBALS = (platform, argv) => {
+  if (!Object.hasOwn(NAVIGATOR_PLATFORM, platform)) {
+    throw new Error(`The harness knows no navigator.platform for NL_OS ${platform}`);
+  }
+  return `
   var NL_OS = ${JSON.stringify(platform)};
+  Object.defineProperty(navigator, "platform", { get: () => ${JSON.stringify(NAVIGATOR_PLATFORM[platform])} });
   var NL_ARCH = "arm64";
   // This window's own process. Recovery records it in the journal it owns and
   // asks the operating system which pids are still windows of this
@@ -43,6 +58,7 @@ const GLOBALS = (platform, argv) => `
   var NL_PORT = 0;
   var NL_TOKEN = "unused";
 `;
+};
 
 /** The sidecar's end of the link, driven from the test. */
 class FakeSidecar {
