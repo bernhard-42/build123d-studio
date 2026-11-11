@@ -13,6 +13,7 @@ What changed in each release, for the people using it. Anything not visible from
 - **Changes**
     - **ocp-viewer-core** has no source picker in the Packages settings any more: to use a local checkout or the GitHub branch, add it to Additional packages like any other package, for example `git+https://github.com/bernhard-42/ocp-viewer-core@main`. A choice made in the picker moves there by itself at the next start
     - The Python environment depends on `ocp-viewer-core>=1.2.0,<1.3.0` (was `>=1.1.2,<1.2.0`) and `ocp-tessellate>=3.7.0` (was `>=3.6.3`): ocp-viewer-core 1.2.0 runs on ocp-tessellate 3.7, which brings the kernel plugins
+    - Starting the debugger saves every changed file, not only the one on screen, as VS Code does; a file that has never been saved is saved only when it is on screen
     - The viewer's help names the modifier keys as the keyboard labels them (Cmd and Option on macOS, Win and Alt on Windows, Super and Alt on Linux) (three-cad-viewer 5.2)
 
 - **Fixes**
@@ -20,6 +21,7 @@ What changed in each release, for the people using it. Anything not visible from
     - The measurement backend no longer hangs when a library or a kernel plugin prints to stdout, from native code or while it is being imported
     - After the measurement backend restarts, the active Distance or Properties tool keeps answering; it used to answer nothing until the tool was switched off and on
     - `show(1)`, `show((1, 2, 3))` and other calls with nothing to draw no longer raise "nothing to show"; they do nothing, as in the other viewers
+    - Restarting the debugger saves the changed files first, as starting does; it used to restart the version on disk
     - Debugging a script whose libraries fork or start Python child processes works: smlibpy's kernel steps, for example, failed with "the kernel step failed in a copy of this process". The child processes run without the debugger
 
 ## 0.10.0 (2026-10-21)

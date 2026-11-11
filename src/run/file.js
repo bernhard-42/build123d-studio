@@ -90,7 +90,7 @@ export async function toggleRunFile() {
     return;
   }
 
-  // Saved first, as debugging does and for the same reason: this runs the file,
+  // Saved first, for the same reason as debugging: this runs the file,
   // so an unsaved buffer would run yesterday's code while the user reads
   // today's. saveFile has already said why on screen if it comes back null.
   const saved = await saveFile();

@@ -559,17 +559,31 @@ export async function confirmDiscardAll() {
  * a quit reads before discarding anything, so "the user declined to name that
  * buffer" has to arrive as "not everything is saved" rather than as success.
  *
+ * With `onlyActiveUntitled`, of the unnamed buffers only the one on screen is
+ * saved, and that one even when it is unchanged - VS Code's rule before a debug
+ * session. The file about to be debugged has to be on disk, and a new file from
+ * the template counts as clean, so F5 on it still has to ask for a name; a
+ * scratch buffer in another tab must not raise a save dialog at every start and
+ * restart.
+ *
+ * @param {{onlyActiveUntitled?: boolean}} [options]
  * @returns {Promise<boolean>} false if a save failed or was cancelled
  */
-export async function saveAll() {
-  // Missing files are included: the buffer is the only copy left, and Save All
-  // is exactly the command for getting the project back onto disk.
-  const pending = bufferKeys().filter((key) => bufferNeedsSaving(key));
+export async function saveAll({ onlyActiveUntitled = false } = {}) {
+  const active = activeBufferKey();
+  const pending = bufferKeys().filter((key) => {
+    if (onlyActiveUntitled === true && bufferPath(key) === null) {
+      return key === active;
+    }
+    // Missing files are included: the buffer is the only copy left, and Save
+    // All is exactly the command for getting the project back onto disk.
+    return bufferNeedsSaving(key);
+  });
   if (pending.length === 0) {
     return true;
   }
 
-  const returning = activeBufferKey();
+  const returning = active;
   for (const key of pending) {
     if (activeBufferKey() !== key) {
       showBuffer(key);

@@ -119,6 +119,116 @@ test.describe("starting a session", () => {
       )
       .toContain("EDITED");
   });
+
+  test("every changed file is saved, and an unnamed one only when it is on screen", async ({ page }) => {
+    // VS Code's rule (its debug.saveBeforeStart default): the script imports
+    // modules that may be open and edited too, so every named file goes to
+    // disk. A scratch buffer in another tab is not the file being debugged, and
+    // asking where to put it at every start would be a dialog nobody wanted.
+    const helper = `${PROJECT}/helper.py`;
+    const { sidecar } = await open(page, {
+      files: { ...FILES, [helper]: "def helper():\n    return 1\n" },
+      settings: {
+        workspace: { ...WORKSPACE, tabs: [...WORKSPACE.tabs, { path: helper, caret: null }] },
+      },
+    });
+    await expect(page.locator(".tab-active .tab-label")).toHaveText("part.py");
+
+    await page.locator(".tab-label", { hasText: "helper.py" }).click();
+    await expect(page.locator(".tab-active .tab-label")).toHaveText("helper.py");
+    await page.locator(".monaco-editor .view-lines").first().click();
+    await page.keyboard.type("HELPED");
+
+    await page.evaluate(() =>
+      globalThis.__NEUTRALINO_STUB__.emit("mainMenuItemClicked", { id: "file.new" }),
+    );
+    await expect(page.locator(".tab")).toHaveCount(3);
+    await page.locator(".monaco-editor .view-lines").first().click();
+    await page.keyboard.type("SCRATCH");
+    await expect(page.locator(".tab-close.tab-dirty")).toHaveCount(2);
+
+    await page.locator(".tab-label", { hasText: "part.py" }).click();
+    await expect(page.locator(".tab-active .tab-label")).toHaveText("part.py");
+
+    await startSession(page, sidecar);
+
+    await expect
+      .poll(() =>
+        page.evaluate((p) => String(globalThis.__NEUTRALINO_STUB__.wrote(p) ?? ""), helper))
+      .toContain("HELPED");
+    // The scratch buffer is still unsaved, and nothing asked where it should go.
+    await expect(page.locator(".tab-close.tab-dirty")).toHaveCount(1);
+    const panels = await page.evaluate(() =>
+      globalThis.__NEUTRALINO_STUB__.calls().filter((call) =>
+        call.name === "showSaveDialog"
+        || (call.name === "execCommand" && String(call.args[0]).includes("choose file name"))));
+    expect(panels).toEqual([]);
+    await expect(page.locator(".tab-active .tab-label")).toHaveText("part.py");
+  });
+
+  test("an unnamed file on screen asks for a name even when it is unchanged", async ({ page }) => {
+    // A new file from the template counts as clean - quitting does not offer
+    // to save what the user never wrote - but F5 on it means "debug this", and
+    // there is no file to debug until it has a name.
+    const { sidecar } = await openApp(page);
+    await page.evaluate(() =>
+      globalThis.__NEUTRALINO_STUB__.emit("mainMenuItemClicked", { id: "file.new" }),
+    );
+    await expect(page.locator(".tab")).toHaveCount(2);
+    await expect(page.locator(".tab-close.tab-dirty")).toHaveCount(0);
+
+    const named = `${PROJECT}/fresh.py`;
+    await page.evaluate((target) => globalThis.__NEUTRALINO_STUB__.answerDialogWith(target), named);
+    await startSession(page, sidecar);
+
+    expect((await sidecar.waitFor("debug.start")).path).toBe(named);
+    await expect(page.locator(".tab-active .tab-label")).toHaveText("fresh.py");
+  });
+});
+
+test.describe("restarting a session", () => {
+  const debugStarts = (sidecar) => sidecar.received.filter((frame) => frame.type === "debug.start");
+
+  test("saves first, as starting does", async ({ page }) => {
+    // A restart is how somebody runs the line they just fixed. Restarting the
+    // version on disk would run the bug again, while the editor shows the fix.
+    const { sidecar } = await openApp(page);
+    await startSession(page, sidecar);
+
+    await page.locator(".monaco-editor .view-lines").first().click();
+    await page.keyboard.type("FIXED");
+    await expect(page.locator(".tab-close.tab-dirty")).toHaveCount(1);
+
+    await page.locator("#debug-restart").click();
+
+    await expect.poll(() => debugStarts(sidecar).length).toBe(2);
+    await expect(page.locator(".tab-close.tab-dirty")).toHaveCount(0);
+    expect(await page.evaluate(
+      (p) => String(globalThis.__NEUTRALINO_STUB__.wrote(p) ?? ""),
+      `${PROJECT}/part.py`,
+    )).toContain("FIXED");
+  });
+
+  test("with no session ever started, saves nothing", async ({ page }) => {
+    // Ctrl-Shift-F5 reaches the restart whether or not there is a session.
+    // With none there is nothing to restart, and a save would be a side
+    // effect of a command that did nothing.
+    const { sidecar } = await openApp(page);
+
+    await page.locator(".monaco-editor .view-lines").first().click();
+    await page.keyboard.type("UNSAVED");
+    await expect(page.locator(".tab-close.tab-dirty")).toHaveCount(1);
+
+    await page.evaluate(() =>
+      globalThis.__NEUTRALINO_STUB__.emit("mainMenuItemClicked", { id: "debug.restart" }),
+    );
+
+    // The menu handler runs inside the same event; the restart, had it run,
+    // would have sent debug.start before any of these come back.
+    await page.evaluate(() => new Promise((resolve) => setTimeout(resolve, 200)));
+    expect(debugStarts(sidecar)).toEqual([]);
+    await expect(page.locator(".tab-close.tab-dirty")).toHaveCount(1);
+  });
 });
 
 test.describe("the panes swap rather than sharing", () => {

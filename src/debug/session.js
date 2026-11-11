@@ -263,12 +263,17 @@ export async function variables(reference) {
  * ones would be the one thing somebody did not ask for.
  */
 export async function restart(files) {
-  const previous = target;
-  if (previous === null) {
+  if (!restartable()) {
     return;
   }
+  const previous = target;
   await stop();
   await start(previous.path, files ?? previous.files, previous.options);
+}
+
+/** Whether there is a session to restart: one has been started before. */
+export function restartable() {
+  return target !== null;
 }
 
 /** End the session. Safe to call when there is none. */

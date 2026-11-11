@@ -24,6 +24,7 @@ import {
   stop,
   onDebugOutput,
   restart,
+  restartable,
   updateBreakpoints,
 } from "./session.js";
 import {
@@ -38,7 +39,7 @@ import { justMyCode } from "./settings.js";
 import { notifyFailure } from "../confirm.js";
 import { refreshMenu } from "../menubar.js";
 import { refreshDebugFrame } from "../vars/explorer.js";
-import { openPath, saveFile } from "../editor/files.js";
+import { openPath, saveAll } from "../editor/files.js";
 import * as log from "../log.js";
 
 /**
@@ -62,14 +63,7 @@ export async function toggleDebugging() {
     return;
   }
 
-  // Saved first, always, as VS Code does. Debugging runs the *file*, which is
-  // what makes a breakpoint land on the line it was put on with nothing to map
-  // - so an unsaved buffer would debug the version on disk while the user reads
-  // the version on screen, and every line number would be a lie.
-  const saved = await saveFile();
-  if (saved === null) {
-    // saveFile has already said why on screen: cancelled, or a write that
-    // failed. Either way there is no file to run.
+  if (!(await saveBeforeDebugging())) {
     return;
   }
 
@@ -87,6 +81,44 @@ export async function toggleDebugging() {
 }
 
 /**
+ * Save what the session is about to run: before a start, and before a restart.
+ *
+ * Every changed file, as VS Code does (its `debug.saveBeforeStart` default).
+ * Debugging runs the *file*, which is what makes a breakpoint land on the line
+ * it was put on with nothing to map - so an unsaved buffer would debug the
+ * version on disk while the user reads the version on screen, and every line
+ * number would be a lie. Every file rather than the one on screen, because the
+ * script imports modules that may be open and edited too, and by a restart the
+ * tab on screen is often a module the session stepped into rather than the
+ * script it runs. An unnamed buffer is saved only when it is on screen: that
+ * one is about to be debugged, and the others are not.
+ *
+ * @returns {Promise<boolean>} false if a save was cancelled or failed, which
+ *   saveAll has already said on screen; there is then nothing to run
+ */
+function saveBeforeDebugging() {
+  return saveAll({ onlyActiveUntitled: true });
+}
+
+/**
+ * Start the last session again, with what is in the editor now.
+ *
+ * Saved first, as a start is: a restart is how somebody runs the line they
+ * just fixed, and restarting the version on disk would run the bug again. A
+ * save that is cancelled leaves the running session alone. With no session
+ * ever started there is nothing to restart, and nothing is saved either.
+ */
+async function restartDebugging() {
+  if (!restartable()) {
+    return;
+  }
+  if (!(await saveBeforeDebugging())) {
+    return;
+  }
+  await restart(allBreakpoints());
+}
+
+/**
  * Run one stepping command by name.
  *
  * Named rather than passed as a function because the editor's actions are
@@ -99,7 +131,7 @@ export function stepAction(name) {
     stepOver,
     stepInto,
     stepOut,
-    restart: () => restart(allBreakpoints()),
+    restart: restartDebugging,
     stop,
   }[name];
   if (step === undefined) {
@@ -140,7 +172,7 @@ const CONTROLS = [
   ["debug-step-over", stepOver],
   ["debug-step-into", stepInto],
   ["debug-step-out", stepOut],
-  ["debug-restart", () => restart(allBreakpoints())],
+  ["debug-restart", restartDebugging],
   // Stop means whichever of the two is on. The bar is shared, so a button that
   // always stopped the debugger would do nothing during a plain run - and Stop
   // is the only control a run has.
