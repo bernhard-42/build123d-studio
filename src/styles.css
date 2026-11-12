@@ -426,9 +426,15 @@ body {
    `html body` rather than `body`, because the two rules would otherwise have
    equal specificity and the winner would be whichever the bundler emitted last
    - which is theirs, an import order away from silently flipping back. One
-   extra element name states the precedence instead of depending on it. */
+   extra element name states the precedence instead of depending on it.
+
+   Both properties, because the library's rule sets both: WebKit treats
+   -webkit-user-select as a property of its own, so undoing only user-select
+   leaves the prefixed none in force and nothing in the window can be
+   selected. */
 
 html body {
+  -webkit-user-select: text;
   user-select: text;
 }
 

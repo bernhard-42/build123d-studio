@@ -167,9 +167,11 @@ function send(command, message) {
       console.debug("viewer report: forwarding status to the sidecar");
       // Both page hosts copy a selection to the clipboard, so this one does
       // too - the same feature everywhere is the rule, and the selection is
-      // already in the message.
-      if (Array.isArray(message.selected) && message.selected.length > 0) {
-        copyText(message.selected.join(","));
+      // already in the message, as the core's clipboard text
+      // (`selectionText`). An empty selection has none, so the clipboard is
+      // kept then.
+      if (typeof message.selectedText === "string") {
+        copyText(message.selectedText);
       }
       ipc.send("viewer.changes", { changes: message });
     } else if (command === "screenshot") {
