@@ -251,6 +251,28 @@ export function withDefaults(stored) {
 }
 
 /**
+ * The settings whose effective value differs between two stored objects.
+ *
+ * Compared with the defaults filled in, because the stored objects hold only
+ * what differs from a default: a setting switched back to its default is a key
+ * that disappeared, and comparing the stored objects would see a removal rather
+ * than the value the viewer now has to take.
+ *
+ * @returns {Object} `{python_name: new value}`, only the settings that changed
+ */
+export function changedSettings(before, after) {
+  const old = withDefaults(before);
+  const now = withDefaults(after);
+  const changed = {};
+  for (const key of Object.keys(now)) {
+    if (!same(old[key], now[key])) {
+      changed[key] = clone(now[key]);
+    }
+  }
+  return changed;
+}
+
+/**
  * A typed value from what a control produced, or null when it is not usable.
  *
  * Null rather than a default, so a caller can tell "the user cleared it" from

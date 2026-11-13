@@ -76,11 +76,12 @@ import { afterNativeDialog, bounceActivation } from "./nativedialog.js";
 import { closeOnBackdropClick } from "./backdrop.js";
 import { holdNativeLink, whileNativeDialog } from "./nativelink.js";
 import { refreshToolbarTitles } from "./toolbar.js";
-import { restartViewer } from "./viewer/viewer.js";
+import { applySettings, restartViewer } from "./viewer/viewer.js";
 import { setThemePreference, themePreference } from "./theme.js";
 import {
   GROUPS as VIEWER_GROUPS,
   MODIFIERS,
+  changedSettings,
   STORAGE_KEY as VIEWER_KEY,
   parseValue,
   toStore,
@@ -1117,8 +1118,12 @@ ${VIEWER_GROUPS.map(
     }
 
     const viewerStored = toStore(readViewerControls());
-    if (JSON.stringify(viewerStored) !== JSON.stringify(getSetting(VIEWER_KEY) ?? {})) {
+    const viewerBefore = getSetting(VIEWER_KEY) ?? {};
+    if (JSON.stringify(viewerStored) !== JSON.stringify(viewerBefore)) {
       await setSetting(VIEWER_KEY, viewerStored);
+      // And onto the open viewer, or the value it reports would win over the
+      // stored one at every later show.
+      applySettings(changedSettings(viewerBefore, viewerStored));
     }
 
     const chosen = {};

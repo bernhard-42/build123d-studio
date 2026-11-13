@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 
 import {
   GROUPS,
+  changedSettings,
   SETTINGS,
   defaultFor,
   defaults,
@@ -103,6 +104,26 @@ test("the keymap compares by value, not by identity", () => {
     toStore({ modifier_keys: { ...asDefault, alt: "metaKey" } }),
     { modifier_keys: { ...asDefault, alt: "metaKey" } },
   );
+});
+
+test("the settings that changed are the ones whose effective value differs", () => {
+  assert.deepEqual(changedSettings({}, { pan_speed: 2 }), { pan_speed: 2 });
+  assert.deepEqual(changedSettings({ pan_speed: 2, axes: true }, { pan_speed: 3, axes: true }), { pan_speed: 3 });
+  assert.deepEqual(changedSettings({ axes: true }, { axes: true }), {});
+});
+
+test("a setting switched back to its default is a change, though its key disappears", () => {
+  // toStore drops a value equal to its default, so going back to the default
+  // removes the key - and the open viewer still has to take the default.
+  assert.equal(defaults().cursor_pivot, true);
+  assert.deepEqual(changedSettings({ cursor_pivot: false }, {}), { cursor_pivot: true });
+});
+
+test("the keymap counts as changed by value, not by identity", () => {
+  const map = withDefaults({}).modifier_keys;
+  assert.deepEqual(changedSettings({ modifier_keys: { ...map } }, { modifier_keys: { ...map } }), {});
+  const moved = { ...map, meta: "ctrlKey" };
+  assert.deepEqual(changedSettings({}, { modifier_keys: moved }), { modifier_keys: moved });
 });
 
 test("what the dialog shows is the defaults with the stored values over them", () => {

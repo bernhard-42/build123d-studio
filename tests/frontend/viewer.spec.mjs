@@ -267,20 +267,19 @@ test.describe("the modifier keys the viewer is built with", () => {
     await expect(page.locator("#settings-apply")).toBeHidden();
   };
 
-  test("changing the keys in Settings takes effect at the next show, not before", async ({ page }) => {
-    // The keys are a construction-time option the viewer is given once, and a
-    // show re-applies theme, glass and tools and nothing more - so until now a
-    // change took effect at the next startup and never before, on every
-    // platform. It now travels the way every other viewer setting does: the
-    // next show's header carries the map the kernel read from the file just
-    // written, and the render puts that map onto the viewer. Applying the
-    // dialog changes nothing on screen by itself.
+  test("changing the keys in Settings takes effect at once, and a later show keeps them", async ({ page }) => {
+    // Apply puts the changed settings onto the open viewer (the core page's
+    // `settings` message), the keys among them. Before, the keys waited for
+    // the next show - and every other setting the viewer reports never took
+    // effect while a model was shown, because the reported old value won over
+    // the stored one at each show.
     const { sidecar } = await open(page, { files: FILES, settings: { workspace: WORKSPACE } });
     await renderModel(page, sidecar);
     expect(await help(page)).toContain(key("Cmd") + DRAG);
 
     await changeMetaTo(page, "ctrlKey");
-    expect(await help(page)).toContain(key("Cmd") + DRAG);
+    await expect.poll(() => help(page)).toContain(key("Ctrl") + DOUBLE_CLICK);
+    expect(await help(page)).not.toContain(key("Cmd"));
 
     // The kernel would answer workspace_config() from the file just written;
     // the harness's model carries its header, so give it the changed keymap
@@ -432,3 +431,49 @@ test.describe("Restart viewer", () => {
   });
 });
 
+
+test.describe("viewer settings changed in Settings", () => {
+  // Once a model is shown, every show merges the viewer's reported state over
+  // the stored settings, so a value the viewer reports wins. Before Apply put
+  // the changes onto the open viewer, a changed rotate or pan setting stayed
+  // at its old value until the viewer was rebuilt, whatever was shown next.
+  const latestStatus = (sidecar) => {
+    const frames = sidecar.received.filter((frame) => frame.type === "viewer.changes");
+    return frames.length === 0 ? {} : (frames[frames.length - 1].changes ?? {});
+  };
+
+  test("reach the open viewer at once, also when one goes back to its default", async ({ page }) => {
+    const { sidecar } = await open(page, {
+      files: FILES,
+      settings: { workspace: WORKSPACE, viewer: { cursor_pivot: false } },
+    });
+    // Shown as a real show would be with that setting stored: the kernel puts
+    // it into the header under the renderer's name.
+    sidecar.sendBinary(KIND_MODEL, PAYLOAD, {
+      ...MODEL.header,
+      config: { ...(MODEL.header.config ?? {}), cursorPivot: false },
+    });
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          String(globalThis.__NEUTRALINO_STUB__.wrote("/appdata/build123d-studio/build123d-studio.log") ?? "")))
+      .toContain("Model rendered");
+    await expect.poll(() => latestStatus(sidecar).cursor_pivot).toBe(false);
+    expect(latestStatus(sidecar).pan_speed).toBe(1);
+
+    await page.locator("#btn-settings").click();
+    await page.locator("#tab-viewer").click();
+    // Back to the default: the key disappears from what is stored, and the
+    // viewer still has to hear about it.
+    await page.locator("#viewer-cursor_pivot").check();
+    await page.locator("#viewer-pan_speed").fill("2");
+    await page.locator("#settings-apply").click();
+    await expect(page.locator("#settings-apply")).toBeHidden();
+
+    await expect.poll(() => latestStatus(sidecar).pan_speed).toBe(2);
+    expect(latestStatus(sidecar).cursor_pivot).toBe(true);
+    const stored = await page.evaluate(() =>
+      JSON.parse(String(globalThis.__NEUTRALINO_STUB__.wrote("/appdata/build123d-studio/settings.json") ?? "{}")));
+    expect(stored.viewer).toEqual({ pan_speed: 2 });
+  });
+});

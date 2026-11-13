@@ -243,12 +243,35 @@ function modifierKeys() {
  * Through the page's "ui" path - the one `set_viewer_config()` takes - which
  * is the only route to a viewer that already exists: `setKeyMap` is reached
  * from there and from construction, and from nowhere in a show. Called after
- * every render with the keymap that show was computed with, so a changed
- * setting reaches the viewer when the next show does, as every other viewer
- * setting does - those travel in the render options, the keymap alone does not.
+ * every render with the keymap that show was computed with, so a keymap given
+ * to `show` reaches the viewer as every other show option does - those travel
+ * in the render options, the keymap alone does not. A keymap changed in the
+ * Settings dialog arrives at once, through `applySettings`.
  */
 function applyModifierKeys(keymap) {
   page.handleMessage({ type: "ui", config: { keymap } });
+}
+
+/**
+ * Put viewer settings changed in the Settings dialog onto the open viewer.
+ *
+ * Without this a change never took effect while a model was shown: the next
+ * show merges the viewer's reported state over the stored settings, so the old
+ * value the viewer reports wins. The core page translates the Python names,
+ * applies what an open viewer can take, and leaves the rest - the render-time
+ * settings, whose old value is not reported - to the next show. The viewer then
+ * reports the new values, so the next show keeps them.
+ *
+ * Only the changed settings: sending all of them would undo what the user
+ * changed at the viewer's own toolbar.
+ *
+ * @param {Object} changed  `{python_name: value}`, as `changedSettings` gives it
+ */
+export function applySettings(changed) {
+  if (page === null || Object.keys(changed).length === 0) {
+    return;
+  }
+  page.handleMessage({ type: "settings", config: changed });
 }
 
 export function showLogo() {
