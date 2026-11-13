@@ -60,6 +60,16 @@ const EXTRAS = [
     licence: "Apache-2.0",
     url: "https://raw.githubusercontent.com/google/material-design-icons/master/LICENSE",
   },
+  {
+    name: "Codicons",
+    holder: "Microsoft Corporation",
+    what:
+      "The icon font Monaco draws the editor's icons with, shipped inside the " +
+      "monaco-editor package. Monaco's own notices do not cover it: the icons " +
+      "come from microsoft/vscode-codicons under their own licence.",
+    licence: "CC-BY-4.0",
+    url: "https://raw.githubusercontent.com/microsoft/vscode-codicons/main/LICENSE",
+  },
 ];
 
 async function fetchText(url) {
@@ -95,12 +105,9 @@ console.log("ok");
 
 const document = `# Third-party licences
 
-build123d Studio is Apache-2.0; see LICENSE. The components below are
-redistributed inside each package and carry their own terms.
+build123d Studio is Apache-2.0; see LICENSE. The components below are redistributed inside each package and carry their own terms.
 
-The Python packages the application installs - build123d, OCP, ocp_vscode and
-the rest - are **not** included here. They are downloaded into your own
-environment on first start and are never redistributed by this project.
+The Python packages the application installs - build123d, OCP, ocp-viewer-core, ocp-tessellate and the rest - are **not** included here. They are downloaded into your own environment on first start and are never redistributed by this project.
 
 ${sections.join("\n")}
 ## Bundled npm packages

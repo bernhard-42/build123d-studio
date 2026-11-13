@@ -6,5 +6,6 @@ THIRD_PARTY_LICENSES.md for the components redistributed in each package and
 their respective licences.
 
 The Python packages this application installs at first start - build123d,
-OCP, ocp_vscode, ocp_tessellate and their dependencies - are downloaded into
-the user's own environment and are not redistributed as part of this product.
+OCP, ocp-viewer-core, ocp-tessellate and their dependencies - are downloaded
+into the user's own environment and are not redistributed as part of this
+product.
