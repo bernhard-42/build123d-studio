@@ -215,6 +215,7 @@ async function offerRestartIfItDidNotStop() {
       cancel: "Keep waiting",
     });
     if (answer === "confirm") {
+      log.info("Kernel restart requested after an interrupt that did not stop it");
       await ipc.send("kernel.restart");
     }
   } finally {
@@ -356,6 +357,9 @@ export function interruptKernel(source = "toolbar") {
 
 /** Restart the kernel. The toolbar button and Shift-Alt-Mod-R are the same act. */
 export function restartKernel() {
+  // Logged, like an interrupt: a restart nobody can account for afterwards
+  // reads in the log as the kernel restarting by itself.
+  log.info(`Kernel restart requested, kernel ${kernelState()}`);
   return withErrorReporting("Restart", async () => ipc.send("kernel.restart"));
 }
 

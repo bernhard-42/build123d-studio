@@ -62,6 +62,28 @@ class StallWatchTest(unittest.TestCase):
 
         self.assertIn("finished after", self.said[-1])
 
+    def test_an_abandoned_watch_closes_the_sentence_and_goes_quiet(self):
+        # A request sent to a kernel that was then replaced: its answer cannot
+        # come, and without this the watch reported a stall for ever, about a
+        # kernel that was no longer the one it waited on.
+        watch = self.watch().start()
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and len(self.said) == 0:
+            time.sleep(0.01)
+        watch.abandon("the kernel was restarted")
+        said = len(self.said)
+        time.sleep(0.2)
+
+        self.assertIn("abandoned after", self.said[-1])
+        self.assertIn("the kernel was restarted", self.said[-1])
+        self.assertEqual(len(self.said), said, self.said)
+
+    def test_an_abandoned_watch_that_never_reported_says_nothing(self):
+        watch = self.watch(first=5).start()
+        watch.abandon("the kernel was restarted")
+        time.sleep(0.2)
+        self.assertEqual(self.said, [])
+
     def test_a_description_that_raises_is_reported_rather_than_lost(self):
         # It runs on a timer thread, where an exception goes nowhere at all -
         # and it is asked precisely when the process is in a state nobody

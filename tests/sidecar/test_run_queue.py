@@ -75,6 +75,10 @@ class FakeKernel:
                 return answer
         return None
 
+    def restart(self):
+        """A kernel that came back. on_restart starts a console only on True."""
+        return True
+
 
 class RunQueueTest(unittest.TestCase):
     def setUp(self):
@@ -247,3 +251,51 @@ class RunQueueTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RestartForgetsRunsTest(unittest.TestCase):
+    """A restart takes the runs handed to the old kernel with it.
+
+    His report: a kernel that did not answer was interrupted, then restarted,
+    and the next run on the new kernel worked - and the toolbar read busy for
+    ever. The two runs sent to the old kernel were still pending, so the new
+    run's idle took the oldest of them as running and said busy.
+    """
+
+    def setUp(self):
+        root = tempfile.mkdtemp(prefix="studio-restart-runs-")
+        instance = Instance(root)
+        instance.claim()
+        self.addCleanup(instance.release)
+        self.sidecar = Sidecar(env_root=root, app_dir=root, instance=instance, settings_path=os.path.join(root, "settings.json"))
+        self.channel = FakeChannel()
+        self.sidecar.channel = self.channel
+        self.sidecar.kernel = FakeKernel()
+        self.sidecar.console = None
+        # The replacement console is a real pty in production.
+        self.sidecar.console_start = lambda: None
+
+    def last_status(self):
+        statuses = [payload for message_type, payload in self.channel.sent if message_type == "kernel.status"]
+        return statuses[-1]
+
+    def test_the_first_run_on_the_new_kernel_ends_idle(self):
+        # Sent to a kernel that never answered either of them.
+        self.sidecar._accept_run("dead-1")
+        self.sidecar._accept_run("dead-2")
+
+        self.sidecar.on_restart({})
+
+        self.sidecar._accept_run("new")
+        self.sidecar.on_iopub(status("busy", "new"))
+        self.sidecar.on_iopub(status("idle", "new"))
+
+        self.assertEqual(self.last_status(), {"state": "idle", "queued": 0})
+        self.assertEqual(self.sidecar.queued_runs(), 0)
+
+    def test_and_nothing_is_watched_for_the_old_kernel(self):
+        self.sidecar.watch_stall("dead-1-request-id", "Execute")
+
+        self.sidecar.on_restart({})
+
+        self.assertEqual(self.sidecar._stalls, {})

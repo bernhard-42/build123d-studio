@@ -71,6 +71,25 @@ class StallWatch:
         if reported:
             self._report(f"{self.what} finished after {waited:.0f}s")
 
+    def abandon(self, reason):
+        """It will never arrive: stop watching, and close the sentence if one was started.
+
+        For a request whose answer cannot come any more - sent to a kernel that
+        has since been replaced. Left running, the watch would report a stall
+        for ever, describing a kernel that is not the one it was waiting on.
+        """
+        with self._lock:
+            if self._started is None:
+                return
+            waited = time.monotonic() - self._started
+            self._started = None
+            if self._timer is not None:
+                self._timer.cancel()
+                self._timer = None
+            reported = self._reported
+        if reported:
+            self._report(f"{self.what} abandoned after {waited:.0f}s: {reason}")
+
     def _arm(self, delay):
         """Caller holds the lock."""
         timer = threading.Timer(delay, self._fire)

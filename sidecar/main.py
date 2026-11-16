@@ -523,11 +523,7 @@ class Sidecar:
         # status is forwarded only for an execute_request, so before this the
         # toolbar read "starting" until the first Run - for the whole session if
         # somebody only ever used the console.
-        with self._runs_lock:
-            # A restart takes the queue with it: the requests were sent to a
-            # kernel that is gone, and nothing will ever report them finished.
-            self._pending_runs.clear()
-            self._running_run = None
+        self._forget_runs()
         self.send_kernel_status("idle")
 
     def kernel_start(self):
@@ -865,6 +861,25 @@ class Sidecar:
             self._pending_runs.append(msg_id)
             if self._running_run is None:
                 self._running_run = msg_id
+
+    def _forget_runs(self):
+        """Drop every run of ours: they were sent to a kernel that is gone.
+
+        Nothing will ever report them finished, so kept they would decide the
+        kernel's state for the rest of the session: the next run's idle takes
+        the oldest pending one as running, and the toolbar reads busy for ever.
+        """
+        with self._runs_lock:
+            self._pending_runs.clear()
+            self._running_run = None
+
+    def abandon_stalls(self, reason):
+        """Stop watching every request in flight: its answer cannot come any more."""
+        with self._stalls_lock:
+            watches = list(self._stalls.values())
+            self._stalls.clear()
+        for watch in watches:
+            watch.abandon(reason)
 
     def queued_runs(self):
         """How many of our runs are waiting for the kernel to reach them."""
@@ -1711,6 +1726,10 @@ class Sidecar:
         # completion would ask the replacement nothing for the rest of the
         # session, and the live half would quietly stop contributing.
         self._kernel_busy.clear()
+        # And so did every run handed to it, and every request being watched:
+        # their idle and their reply will never come.
+        self._forget_runs()
+        self.abandon_stalls("the kernel was restarted")
         try:
             if self.console is not None:
                 self.console.stop()
