@@ -1102,6 +1102,13 @@ export function initEditor() {
     // reopened file, the sample on a first run, or an empty one - and opening it
     // is what gives the editor a model.
     model: null,
+    // Hovers, suggestions and parameter hints are drawn fixed to the window
+    // rather than inside the editor. Every pane clips its content
+    // (`.pane { overflow: hidden }`), so a hover wider than the editor was cut
+    // off at its edge, where the viewer starts, and looked hidden behind it.
+    // Fixed, they draw over the viewer; nothing between them and the window
+    // sets a transform or `contain`, which would clip them again.
+    fixedOverflowWidgets: true,
     // No "language" here: that option only ever described the model Monaco
     // creates when it is not given one, and it is not given one. Every buffer's
     // model is created as Python above.

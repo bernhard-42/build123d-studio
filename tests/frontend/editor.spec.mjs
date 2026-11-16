@@ -1524,6 +1524,41 @@ test.describe("the language features reach the screen", () => {
     await expect(hover).toContainText("SENTINEL_HOVER");
   });
 
+  test("a hover wider than the editor is drawn over the viewer, not cut off at its edge", async ({ page }) => {
+    // Reported as a tooltip "hidden behind the viewer": every pane clips its
+    // content, and Monaco drew its hovers inside the editor, so a wide one
+    // ended at the editor's edge. Asked of the browser's hit testing, which
+    // honours both clipping and stacking: a point on the hover past the edge
+    // has to reach the hover, not the viewer.
+    const { sidecar } = await openApp(page);
+    await expect(page.locator(".pane-viewer canvas").first()).toBeVisible();
+    const words = Array.from({ length: 60 }, (_, i) => `word${i}`).join(" ");
+    sidecar.answer("editor.hover", () => ({ hover: { value: `WIDEHOVER ${words}` } }));
+
+    // The last token of the last line, the one nearest the viewer.
+    const tokens = page.locator(".view-line span span");
+    const token = await tokens.nth((await tokens.count()) - 1).boundingBox();
+    await page.mouse.move(token.x + token.width / 2, token.y + token.height / 2);
+    await page.mouse.move(token.x + token.width / 2 + 1, token.y + token.height / 2);
+    const hover = page.locator(".monaco-hover:not(.hidden)");
+    await expect(hover).toContainText("WIDEHOVER");
+
+    const reached = await page.evaluate(() => {
+      const shown = [...document.querySelectorAll(".monaco-hover")].find((h) => !h.classList.contains("hidden"));
+      const box = shown.getBoundingClientRect();
+      const edge = document.getElementById("pane-editor").getBoundingClientRect().right;
+      if (box.right < edge + 20) {
+        return `the hover does not reach past the editor (${Math.round(box.right)} <= ${Math.round(edge)})`;
+      }
+      const hit = document.elementFromPoint(Math.min(box.right - 10, edge + 40), (box.top + box.bottom) / 2);
+      if (hit !== null && shown.contains(hit)) {
+        return "the hover";
+      }
+      return hit !== null && document.getElementById("pane-viewer").contains(hit) ? "the viewer" : String(hit);
+    });
+    expect(reached).toBe("the hover");
+  });
+
   test("a pushed diagnostic becomes a squiggle in the gutter", async ({ page }) => {
     // Diagnostics are pushed rather than requested, so this is a subscription.
     // The conversion is the interesting part and is unit-tested: LSP counts from

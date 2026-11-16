@@ -44,6 +44,7 @@ What changed in each release, for the people using it. Anything not visible from
         - **On Linux without a file dialog program**: when none of zenity, kdialog, matedialog or qarma is installed - the programs that draw file dialogs there - a banner says so and names what to install. Open, Save As, Import and Export did nothing without one, with no message.
         - **Studio could miss the moment the kernel finished starting**, and then not read the viewer defaults or the Import and Export options for the rest of the session ("could not be read from the kernel" on an idle kernel). It now notices either of the two signals the kernel sends.
         - **After a kernel restart the toolbar no longer stays on busy**: runs sent to the kernel that was replaced still counted as waiting, so the first run on the new kernel finished as busy, and the log kept reporting the old runs as not finished. A restart now drops them.
+        - **A hover wider than the editor is no longer cut off** where the viewer starts; it is drawn over the viewer.
 
 - **Inherited changes**
     - **from ocp-tessellate 3.7.0** (was 3.6.3)
