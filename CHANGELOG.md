@@ -4,62 +4,84 @@ What changed in each release, for the people using it. Anything not visible from
 
 ## 0.10.0 (unreleased)
 
-**Objects of other CAD kernels**
+- **Viewer changes**
 
-- **Show and measure objects of other kernels**: objects of CAD kernels other than OCCT are shown, and measured by the Distance and Properties tools from that kernel's own geometry. The first plugin is [ocp-viewer-smlibpy](https://github.com/bernhard-42/ocp-viewer-smlibpy) for SMLib. A plugin must also be installed where the viewer's measurement backend runs, which can be another environment than the script's. Nothing changes for OCCT objects.
-- **Requires ocp-viewer-core 1.2 and ocp-tessellate 3.7**: the Python environment depends on `ocp-viewer-core>=1.2.0,<1.3.0` (was `>=1.1.2,<1.2.0`) and `ocp-tessellate>=3.7.0` (was `>=3.6.3`); ocp-tessellate 3.7 brings the kernel plugins.
+    - **Viewer**
+        - **Kernel plugins**: a plugin must also be installed where the viewer's measurement backend runs, which can be another environment than the script's.
+        - **Rotate around and zoom towards the cursor**: settings **Rotate around the point under the cursor** and **Zoom towards the cursor** under Camera and controls in the Viewer settings, both on by default.
 
-**three-cad-viewer 5.2**
+    - **Export and import**
+        - **Export…**: in the variable explorer's right-click menu, writes a build123d shape, an assembly or what a builder built to STEP, STL, BREP, OBJ or GLTF. The dialog shows the options of build123d's `export_*` function for the chosen format with their defaults, remembers the last format and options, and runs the export as a line in the console that can be copied into a script.
+        - **Import…**: at the foot of the File menu, reads a BREP, DXF, STEP, STL or SVG file into a variable. After the file, a dialog asks for the variable's name (the file's, by default) and shows the options of build123d's `import_*` function for that format with their defaults, and the import runs as `name = import_…(…)` in the console and shows the result. **Add import code at cursor position** (off by default) also puts the import statement into the open file at the caret - without the show, and with an import line only if the file does not import the importer yet. Cancel in either dialog ends it.
+        - **Show, Copy and Export… inside containers**: rows inside a list, tuple, dict or build123d assembly can be selected like a variable and are reached by their Python expression, such as `asm.children[1]` or `parts['lid']`. Rows that have no index - a shape's topology, a set's elements - are reached by their position, as in `list(asm.children[0])[0]`. A part inside an assembly is shown and exported at its own location, which is relative to its parent assembly, and the viewer and the suggested file name use its label.
 
-- **Rotate around and zoom towards the cursor**: a rotate drag that starts on the model turns around the point under the cursor, and one that starts on the background around the centre of the visible objects; while it lasts, a small black sphere marks that point. The wheel, trackpad pinch and middle-button drag zoom towards the cursor. Both are on by default and switch separately: settings **Rotate around the point under the cursor** and **Zoom towards the cursor** under Camera and controls in the Viewer settings, and keywords `cursor_pivot` and `zoom_to_cursor` of `show`, `show_object`, `show_objects` and `set_defaults`.
-- **A double-click picks what hover shows**: with the shape filter on All, a double-click on an edge picks that edge, and the info panel names it. Hide, isolate and recentre still act on the whole object.
-- **More of the model can be clicked**: faces that carry an image, and the back sides of faces and shells.
-- **Copying a selection names its objects**: a selection of one kind on one object is copied as before, e.g. `6,16,7,17`. A selection across several objects or kinds puts a line `# <object path> <kind>` before each one's indices, where a single list used to mix them. Turning the select tool off or pressing Escape leaves the clipboard as it was.
-- **Selected vertices are drawn larger**: 8 px instead of 4, also while hovered.
-- **The help names the modifier keys as the keyboard labels them**: Cmd and Option on macOS, Win and Alt on Windows, Super and Alt on Linux.
-- **Readable texts**: geometry types in the status line and the properties panel have readable names, e.g. `B-spline surface`, and the status line shows the clicked point with the copy key of the platform (`Cmd+C` on macOS, `Ctrl+C` elsewhere).
+    - **Restarting the backend and the viewer**
+        - **Restart backend**: in a new Backend section of the Application settings, restarts the measurement backend, which loads its libraries and kernel plugins again; the model on screen and the active tool carry over.
+        - **Restart viewer**: in the Application settings, builds the viewer again and shows the start screen, as at startup, for when a JavaScript error has left it unusable; it used to take a restart of Studio.
 
-**Export and import**
+    - **Editor and debugger**
+        - **Show minimap**: a new setting under View in the Editor settings (default on) turns the editor's minimap off or on, at once and for the next start.
+        - **Saving before debugging**: starting and restarting the debugger save every changed file, not only the one on screen, as VS Code does; a file that has never been saved is saved only when it is on screen. A restart used to run the version on disk.
 
-- **Export…**: in the variable explorer's right-click menu, writes a build123d shape, an assembly or what a builder built to STEP, STL, BREP, OBJ or GLTF. The dialog shows the options of build123d's `export_*` function for the chosen format with their defaults, remembers the last format and options, and runs the export as a line in the console that can be copied into a script.
-- **Import…**: at the foot of the File menu, reads a BREP, DXF, STEP, STL or SVG file into a variable. After the file, a dialog asks for the variable's name (the file's, by default) and shows the options of build123d's `import_*` function for that format with their defaults, and the import runs as `name = import_…(…)` in the console and shows the result. **Add import code at cursor position** (off by default) also puts the import statement into the open file at the caret - without the show, and with an import line only if the file does not import the importer yet. Cancel in either dialog ends it.
-- **Show, Copy and Export… inside containers**: rows inside a list, tuple, dict or build123d assembly can be selected like a variable and are reached by their Python expression, such as `asm.children[1]` or `parts['lid']`. Rows that have no index - a shape's topology, a set's elements - are reached by their position, as in `list(asm.children[0])[0]`. A part inside an assembly is shown and exported at its own location, which is relative to its parent assembly, and the viewer and the suggested file name use its label.
+    - **Changes**
+        - **Requires ocp-viewer-core 1.2 and ocp-tessellate 3.7**: the Python environment depends on `ocp-viewer-core>=1.2.0,<1.3.0` (was `>=1.1.2,<1.2.0`) and `ocp-tessellate>=3.7.0` (was `>=3.6.3`); ocp-tessellate 3.7 brings the kernel plugins.
+        - **build123d 0.13 on OCP 8**: the Python environment depends on `build123d>=0.13.0` (was `>=0.11.1`), which runs on OCP 8 (`cadquery-ocp-novtk` 8.0); the OCP type stubs move to 8.0 with it.
+        - **ocp-viewer-core has no source picker any more** in the Packages settings: to use a local checkout or the GitHub branch, add it to Additional packages like any other package, for example `git+https://github.com/bernhard-42/ocp-viewer-core@main`. A choice made in the picker moves there by itself at the next start.
+        - **uv 0.13.5** (was 0.12.7): it no longer trusts a root certificate whose intermediate was compromised and rejects certificate chains containing the compromised intermediate keys ([GHSA-hq85-5cpj-mr62](https://github.com/astral-sh/uv/security/advisories/GHSA-hq85-5cpj-mr62)). An existing installation replaces its uv at the next start.
+        - **CPython 3.14.9** (was 3.14.6): the security release whose bundled pip trusts the same root no longer. An existing environment is rebuilt on it at the next start: a few seconds from the download cache, then the libraries are checked once, as after any package change.
+        - **`certifi>=2026.10.19`**: HTTPS made from Python - `requests`, which build123d brings - no longer trusts that root either.
 
-**Restarting the backend and the viewer**
+    - **Fixes**
+        - **Viewer settings changed in Settings take effect at once**: the open viewer takes them on Apply, the modifier keys included. Before, a setting such as the rotate or pan speed kept its old value while a model was shown, until the viewer was rebuilt. Settings that shape how a model is drawn - for example the tolerances, the default colours, the up direction and the grid planes - take effect with the next show.
+        - **Showing an unchanged shape again**, or a moved or rotated copy of it, takes its tessellation from the cache instead of computing it again (ocp-tessellate 3.6.3).
+        - **`show(1)`, `show((1, 2, 3))` and other calls with nothing to draw** no longer raise "nothing to show"; they do nothing, as in the other viewers.
+        - **Installing or upgrading packages also restarts the measurement backend**; it used to keep the old libraries until Studio was restarted.
+        - **The measurement backend no longer hangs** when a library or a kernel plugin prints to stdout, from native code or while it is being imported.
+        - **After the measurement backend restarts, the active Distance or Properties tool keeps answering**; it used to answer nothing until the tool was switched off and on.
+        - **Debugging a script whose libraries fork or start Python child processes works**: smlibpy's kernel steps, for example, failed with "the kernel step failed in a copy of this process". The child processes run without the debugger.
+        - **After Save As or another file dialog, and when the window comes back to the front**, typing continues where the caret was; it used to land at the top of the file.
+        - **Staying in a file dialog or a message box for half a minute or more** no longer brings up "This window lost its link to the application": the check of that link pauses while such a dialog is open.
+        - **On Linux without a file dialog program**: when none of zenity, kdialog, matedialog or qarma is installed - the programs that draw file dialogs there - a banner says so and names what to install. Open, Save As, Import and Export did nothing without one, with no message.
+        - **Studio could miss the moment the kernel finished starting**, and then not read the viewer defaults or the Import and Export options for the rest of the session ("could not be read from the kernel" on an idle kernel). It now notices either of the two signals the kernel sends.
 
-- **Restart backend**: in a new Backend section of the Application settings, restarts the measurement backend, which loads its libraries and kernel plugins again; the model on screen and the active tool carry over.
-- **Restart viewer**: in the Application settings, builds the viewer again and shows the start screen, as at startup, for when a JavaScript error has left it unusable; it used to take a restart of Studio.
-
-**Editor and debugger**
-
-- **Show minimap**: a new setting under View in the Editor settings (default on) turns the editor's minimap off or on, at once and for the next start.
-- **Saving before debugging**: starting and restarting the debugger save every changed file, not only the one on screen, as VS Code does; a file that has never been saved is saved only when it is on screen. A restart used to run the version on disk.
-
-**Changes**
-
-- **build123d 0.13 on OCP 8**: the Python environment depends on `build123d>=0.13.0` (was `>=0.11.1`), which runs on OCP 8 (`cadquery-ocp-novtk` 8.0); the OCP type stubs move to 8.0 with it.
-- **ocp-viewer-core has no source picker any more** in the Packages settings: to use a local checkout or the GitHub branch, add it to Additional packages like any other package, for example `git+https://github.com/bernhard-42/ocp-viewer-core@main`. A choice made in the picker moves there by itself at the next start.
-- **uv 0.13.5** (was 0.12.7): it no longer trusts a root certificate whose intermediate was compromised and rejects certificate chains containing the compromised intermediate keys ([GHSA-hq85-5cpj-mr62](https://github.com/astral-sh/uv/security/advisories/GHSA-hq85-5cpj-mr62)). An existing installation replaces its uv at the next start.
-- **CPython 3.14.9** (was 3.14.6): the security release whose bundled pip trusts the same root no longer. An existing environment is rebuilt on it at the next start: a few seconds from the download cache, then the libraries are checked once, as after any package change.
-- **`certifi>=2026.10.19`**: HTTPS made from Python - `requests`, which build123d brings - no longer trusts that root either.
-
-**Fixes**
-
-- **Showing an unchanged shape again**, or a moved or rotated copy of it, takes its tessellation from the cache instead of computing it again (ocp-tessellate 3.6.3).
-- **`show(1)`, `show((1, 2, 3))` and other calls with nothing to draw** no longer raise "nothing to show"; they do nothing, as in the other viewers.
-- **Installing or upgrading packages also restarts the measurement backend**; it used to keep the old libraries until Studio was restarted.
-- **The measurement backend no longer hangs** when a library or a kernel plugin prints to stdout, from native code or while it is being imported.
-- **After the measurement backend restarts, the active Distance or Properties tool keeps answering**; it used to answer nothing until the tool was switched off and on.
-- **Debugging a script whose libraries fork or start Python child processes works**: smlibpy's kernel steps, for example, failed with "the kernel step failed in a copy of this process". The child processes run without the debugger.
-- **After Save As or another file dialog, and when the window comes back to the front**, typing continues where the caret was; it used to land at the top of the file.
-- **Staying in a file dialog or a message box for half a minute or more** no longer brings up "This window lost its link to the application": the check of that link pauses while such a dialog is open.
-- **On Linux without a file dialog program**: when none of zenity, kdialog, matedialog or qarma is installed - the programs that draw file dialogs there - a banner says so and names what to install. Open, Save As, Import and Export did nothing without one, with no message.
-- **Studio could miss the moment the kernel finished starting**, and then not read the viewer defaults or the Import and Export options for the rest of the session ("could not be read from the kernel" on an idle kernel). It now notices either of the two signals the kernel sends.
-- **Viewer settings changed in Settings take effect at once**: the open viewer takes them on Apply, the modifier keys included. Before, a setting such as the rotate or pan speed kept its old value while a model was shown, until the viewer was rebuilt. Settings that shape how a model is drawn - for example the tolerances, the default colours, the up direction and the grid planes - take effect with the next show.
-- **Typing in the editor or the console no longer changes the viewer**: with a model on screen, the letters a, v, e, f and s also switched the viewer's shape filter, and Backspace with the select tool on removed the last selected element. These keys now act only when the viewer has the keyboard (three-cad-viewer 5.2).
-- **Object names containing `<`, `"` or `\`** broke the viewer's tree and info panel; they are shown as text (three-cad-viewer 5.2).
-- **Switching the background of the viewer's Studio mode from a solid color back to "Environment"** shows the environment again (three-cad-viewer 5.2).
-- **The viewer's help names the right shape filter key** for all types, `a` instead of `n` (three-cad-viewer 5.2).
+- **Inherited changes**
+    - **from ocp-tessellate 3.7.0** (was 3.6.3)
+        - Objects of CAD kernels other than OCCT are shown when the kernel's plugin is installed, alone or mixed with build123d, CadQuery and OCCT objects ([CAD kernel plugins](https://bernhard-42.github.io/ocp_viewer_docs/plugins/overview/)). The first plugin is [ocp-viewer-smlibpy](https://github.com/bernhard-42/ocp-viewer-smlibpy) for SMLib. Nothing changes for OCCT objects
+        - An object nothing can draw is left out, passed directly or inside a list, tuple or dict, and its type is named once per show, e.g. `show: skipped smlibpy.shapes.Part (no kernel plugin installed?)`. `None` and other builtin values stay silent, like numbers and strings
+        - Finding shared shapes no longer slows down with the square of their number
+        - Fix: a face that cannot be meshed no longer shifts the ids of the faces and edges after it, so clicking a face or edge reports that one and the Properties tool measures that one
+        - Fix: edges and vertices inside a located assembly are measured where they are drawn, not at the origin, and the view fits them where they are
+    - **from ocp-viewer-core 1.2.0** (was 1.1.3)
+        - The Distance and Properties tools measure objects of other kernels from that kernel's own geometry, through the kernel's plugin of the measurement backend. A distance between shapes of two kernels is one row saying so
+        - `cursor_pivot` and `zoom_to_cursor` switch rotating around and zooming towards the cursor off separately; they are arguments of `show`, `show_object`, `show_objects`, `set_defaults` and `set_viewer_config`, and carry over from show to show
+        - `set_viewer_config(shape_filter=...)` sets the topology filter, `"none"` (all), `"vertex"`, `"edge"`, `"face"` or `"solid"`, as the dropdown and the keys `a` / `v` / `e` / `f` / `s` do. Every new model resets it to `"none"`
+        - A selection copied with the select tool holds the indices for one object and one kind as before, e.g. `6,16,7,17`. For several objects or kinds it holds one labelled line per object and kind, `# <object path> <kind>` followed by its indices, where it used to mix them into one list that selected the wrong shapes
+        - `status()` reports the current selection (`selected`) and the last double-click pick (`lastPick`), each with a counter (`selection_seq`, `pick_seq`) that moves with every new one; a new model clears the last pick
+        - A `show` with nothing it can draw prints `show: No CAD objects to show` and sends nothing, so the viewer keeps its model
+    - **from three-cad-viewer 5.2.0** (was 5.1.3)
+        - A rotate drag that starts on the model turns the camera around the point under the cursor, one that starts on the background around the centre of the visible objects; a small black sphere marks the pivot while dragging. The wheel, trackpad pinch and middle-button drag zoom towards the cursor. Both are on by default; Reset and Recenter put the camera target back ([three-cad-viewer#48](https://github.com/bernhard-42/three-cad-viewer/pull/48), by @Xapphire13)
+        - On a touchscreen, a one-finger drag rotates around the point under the finger; two fingers zoom and pan
+        - The Info box lists the control type and how it rotates and zooms, and logs each change
+        - A double-click picks what the hover highlights: it follows the topology filter (All / Vertex / Edge / Face / Solid), and the bounding box wraps the picked face or edge. A vertex gets a marker, and the info panel names the picked element and shows a vertex's coordinates. A second double-click on the same element removes the box. With the filter on All and the cursor on or near an edge, the edge is picked (vertices before edges, edges before faces); hide (`meta`) and isolate (`shift`) still act on the whole object
+        - `lastPick` has the new fields `component`, the full path of what was picked, and `point`, the world coordinates of the double-clicked point, and it is sent on every double-click
+        - **Breaking:** `lastPick.boundingBox` and `lastPick.boundingSphere` describe the picked face, edge or vertex, no longer its object; a vertex has a box of size zero. With the filter on Solid, for hide and isolate, for objects that are faces, edges or vertices themselves, and for clicks in the tree they are the object's box as before
+        - With `cursor_pivot` on, `shift` + `meta` + double-click on the model no longer sets the camera target, since every rotation already turns around the point under the cursor; with `cursor_pivot` off it does, as before
+        - Image faces and the back sides of faces and open shells can be clicked, highlighted and copied like any face ([vscode-ocp-cad-viewer#248](https://github.com/bernhard-42/vscode-ocp-cad-viewer/issues/248))
+        - The status line shows the clicked point with the platform's copy key (`Cmd+C` on macOS, `Ctrl+C` elsewhere)
+        - Selected vertices are drawn larger (8 px instead of 4), also while hovered
+        - The help names the platform's modifier keys (`Cmd` / `Option` on macOS, `Win` on Windows, `Super` on Linux) and shows keys in code style
+        - Geometry types in the status line and the Properties panel read `B-spline surface` instead of `bspline` or `BSplineSurface`, and `Surface of revolution` instead of `surface of revolution`
+        - three.js r187 (was r184), postprocessing 6.39.6
+        - Fix: the topology filter keys `a` / `v` / `e` / `f` / `s` and the select tool's Escape and Backspace act only when the viewer has focus: Cmd-V, or a `v` typed elsewhere such as in a notebook cell, no longer sets the filter to Vertex, and Backspace in a text field no longer removes a selected element
+        - Fix: the measurement panel stays fully inside the viewer when it reopens at its previous position after a new model, a smaller viewer or a larger result
+        - Fix: turning the select tool off or pressing Escape reports the empty selection
+        - Fix: toolbar tooltips and the grid menu are no longer cut off at the toolbar's bottom edge in Safari and other WebKit browsers ([three-cad-viewer#47](https://github.com/bernhard-42/three-cad-viewer/pull/47), by @Xapphire13)
+        - Fix: object names containing `<`, `"` or `\` are shown literally, and their tree rows keep working
+        - Fix: the view no longer jumps at the first rotation after a `quaternion` that is not exactly unit length, nor again after every Reset
+        - Fix: switching the Studio background from a solid color back to Environment draws the environment again
+        - Fix: the help names the filter key for all object types correctly, `a`, and shows scrollbars only when it does not fit
+        - Fix: a two-finger pinch no longer rotates the view with the holroyd trackball
+        - Fix: a long press on the viewer no longer selects it in Safari on iPad and iPhone
 
 ## 0.9.0 (2026-10-13)
 
