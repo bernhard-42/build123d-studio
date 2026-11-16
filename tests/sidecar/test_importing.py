@@ -53,9 +53,13 @@ class ImportFormsTest(unittest.TestCase):
         self.assertEqual(svg["align"]["enum"], "Align")
         self.assertEqual(svg["label_by"], {**svg["label_by"], "kind": "text", "default": "id"})
 
-    def test_brep_dxf_and_step_have_no_options(self):
-        for name in ("BREP", "DXF", "STEP"):
-            self.assertEqual(forms()[name]["options"], [], name)
+    def test_brep_dxf_and_step_offer_what_their_importers_take(self):
+        # Everything after the file, which is each importer's first parameter -
+        # whatever this build123d's signature says, so a new keyword such as
+        # import_brep's `binary` reaches the dialog without a change here.
+        for name, function in (("BREP", bd.import_brep), ("DXF", bd.import_dxf), ("STEP", bd.import_step)):
+            taken = list(inspect.signature(function).parameters)[1:]
+            self.assertEqual([option["name"] for option in forms()[name]["options"]], taken, name)
 
 
 if __name__ == "__main__":

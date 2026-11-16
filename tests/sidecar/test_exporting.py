@@ -69,8 +69,12 @@ class FormsTest(unittest.TestCase):
         self.assertFalse(stl["tolerance"]["integer"])
         self.assertEqual(stl["tolerance"]["default"], default)
 
-    def test_brep_has_no_options(self):
-        self.assertEqual(forms()["BREP"]["options"], [])
+    def test_brep_offers_what_export_brep_takes(self):
+        # Whatever this build123d's signature says, besides the object and the
+        # path: none in 0.13.0, and `binary`, `version` and `triangulation`
+        # once build123d added them - the dialog follows without a change.
+        taken = [name for name in inspect.signature(bd.export_brep).parameters if name not in {"to_export", "file_path"}]
+        self.assertEqual([option["name"] for option in forms()["BREP"]["options"]], taken)
 
     def test_the_tooltip_comes_from_the_docstring(self):
         unit = options(forms()["STEP"])["unit"]
