@@ -53,6 +53,7 @@ What changed in each release, for the people using it. Anything not visible from
         - Finding shared shapes no longer slows down with the square of their number
         - Fix: a face that cannot be meshed no longer shifts the ids of the faces and edges after it, so clicking a face or edge reports that one and the Properties tool measures that one
         - Fix: edges and vertices inside a located assembly are measured where they are drawn, not at the origin, and the view fits them where they are
+        - Fix: a build123d builder (`BuildPart`, `BuildSketch`, `BuildLine`, `BuildSheet`) shown with `colors` is drawn in that color, not in its default color, and a part, sketch or sheet also takes the given `alphas`
     - **from ocp-viewer-core 1.2.0** (was 1.1.3)
         - The Distance and Properties tools measure objects of other kernels from that kernel's own geometry, through the kernel's plugin of the measurement backend. A distance between shapes of two kernels is one row saying so
         - `cursor_pivot` and `zoom_to_cursor` switch rotating around and zooming towards the cursor off separately; they are arguments of `show`, `show_object`, `show_objects`, `set_defaults` and `set_viewer_config`, and carry over from show to show
@@ -60,6 +61,10 @@ What changed in each release, for the people using it. Anything not visible from
         - A selection copied with the select tool holds the indices for one object and one kind as before, e.g. `6,16,7,17`. For several objects or kinds it holds one labelled line per object and kind, `# <object path> <kind>` followed by its indices, where it used to mix them into one list that selected the wrong shapes
         - `status()` reports the current selection (`selected`) and the last double-click pick (`lastPick`), each with a counter (`selection_seq`, `pick_seq`) that moves with every new one; a new model clears the last pick
         - A `show` with nothing it can draw prints `show: No CAD objects to show` and sends nothing, so the viewer keeps its model
+        - Fix: the Properties tool and the Distance tool's center-to-center put the center of a cylinder or cone face on its axis at the face's middle, not at an end of the surface such as the top of a hole; the center of a planar face is its center of mass, not one of its corners
+        - Fix: the Properties tool shows the vertex of a hyperbola, not its center
+        - Fix: `progress=None` in `show`, `show_object`, `show_objects` and `show_all` shows no progress, as documented; it printed the default progress
+        - Fix: `modes=Render.FACES` (one mode, not a list) applies to every object, as documented; it failed with "object of type 'Render' has no len()"
     - **from three-cad-viewer 5.2.0** (was 5.1.3)
         - A rotate drag that starts on the model turns the camera around the point under the cursor, one that starts on the background around the centre of the visible objects; a small black sphere marks the pivot while dragging. The wheel, trackpad pinch and middle-button drag zoom towards the cursor. Both are on by default; Reset and Recenter put the camera target back ([three-cad-viewer#48](https://github.com/bernhard-42/three-cad-viewer/pull/48), by @Xapphire13)
         - On a touchscreen, a one-finger drag rotates around the point under the finger; two fingers zoom and pan

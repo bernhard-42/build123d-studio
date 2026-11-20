@@ -1048,9 +1048,10 @@ node-gyp-build@^4.3.0:
   resolved "https://registry.yarnpkg.com/node-gyp-build/-/node-gyp-build-4.8.4.tgz#8a70ee85464ae52327772a90d66c6077a900cfc8"
   integrity sha512-LA4ZjwlnUblHVgq0oBF3Jl/6h/Nvs5fzBLwdEF4nuxnFdsfajde4WfxtJr3CaiH+F6ewcIB/q4jQ4UzPyid+CQ==
 
-ocp-viewer-core@../ocp-viewer-core/dist/ocp-viewer-core-v1.2.0.tgz:
+ocp-viewer-core@1.2.0:
   version "1.2.0"
-  resolved "../ocp-viewer-core/dist/ocp-viewer-core-v1.2.0.tgz#52979b21c1e7a1538db6f9ae05fb55680846a114"
+  resolved "https://registry.yarnpkg.com/ocp-viewer-core/-/ocp-viewer-core-1.2.0.tgz#5cd20ceb7112d17700269ebe3e28e463bbed0c26"
+  integrity sha512-gSVCrwqXziMa4V2XHJBEyDw+rw4Dy2WqgcuumGZA9dxSsHNlxZSob0vYTWLoB6Cmp084zeZ4kF76idaOYRz1Nw==
 
 once@^1.3.0:
   version "1.4.0"
@@ -1275,9 +1276,10 @@ tcp-port-used@^1.0.2:
     debug "4.3.1"
     is2 "2.0.1"
 
-three-cad-viewer@../three-cad-viewer/three-cad-viewer-5.2.0.tgz:
+three-cad-viewer@5.2.0:
   version "5.2.0"
-  resolved "../three-cad-viewer/three-cad-viewer-5.2.0.tgz#88516466851b0ed12a9d9de42fd2830b533a4352"
+  resolved "https://registry.yarnpkg.com/three-cad-viewer/-/three-cad-viewer-5.2.0.tgz#d081f11906fdcff906fb2176d3f4948d523e9fee"
+  integrity sha512-YTBTwo3jfjgqDmMObmifleqRDHX8C9ciD8T5RoD/fVnm8qQiFLVFQ/uO4eqRwYGyg9JDcRPVwu0B6GkOn6kKPg==
   dependencies:
     n8ao "1.10.1"
     postprocessing "6.39.6"
