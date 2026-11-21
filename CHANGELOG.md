@@ -45,6 +45,7 @@ What changed in each release, for the people using it. Anything not visible from
         - **Studio could miss the moment the kernel finished starting**, and then not read the viewer defaults or the Import and Export options for the rest of the session ("could not be read from the kernel" on an idle kernel). It now notices either of the two signals the kernel sends.
         - **After a kernel restart the toolbar no longer stays on busy**: runs sent to the kernel that was replaced still counted as waiting, so the first run on the new kernel finished as busy, and the log kept reporting the old runs as not finished. A restart now drops them.
         - **A hover wider than the editor is no longer cut off** where the viewer starts; it is drawn over the viewer.
+        - **Studio no longer crashes on Intel Macs** when it starts and when it quits; Neutralino's Intel build crashes whenever the window's size or position is read. On Intel Macs the window comes back at its place and maximized if it was, but at the default size.
 
 - **Inherited changes**
     - **from ocp-tessellate 3.7.0** (was 3.6.3)

@@ -30,8 +30,7 @@
     "computer.getKernelInfo",
     "computer.getCPUInfo",
     "computer.getMemoryInfo",
-    "computer.getDisks",
-    "computer.getDisplays"
+    "computer.getDisks"
   ],
   "modes": {
     "window": {
@@ -47,7 +46,8 @@
       "maximize": false,
       "hidden": true,
       "resizable": true,
-      "exitProcessOnClose": false
+      "exitProcessOnClose": false,
+      "useSavedState": false
     }
   },
   "cli": {

@@ -1,26 +1,21 @@
-// Where the window should open, given where it was left and what screens exist.
+// Where the window should open, given where it was left.
 //
-// Pure, and separated for the usual reason: every way this goes wrong is a
-// decision rather than an API call. A remembered position belongs to a monitor
-// that may not be attached now - a laptop undocked, a second screen unplugged,
-// a resolution changed - and restoring it faithfully puts the window somewhere
-// the user cannot reach it. There is no keyboard shortcut for "bring back the
-// window that opened at x=3000 on a screen that is gone".
+// Pure, and separated for the usual reason: what goes wrong here is a decision
+// rather than an API call. settings.json is a file people edit, so a stored
+// size has to be a usable number before it reaches setSize.
 //
-// Why this exists at all: Neutralino remembers geometry in
-// .tmp/window_state.config.json *beside its own binary*. The path is hardcoded.
-// So it survives a restart and is lost on every new install - unpack a new
-// version and the window opens at the shipped default, which reads as the
-// layout having been forgotten. Everything else this application remembers goes
-// to the per-user directory precisely so an update cannot take it, and the
-// window is now no exception.
+// The position is restored as it was saved, on whatever screen that was.
+// Whether that screen is still attached cannot be checked: Neutralino's
+// computer.getDisplays reports each display's resolution, dpi and refresh rate
+// but not where it sits, so a second monitor's place is unknown.
+//
+// The geometry is kept in settings.json, in the per-user directory an update
+// cannot take, like everything else this application remembers. Neutralino's
+// own memory of it is switched off; windowstate.js says why.
 
 /** Nothing smaller is worth restoring; it matches the config's minimums. */
 const MIN_WIDTH = 800;
 const MIN_HEIGHT = 600;
-
-/** How much of the window must be on a screen for it to be reachable. */
-const VISIBLE_MARGIN = 80;
 
 /**
  * Whether a stored value is a usable pixel count.
@@ -40,9 +35,8 @@ function isCoordinate(value) {
  * Whether the remembered geometry can be used as it stands.
  *
  * @param {object|null} stored what was saved
- * @param {Array<{x: number, y: number, width: number, height: number}>} displays
  */
-export function usableGeometry(stored, displays) {
+export function usableGeometry(stored) {
   if (stored === null || typeof stored !== "object") {
     return null;
   }
@@ -56,39 +50,13 @@ export function usableGeometry(stored, displays) {
     height: Math.max(MIN_HEIGHT, Math.round(height)),
   };
 
-  // The position is optional and separately validated: a window whose size is
-  // remembered and whose monitor is gone should still open at the right size,
-  // centred by the window manager, rather than losing both facts.
-  if (isCoordinate(x) && isCoordinate(y) && onSomeDisplay(x, y, displays)) {
+  // The position is optional and separately validated: without one the window
+  // opens where the config puts it, centred, at the remembered size.
+  if (isCoordinate(x) && isCoordinate(y)) {
     geometry.x = Math.round(x);
     geometry.y = Math.round(y);
   }
   return geometry;
-}
-
-/**
- * Whether that corner lands somewhere a person can reach.
- *
- * The test is the *title bar* rather than the whole window: a window may
- * legitimately hang off the right or bottom of a screen, but if its top-left is
- * outside every display there is nothing left to drag it back by.
- */
-function onSomeDisplay(x, y, displays) {
-  if (!Array.isArray(displays) || displays.length === 0) {
-    // Nothing to check against - answering "no" would throw away a perfectly
-    // good position because a query failed.
-    return true;
-  }
-  return displays.some((display) => {
-    const left = display?.x ?? 0;
-    const top = display?.y ?? 0;
-    const width = display?.width ?? 0;
-    const height = display?.height ?? 0;
-    return x >= left - VISIBLE_MARGIN
-      && y >= top - VISIBLE_MARGIN
-      && x <= left + width - VISIBLE_MARGIN
-      && y <= top + height - VISIBLE_MARGIN;
-  });
 }
 
 /**

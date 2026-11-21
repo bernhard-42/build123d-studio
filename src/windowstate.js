@@ -1,24 +1,15 @@
 // Remember the window's size and place across restarts *and* across installs.
 //
-// Neutralino already remembers geometry, in .tmp/window_state.config.json - and
-// beside its own binary, on a hardcoded path. So it survives a restart and is
-// lost every time a new version is unpacked, which reads as the application
-// forgetting the layout on update. It is also why packages ship an empty .tmp
-// at all: the save is an uncaught create_directories, so on a read-only
-// directory closing the window aborts the process.
+// The geometry lives in settings.json, in the per-user directory, with
+// everything else this application remembers. Neutralino's own memory of it -
+// useSavedState, a .tmp/window_state.config.json in its data directory - is
+// switched off in neutralino.config.json: it duplicates this one, and on Intel
+// Macs its save at quit crashes the process (see frameFromPage).
 //
-// Phase 1 already decided this question for everything else - settings, the
-// log, the environment all live in the per-user directory precisely so that an
-// update cannot take them, and neither Neutralino's .storage nor its own log is
-// used because both write into the application's own folder. The window was the
-// one exception, because the mechanism was Neutralino's rather than ours. It is
-// ours now.
-//
-// The decisions - what is a usable size, and whether a remembered position is
-// still on a screen that exists - are in geometry.js, which has no Neutralino in
-// it and is tested.
+// What counts as a usable stored geometry is decided in geometry.js, which has
+// no Neutralino in it and is tested.
 
-import { computer, window as neuWindow } from "@neutralinojs/lib";
+import { window as neuWindow } from "@neutralinojs/lib";
 
 import { geometryToStore, usableGeometry } from "./geometry.js";
 import { getSetting, setSetting } from "./store.js";
@@ -46,22 +37,19 @@ export async function restoreWindow() {
     return;
   }
 
-  let displays = [];
-  try {
-    displays = await computer.getDisplays();
-  } catch (error) {
-    // Not fatal, and deliberately not a reason to drop the position: an empty
-    // list means "unknown", and usableGeometry keeps what it was given.
-    log.info("Could not read the displays; restoring the window anyway:", error?.message ?? error);
-  }
-
-  const geometry = usableGeometry(stored, displays);
+  const geometry = usableGeometry(stored);
   if (geometry === null) {
     return;
   }
 
   try {
-    await neuWindow.setSize({ width: geometry.width, height: geometry.height });
+    // Not on Intel Macs: the client library's setSize asks getSize for the
+    // current options first and merges them in, and that query is the one that
+    // crashes there (see frameFromPage). The window keeps the config's size
+    // and still comes back at its place, maximized if it was.
+    if (frameFromPage() === false) {
+      await neuWindow.setSize({ width: geometry.width, height: geometry.height });
+    }
     if (geometry.x !== undefined && geometry.y !== undefined) {
       await neuWindow.move(geometry.x, geometry.y);
     }
@@ -74,6 +62,48 @@ export async function restoreWindow() {
 }
 
 /**
+ * Whether the window's frame has to be read from the page instead of Neutralino.
+ *
+ * True on Intel Macs, where Neutralino cannot report it - and so cannot set the
+ * size either, since the client library's setSize begins with a getSize. Its
+ * getSize and getPosition receive the window's frame, a CGRect, through plain
+ * objc_msgSend. On x86_64 a struct that large comes back only through
+ * objc_msgSend_stret, so objc_msgSend takes the address of the result buffer
+ * for the window and the process dies with a segmentation fault - no promise
+ * rejects, nothing can catch it. Measured with Neutralino 6.9.0's mac_x64
+ * binary under Rosetta; 6.10.0 has the same code. Apple Silicon builds are
+ * unaffected, since arm64 has no _stret variant.
+ *
+ * NL_ARCH is the binary's architecture, not the machine's: the Intel build
+ * reports "x64" under Rosetta too, which is the case that matters here.
+ */
+function frameFromPage() {
+  return typeof NL_OS === "string" && NL_OS === "Darwin"
+    && typeof NL_ARCH === "string" && NL_ARCH === "x64";
+}
+
+/**
+ * The window's outer size and its top-left corner, in screen coordinates.
+ *
+ * On Intel Macs the page answers: WebKit derives outerWidth, outerHeight,
+ * screenX and screenY from the frame of the window hosting the web view, the
+ * frame Neutralino reads elsewhere.
+ */
+async function readFrame() {
+  if (frameFromPage()) {
+    return {
+      size: { width: globalThis.outerWidth, height: globalThis.outerHeight },
+      position: { x: globalThis.screenX, y: globalThis.screenY },
+    };
+  }
+  const [size, position] = await Promise.all([
+    neuWindow.getSize(),
+    neuWindow.getPosition().catch(() => null),
+  ]);
+  return { size, position };
+}
+
+/**
  * Write down where the window is now.
  *
  * Reads all three facts before storing any of them, so a half-answered query
@@ -82,9 +112,8 @@ export async function restoreWindow() {
  */
 export async function saveWindow() {
   try {
-    const [size, position, maximized] = await Promise.all([
-      neuWindow.getSize(),
-      neuWindow.getPosition().catch(() => null),
+    const [{ size, position }, maximized] = await Promise.all([
+      readFrame(),
       neuWindow.isMaximized().catch(() => false),
     ]);
     const stored = geometryToStore({ size, position, maximized });

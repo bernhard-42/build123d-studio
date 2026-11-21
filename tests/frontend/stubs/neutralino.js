@@ -643,6 +643,11 @@ export const window = {
   },
   async setSize(options) {
     record("setSize", [options]);
+    // The real client library begins with a getSize and merges its answer
+    // under the options, because the native call resets every field it is not
+    // given. Done here too, so a test can see that setSize queries the frame -
+    // the query that crashes Neutralino's Intel Mac build.
+    await this.getSize();
     Object.assign(geometry, options);
   },
   async getPosition() {
@@ -729,7 +734,10 @@ export const window = {
 export const computer = {
   async getDisplays() {
     record("getDisplays", []);
-    return [{ id: 1, x: 0, y: 0, width: 1920, height: 1200 }];
+    // The shape Neutralino 6.9.0 returns (api/computer/computer.cpp): a
+    // resolution, and no position. Anything that reads a display's x, y,
+    // width or height gets undefined here, as it does in the application.
+    return [{ id: 0, resolution: { width: 1920, height: 1200 }, dpi: 144, bpp: 32, refreshRate: 60 }];
   },
 
   // The startup report reads these at every start. Fixed values, shaped as the

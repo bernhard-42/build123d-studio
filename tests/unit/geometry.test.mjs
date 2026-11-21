@@ -1,75 +1,63 @@
 // node --test tests/unit/geometry.test.mjs
 //
-// Where the window opens. Every case here is a way of losing the window
-// entirely, which is the failure that has no keyboard shortcut: restore a
-// position on a monitor that is no longer attached and there is nothing on
-// screen to drag back.
+// Where the window opens. A stored size must be a usable number, because
+// settings.json is editable; a stored position comes back as it was saved,
+// because no display information says where a screen sits.
 
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
 
 import { geometryToStore, usableGeometry } from "../../src/geometry.js";
 
-const LAPTOP = { x: 0, y: 0, width: 1920, height: 1200 };
-const SECOND = { x: 1920, y: 0, width: 2560, height: 1440 };
-
 // --- coming back ---
 
-test("a remembered size and position on an attached screen is used", () => {
+test("a remembered size and position is used", () => {
   assert.deepEqual(
-    usableGeometry({ width: 1400, height: 900, x: 100, y: 60 }, [LAPTOP]),
+    usableGeometry({ width: 1400, height: 900, x: 100, y: 60 }),
     { width: 1400, height: 900, x: 100, y: 60 },
   );
 });
 
 test("nothing remembered means nothing to apply", () => {
-  assert.equal(usableGeometry(null, [LAPTOP]), null);
-  assert.equal(usableGeometry(undefined, [LAPTOP]), null);
-  assert.equal(usableGeometry({}, [LAPTOP]), null);
+  assert.equal(usableGeometry(null), null);
+  assert.equal(usableGeometry(undefined), null);
+  assert.equal(usableGeometry({}), null);
 });
 
 test("a size that is not a number is refused, because settings.json is editable", () => {
-  assert.equal(usableGeometry({ width: "1600", height: 1000 }, [LAPTOP]), null);
-  assert.equal(usableGeometry({ width: 0, height: 1000 }, [LAPTOP]), null);
-  assert.equal(usableGeometry({ width: Number.NaN, height: 1000 }, [LAPTOP]), null);
+  assert.equal(usableGeometry({ width: "1600", height: 1000 }), null);
+  assert.equal(usableGeometry({ width: 0, height: 1000 }), null);
+  assert.equal(usableGeometry({ width: Number.NaN, height: 1000 }), null);
 });
 
 test("a size below the window's minimum comes back at the minimum", () => {
   assert.deepEqual(
-    usableGeometry({ width: 100, height: 50 }, [LAPTOP]),
+    usableGeometry({ width: 100, height: 50 }),
     { width: 800, height: 600 },
   );
 });
 
-test("a position on a screen that is gone is dropped, and the size is kept", () => {
-  // The undocked laptop. Restoring x=2400 faithfully opens the window on a
-  // monitor that is not there; dropping only the position gives back the size
-  // the user chose and lets the window manager place it.
-  const stored = { width: 1400, height: 900, x: 2400, y: 200 };
-  assert.deepEqual(usableGeometry(stored, [LAPTOP]), { width: 1400, height: 900 });
-  assert.deepEqual(usableGeometry(stored, [LAPTOP, SECOND]), stored);
+test("a position comes back wherever it was, a second screen and negative ones included", () => {
+  // A second monitor to the right, or above or left of the main one, gives
+  // coordinates far from the origin or below zero. Nothing can tell those
+  // apart from a screen that is gone, so none of them is dropped.
+  for (const [x, y] of [[2400, 200], [-1900, 0], [100, -1100], [5000, 3000]]) {
+    assert.deepEqual(
+      usableGeometry({ width: 1400, height: 900, x, y }),
+      { width: 1400, height: 900, x, y },
+    );
+  }
 });
 
-test("a position far off the top or left is dropped too", () => {
+test("a position that is not a number is dropped, and the size is kept", () => {
   assert.deepEqual(
-    usableGeometry({ width: 1400, height: 900, x: -5000, y: 0 }, [LAPTOP]),
+    usableGeometry({ width: 1400, height: 900, x: "100", y: 60 }),
     { width: 1400, height: 900 },
   );
-});
-
-test("a window hanging slightly off an edge is still reachable", () => {
-  // Legitimate and common: only the title bar has to be grabbable.
   assert.deepEqual(
-    usableGeometry({ width: 1400, height: 900, x: 1700, y: 1000 }, [LAPTOP]),
-    { width: 1400, height: 900, x: 1700, y: 1000 },
+    usableGeometry({ width: 1400, height: 900, x: Number.NaN, y: 60 }),
+    { width: 1400, height: 900 },
   );
-});
-
-test("no display information keeps the position rather than throwing it away", () => {
-  // getDisplays failing must not cost the user their window position.
-  const stored = { width: 1400, height: 900, x: 100, y: 60 };
-  assert.deepEqual(usableGeometry(stored, []), stored);
-  assert.deepEqual(usableGeometry(stored, null), stored);
 });
 
 // --- going away ---

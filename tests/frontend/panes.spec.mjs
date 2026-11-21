@@ -17,6 +17,16 @@
  *   fraction is clamped
  * - src/layout/splitter.js, the persist() after a drag - moves it, and is
  *   remembered
+ * - src/windowstate.js, readFrame's `if (frameFromPage())` branch - on an
+ *   Intel Mac the window is measured by the page, never by Neutralino (it
+ *   stored the stub's getSize/getPosition answer instead of the page's)
+ * - src/windowstate.js, restoreWindow's `frameFromPage() === false` guard
+ *   around setSize - on an Intel Mac a remembered window comes back at its
+ *   place, without a size query
+ * - src/geometry.js and src/windowstate.js, the display check put back (the
+ *   getDisplays query and onSomeDisplay) - a remembered size and position are
+ *   applied, and the Intel case: neither moved the window, because the stub's
+ *   displays have Neutralino's real shape, a resolution and no position
  */
 
 import { expect, test } from "@playwright/test";
@@ -190,12 +200,9 @@ test.describe("dragging a boundary", () => {
 
 test.describe("the window comes back where it was left", () => {
   test("a remembered size and position are applied before the window is shown", async ({ page }) => {
-    // Neutralino remembers this itself, in .tmp/window_state.config.json beside
-    // its own binary - so it survives a restart and is lost on every new
-    // install, which is what he reported: unpack a new version and the layout
-    // appears to have been forgotten. The splitters were never the problem;
-    // they are fractions in settings.json and came back correctly into a window
-    // that was suddenly the default size again.
+    // The window's geometry comes from settings.json, where the splitter
+    // fractions are too; Neutralino's own memory of it is switched off
+    // (useSavedState in neutralino.config.json).
     const { sidecar } = await open(page, {
       files: {},
       settings: { window: { width: 1280, height: 820, x: 120, y: 90 } },
@@ -226,6 +233,66 @@ test.describe("the window comes back where it was left", () => {
     const calls = await page.evaluate(() => globalThis.__NEUTRALINO_STUB__.calls());
     expect(calls.filter((call) => call.name === "setSize")).toHaveLength(0);
     expect(calls.filter((call) => call.name === "move")).toHaveLength(0);
+  });
+
+  /** The window geometry settings.json holds once a resize has been saved. */
+  async function savedAfterResize(page) {
+    await page.setViewportSize({ width: 1100, height: 700 });
+    let stored;
+    await expect.poll(async () => {
+      stored = await page.evaluate(() => JSON.parse(String(
+        globalThis.__NEUTRALINO_STUB__.wrote("/appdata/build123d-studio/settings.json") ?? "{}")).window);
+      return stored !== undefined;
+    }, { message: "a resize never saved the window" }).toBe(true);
+    return stored;
+  }
+
+  /** How often the page asked Neutralino for the window's frame. */
+  async function frameQueries(page) {
+    const calls = await page.evaluate(() => globalThis.__NEUTRALINO_STUB__.calls());
+    return calls.filter((call) => call.name === "getSize" || call.name === "getPosition").length;
+  }
+
+  test("on an Intel Mac the window is measured by the page, never by Neutralino", async ({ page }) => {
+    // Neutralino's mac_x64 binary dies with a segmentation fault in getSize
+    // and getPosition (frameFromPage in src/windowstate.js), so asking it even
+    // once ends the application.
+    await open(page, { files: {}, settings: {}, arch: "x64" });
+
+    const stored = await savedAfterResize(page);
+    const frame = await page.evaluate(() => ({
+      width: globalThis.outerWidth, height: globalThis.outerHeight,
+      x: globalThis.screenX, y: globalThis.screenY,
+    }));
+    expect(stored).toEqual(frame);
+    expect(await frameQueries(page)).toBe(0);
+  });
+
+  test("on an Intel Mac a remembered window comes back at its place, without a size query", async ({ page }) => {
+    // setSize cannot be used there: the client library's setSize begins with
+    // the getSize that crashes. Position and maximized state still come back.
+    await open(page, {
+      files: {},
+      settings: { window: { width: 1280, height: 820, x: 120, y: 90, maximized: true } },
+      arch: "x64",
+    });
+
+    const calls = await page.evaluate(() => globalThis.__NEUTRALINO_STUB__.calls());
+    const names = calls.map((call) => call.name);
+    expect(names).not.toContain("setSize");
+    expect(calls.find((call) => call.name === "move").args).toEqual([120, 90]);
+    expect(names).toContain("maximize");
+    expect(names.indexOf("move")).toBeLessThan(names.indexOf("show"));
+    expect(await frameQueries(page)).toBe(0);
+  });
+
+  test("on Apple Silicon the window is measured by Neutralino", async ({ page }) => {
+    // The control for the test above: the same resize, saved, on the build
+    // whose getSize and getPosition work.
+    await open(page, { files: {}, settings: {}, arch: "arm" });
+
+    await savedAfterResize(page);
+    expect(await frameQueries(page)).toBeGreaterThan(0);
   });
 });
 

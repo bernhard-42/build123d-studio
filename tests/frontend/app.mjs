@@ -38,14 +38,14 @@ const SIDECAR = { type: "listening", port: 45999, token: "harness-token" };
  */
 const NAVIGATOR_PLATFORM = { Darwin: "MacIntel", Windows: "Win32", Linux: "Linux x86_64" };
 
-const GLOBALS = (platform, argv) => {
+const GLOBALS = (platform, arch, argv) => {
   if (!Object.hasOwn(NAVIGATOR_PLATFORM, platform)) {
     throw new Error(`The harness knows no navigator.platform for NL_OS ${platform}`);
   }
   return `
   var NL_OS = ${JSON.stringify(platform)};
   Object.defineProperty(navigator, "platform", { get: () => ${JSON.stringify(NAVIGATOR_PLATFORM[platform])} });
-  var NL_ARCH = "arm64";
+  var NL_ARCH = ${JSON.stringify(arch)};
   // This window's own process. Recovery records it in the journal it owns and
   // asks the operating system which pids are still windows of this
   // application, so the stub's process listing has to contain this one.
@@ -282,6 +282,8 @@ class FakeSidecar {
  *
  * @param page a Playwright page
  * @param options.platform what NL_OS says: "Darwin", "Windows" or "Linux"
+ * @param options.arch what NL_ARCH says: "x64" is the Intel build, on an Intel
+ *   Mac or under Rosetta
  * @param options.argv what NL_ARGS says, for the `studio <path>` behaviour
  * @param options.settings the settings.json the application starts from
  * @param options.files extra files to seed the in-memory filesystem with
@@ -290,6 +292,7 @@ class FakeSidecar {
 export async function open(page, options = {}) {
   const {
     platform = "Darwin",
+    arch = "arm64",
     argv = ["/app/build123d-studio"],
     settings = null,
     files = {},
@@ -327,7 +330,7 @@ export async function open(page, options = {}) {
     route.fulfill({
       status: 200,
       contentType: "application/javascript",
-      body: GLOBALS(platform, argv),
+      body: GLOBALS(platform, arch, argv),
     }),
   );
 
